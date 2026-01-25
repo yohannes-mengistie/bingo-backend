@@ -112,7 +112,7 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 
 	// CORS middleware
 	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:5173", "http://localhost:3000", "http://localhost:8080", "http://localhost:3001"},
+		AllowOrigins:     []string{"http://localhost:5173", "https://winner.up.railway.app"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Length", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},

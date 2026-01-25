@@ -102,9 +102,32 @@ After deployment, you need to run migrations. You have two options:
    ```
 
 4. Run migrations:
+
+   **Method 1: Using Railway Dashboard (Easiest - Recommended)**
+   1. Go to Railway dashboard → Your PostgreSQL service
+   2. Click **"Connect"** → **"Query"**
+   3. Copy and paste the contents of `migrations/002_update_schema.sql`
+   4. Click **"Run"**
+   5. Repeat for `migrations/003_add_auth_fields.sql`
+
+   **Method 2: Using Railway Shell (Interactive)**
    ```bash
-   railway run psql $DATABASE_URL -f migrations/002_update_schema.sql
-   railway run psql $DATABASE_URL -f migrations/003_add_auth_fields.sql
+   # Start interactive Railway shell
+   railway shell
+   
+   # Inside the shell, run migrations:
+   psql "$DATABASE_URL" < migrations/002_update_schema.sql
+   psql "$DATABASE_URL" < migrations/003_add_auth_fields.sql
+   
+   # Exit when done
+   exit
+   ```
+
+   **Method 3: Using Railway Run with Service**
+   ```bash
+   # Run command in PostgreSQL service context
+   railway run --service Postgres bash -c 'psql "$DATABASE_URL" < migrations/002_update_schema.sql'
+   railway run --service Postgres bash -c 'psql "$DATABASE_URL" < migrations/003_add_auth_fields.sql'
    ```
 
 #### Option B: Using Railway Shell
