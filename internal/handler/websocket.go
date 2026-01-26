@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -16,6 +17,25 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
 )
+
+// isValidGameType checks if the game type is valid
+func isValidGameType(gameType domain.GameType) bool {
+	validTypes := []domain.GameType{
+		domain.GameTypeG1,
+		domain.GameTypeG2,
+		domain.GameTypeG3,
+		domain.GameTypeG4,
+		domain.GameTypeG5,
+		domain.GameTypeG6,
+		domain.GameTypeG7,
+	}
+	for _, vt := range validTypes {
+		if gameType == vt {
+			return true
+		}
+	}
+	return false
+}
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
@@ -45,59 +65,66 @@ func NewWebSocketHandler(redisClient *redis.Client, gameService *redisPkg.GameSt
 }
 
 // HandleWebSocket handles WebSocket connections for game updates
+// Public viewing - anyone can connect by game type (e.g., ?type=G5) or game ID
 func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
-	gameIDStr := c.Param("gameId")
-	gameID, err := uuid.Parse(gameIDStr)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid game ID",
-		})
-		return
-	}
+	var gameID uuid.UUID
+	var err error
 
-	// Get user ID from query or header (you may want to use JWT here)
-	userIDStr := c.Query("user_id")
-	if userIDStr == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "user_id is required",
-		})
-		return
-	}
+	// Check if connecting by game type (public viewing) or game ID
+	gameTypeStr := c.Query("type")
+	if gameTypeStr != "" {
+		// Connect by game type - find or create an available game
+		gameType := domain.GameType(gameTypeStr)
+		if !isValidGameType(gameType) {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Invalid game type. Must be one of: G1, G2, G3, G4, G5, G6, G7",
+			})
+			return
+		}
 
-	userID, err := uuid.Parse(userIDStr)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid user ID",
-		})
-		return
-	}
+		// Find or create a game of this type
+		if h.gameUseCase == nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "Game service not available",
+			})
+			return
+		}
 
-	// Verify user is in the game
-	// First try Redis, then fallback to database
-	isInGame := false
-	if h.gameService != nil && h.redisClient != nil {
-		var err error
-		isInGame, err = h.gameService.IsPlayerInGame(c.Request.Context(), gameID, userID)
+		game, err := h.gameUseCase.CreateOrGetGame(c.Request.Context(), gameType)
 		if err != nil {
-			log.Printf("Warning: Redis check failed for user %s in game %s: %v", userID, gameID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": fmt.Sprintf("Failed to get game: %v", err),
+			})
+			return
+		}
+		gameID = game.ID
+	} else {
+		// Connect by game ID (from path parameter)
+		gameIDStr := c.Param("gameId")
+		if gameIDStr == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Either provide 'type' query parameter (e.g., ?type=G5) or game ID in path",
+			})
+			return
+		}
+		gameID, err = uuid.Parse(gameIDStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Invalid game ID",
+			})
+			return
 		}
 	}
 
-	// Fallback to database check if Redis check failed or Redis not available
-	if !isInGame && h.gameUseCase != nil {
-		// Check via game repository
-		player, err := h.gameUseCase.GetPlayerInGame(c.Request.Context(), gameID, userID)
-		if err == nil && player != nil {
-			isInGame = true
-		}
-	}
-
-	if !isInGame {
-		c.JSON(http.StatusForbidden, gin.H{
-			"error": "User is not in this game. Please join the game first via POST /api/v1/games/:gameId/join",
+	// Check Redis availability first (before upgrading connection)
+	if h.redisClient == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "WebSocket requires Redis to be configured",
 		})
 		return
 	}
+
+	gameIDStr := gameID.String()
 
 	// Upgrade connection
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)

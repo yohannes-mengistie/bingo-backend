@@ -8,34 +8,56 @@ The WebSocket API provides real-time updates for bingo games. Clients connect to
 
 ### Endpoint
 
+**Option 1: Connect by Game Type (Public Viewing - Recommended)**
 ```
-ws://localhost:8080/api/v1/ws/game/:gameId?user_id=:userId
+ws://localhost:8080/api/v1/ws/game?type=G5
+```
+
+**Option 2: Connect by Game ID**
+```
+ws://localhost:8080/api/v1/ws/game/:gameId
 ```
 
 **Production:**
 ```
-wss://web-production-201fa.up.railway.app/api/v1/ws/game/:gameId?user_id=:userId
+wss://web-production-201fa.up.railway.app/api/v1/ws/game?type=G5
+wss://web-production-201fa.up.railway.app/api/v1/ws/game/:gameId
 ```
 
 ### Parameters
 
+**For Game Type Connection:**
+- **type** (query parameter, required): Game type (G1, G2, G3, G4, G5, G6, G7)
+  - Automatically finds or creates an available game of that type
+  - **No user authentication required** - anyone can watch
+
+**For Game ID Connection:**
 - **gameId** (path parameter, required): UUID of the game
-- **user_id** (query parameter, required): UUID of the user connecting
+  - **No user authentication required** - anyone can watch
 
 ### Requirements
 
-1. User must be a player in the game (joined via `/api/v1/games/:gameId/join`)
-2. Redis must be configured on the server
-3. Valid WebSocket connection
+1. Redis must be configured on the server
+2. Valid WebSocket connection
+3. **No need to be a player** - WebSocket is public/read-only for viewing
 
 ### Connection Example (JavaScript)
 
+**By Game Type (Recommended):**
 ```javascript
-const gameId = "550e8400-e29b-41d4-a716-446655440000";
-const userId = "770e8400-e29b-41d4-a716-446655440000";
-const wsUrl = `ws://localhost:8080/api/v1/ws/game/${gameId}?user_id=${userId}`;
+// Connect to G5 game type - automatically finds available game
+const wsUrl = `ws://localhost:8080/api/v1/ws/game?type=G5`;
 
 const ws = new WebSocket(wsUrl);
+```
+
+**By Game ID:**
+```javascript
+const gameId = "550e8400-e29b-41d4-a716-446655440000";
+const wsUrl = `ws://localhost:8080/api/v1/ws/game/${gameId}`;
+
+const ws = new WebSocket(wsUrl);
+```
 
 ws.onopen = () => {
   console.log("WebSocket connected");
@@ -65,11 +87,12 @@ interface WebSocketMessage {
   data: any;
 }
 
-function useGameWebSocket(gameId: string, userId: string) {
+// Connect by game type
+function useGameWebSocket(gameType: string) {
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    const wsUrl = `ws://localhost:8080/api/v1/ws/game/${gameId}?user_id=${userId}`;
+    const wsUrl = `ws://localhost:8080/api/v1/ws/game?type=${gameType}`;
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
@@ -95,7 +118,7 @@ function useGameWebSocket(gameId: string, userId: string) {
     return () => {
       ws.close();
     };
-  }, [gameId, userId]);
+  }, [gameType]);
 
   return wsRef.current;
 }
@@ -314,20 +337,13 @@ If the connection fails, the server will return an HTTP error before upgrading t
 
 ```json
 {
-  "error": "user_id is required"
+  "error": "Invalid game type. Must be one of: G1, G2, G3, G4, G5, G6, G7"
 }
 ```
 
 ```json
 {
-  "error": "Invalid user ID"
-}
-```
-
-**403 Forbidden:**
-```json
-{
-  "error": "User is not in this game"
+  "error": "Either provide 'type' query parameter (e.g., ?type=G5) or game ID in path"
 }
 ```
 
@@ -440,8 +456,8 @@ class GameWebSocket {
   }
 }
 
-// Usage
-const gameWS = new GameWebSocket(gameId, userId);
+// Usage - by game type
+const gameWS = new GameWebSocket("G5"); // or use gameId for specific game
 
 gameWS.onMessage((message) => {
   // Handle all messages
@@ -519,6 +535,8 @@ ws.onclose = (e) => console.log('Closed:', e.code, e.reason);
 - The WebSocket connection is **read-only** - clients cannot send commands
 - All game actions (join, leave, claim bingo) must be done via REST API
 - The WebSocket only provides real-time updates
-- Connection requires the user to be a player in the game
+- **Public viewing** - No authentication required, anyone can watch games
+- Connect by game type (G1-G7) to automatically find available games
 - Redis must be configured on the server for WebSocket to work
+
 
