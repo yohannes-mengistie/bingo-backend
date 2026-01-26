@@ -59,16 +59,19 @@ For detailed instructions, see [QUICKSTART.md](QUICKSTART.md)
 #### Option 1: Using Docker (Recommended)
 
 1. Start database services:
+
 ```bash
 make docker-up
 ```
 
 2. Install dependencies:
+
 ```bash
 make deps
 ```
 
 3. Run the server:
+
 ```bash
 make run
 ```
@@ -78,27 +81,32 @@ The database will be automatically initialized on first start.
 #### Option 2: Local Installation
 
 1. Install dependencies:
+
 ```bash
 go mod download
 ```
 
 2. Create the database:
+
 ```bash
 createdb bingo
 ```
 
 3. Run migrations:
+
 ```bash
 make migrate-up
 ```
 
 4. (Optional) Set up environment variables:
-Create a `.env` file with your configuration, or use the defaults:
+   Create a `.env` file with your configuration, or use the defaults:
+
 - Server: `localhost:8080`
 - Database: `postgres@localhost:5432/bingo`
 - Redis: `localhost:6379`
 
 5. Run the server:
+
 ```bash
 make run
 # Or: go run cmd/server/main.go
@@ -111,6 +119,7 @@ make run
 Admin login endpoint. Returns a JWT token for accessing protected admin endpoints.
 
 **Request Body:**
+
 ```json
 {
   "telegram_id": 123456789,
@@ -119,6 +128,7 @@ Admin login endpoint. Returns a JWT token for accessing protected admin endpoint
 ```
 
 **Response:**
+
 ```json
 {
   "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
@@ -137,12 +147,14 @@ Admin login endpoint. Returns a JWT token for accessing protected admin endpoint
 ```
 
 **Error Responses:**
+
 - `400`: Invalid request data
 - `401`: Invalid credentials
 - `403`: User is not an admin
 
 **Usage:**
 Include the token in the Authorization header for admin endpoints:
+
 ```
 Authorization: Bearer <token>
 ```
@@ -154,6 +166,7 @@ Authorization: Bearer <token>
 Register a new user and create their wallet. This operation is atomic - both user and wallet are created in a single transaction.
 
 **Request Body:**
+
 ```json
 {
   "telegram_id": 123456789,
@@ -164,6 +177,7 @@ Register a new user and create their wallet. This operation is atomic - both use
 ```
 
 **Response:**
+
 ```json
 {
   "message": "User and wallet created successfully",
@@ -187,6 +201,7 @@ Register a new user and create their wallet. This operation is atomic - both use
 ```
 
 **Error Response (409):**
+
 ```json
 {
   "error": "user with this telegram ID already exists"
@@ -198,9 +213,11 @@ Register a new user and create their wallet. This operation is atomic - both use
 Find a user by their Telegram ID.
 
 **Path Parameters:**
+
 - `telegram_id` (int64, required): The Telegram ID of the user
 
 **Response:**
+
 ```json
 {
   "user": {
@@ -217,6 +234,7 @@ Find a user by their Telegram ID.
 ```
 
 **Error Response (404):**
+
 ```json
 {
   "error": "User not found"
@@ -228,9 +246,11 @@ Find a user by their Telegram ID.
 Find a user by their phone number. The phone number will be automatically normalized.
 
 **Query Parameters:**
+
 - `phone` (string, required): The phone number of the user
 
 **Response:**
+
 ```json
 {
   "user": {
@@ -247,6 +267,7 @@ Find a user by their phone number. The phone number will be automatically normal
 ```
 
 **Error Response (404):**
+
 ```json
 {
   "error": "User not found"
@@ -258,9 +279,11 @@ Find a user by their phone number. The phone number will be automatically normal
 Find a user by their referral code.
 
 **Path Parameters:**
+
 - `referral_code` (string, required): The referral code of the user
 
 **Response:**
+
 ```json
 {
   "user": {
@@ -277,6 +300,7 @@ Find a user by their referral code.
 ```
 
 **Error Response (404):**
+
 ```json
 {
   "error": "User not found"
@@ -290,6 +314,7 @@ Find a user by their referral code.
 Create a deposit request. The transaction is created with `pending` status and **balance is NOT updated** until admin approval.
 
 **Request Body:**
+
 ```json
 {
   "user_id": "550e8400-e29b-41d4-a716-446655440000",
@@ -300,6 +325,7 @@ Create a deposit request. The transaction is created with `pending` status and *
 ```
 
 **Response:**
+
 ```json
 {
   "message": "Deposit request created successfully",
@@ -318,6 +344,7 @@ Create a deposit request. The transaction is created with `pending` status and *
 ```
 
 **Error Responses:**
+
 - `400`: Invalid amount (must be > 0)
 - `404`: User not found
 
@@ -326,6 +353,7 @@ Create a deposit request. The transaction is created with `pending` status and *
 Create a withdrawal request. The balance is **immediately subtracted** and transaction is created with `pending` status. If admin rejects, balance will be refunded.
 
 **Request Body:**
+
 ```json
 {
   "user_id": "550e8400-e29b-41d4-a716-446655440000",
@@ -334,6 +362,7 @@ Create a withdrawal request. The balance is **immediately subtracted** and trans
 ```
 
 **Response:**
+
 ```json
 {
   "message": "Withdrawal processed successfully",
@@ -352,6 +381,7 @@ Create a withdrawal request. The balance is **immediately subtracted** and trans
 ```
 
 **Error Responses:**
+
 - `400`: Invalid amount or insufficient balance
 - `404`: User or wallet not found
 
@@ -360,6 +390,7 @@ Create a withdrawal request. The balance is **immediately subtracted** and trans
 Transfer money from one user to another. This is an **atomic operation** - both wallets are updated and two transactions are created in a single database transaction.
 
 **Request Body:**
+
 ```json
 {
   "sender_id": "550e8400-e29b-41d4-a716-446655440000",
@@ -369,6 +400,7 @@ Transfer money from one user to another. This is an **atomic operation** - both 
 ```
 
 **Response:**
+
 ```json
 {
   "message": "Transfer completed successfully",
@@ -398,10 +430,12 @@ Transfer money from one user to another. This is an **atomic operation** - both 
 ```
 
 **Error Responses:**
+
 - `400`: Invalid amount, insufficient balance, or self-transfer attempt
 - `404`: Sender or receiver not found
 
 **Transfer Rules:**
+
 - ❌ No self-transfers
 - ❌ No negative or zero amounts
 - ❌ Receiver must exist
@@ -412,9 +446,11 @@ Transfer money from one user to another. This is an **atomic operation** - both 
 Get wallet information by Telegram ID (convenient for bot access).
 
 **Path Parameters:**
+
 - `telegram_id` (int64, required): The Telegram ID of the user
 
 **Response:**
+
 ```json
 {
   "wallet": {
@@ -427,6 +463,7 @@ Get wallet information by Telegram ID (convenient for bot access).
 ```
 
 **Error Response (404):**
+
 ```json
 {
   "error": "Wallet not found"
@@ -438,9 +475,11 @@ Get wallet information by Telegram ID (convenient for bot access).
 Get wallet information by user UUID.
 
 **Path Parameters:**
+
 - `user_id` (UUID, required): The user ID
 
 **Response:**
+
 ```json
 {
   "wallet": {
@@ -453,6 +492,7 @@ Get wallet information by user UUID.
 ```
 
 **Error Response (404):**
+
 ```json
 {
   "error": "Wallet not found"
@@ -464,9 +504,11 @@ Get wallet information by user UUID.
 Get the top 10 deposit transactions for a user, ordered by most recent first.
 
 **Path Parameters:**
+
 - `user_id` (UUID, required): The user ID
 
 **Response:**
+
 ```json
 {
   "deposits": [
@@ -487,6 +529,7 @@ Get the top 10 deposit transactions for a user, ordered by most recent first.
 ```
 
 **Error Responses:**
+
 - `400`: Invalid user ID
 - `500`: Failed to fetch deposit history
 
@@ -495,9 +538,11 @@ Get the top 10 deposit transactions for a user, ordered by most recent first.
 Get the top 10 withdrawal transactions for a user, ordered by most recent first.
 
 **Path Parameters:**
+
 - `user_id` (UUID, required): The user ID
 
 **Response:**
+
 ```json
 {
   "withdrawals": [
@@ -518,6 +563,7 @@ Get the top 10 withdrawal transactions for a user, ordered by most recent first.
 ```
 
 **Error Responses:**
+
 - `400`: Invalid user ID
 - `500`: Failed to fetch withdrawal history
 
@@ -526,9 +572,11 @@ Get the top 10 withdrawal transactions for a user, ordered by most recent first.
 Get the top 10 transfer transactions (both incoming and outgoing) for a user, ordered by most recent first.
 
 **Path Parameters:**
+
 - `user_id` (UUID, required): The user ID
 
 **Response:**
+
 ```json
 {
   "transfers": [
@@ -559,11 +607,13 @@ Get the top 10 transfer transactions (both incoming and outgoing) for a user, or
 }
 ```
 
-**Note:** 
+**Note:**
+
 - `transfer_out`: Money sent to another user (reference contains receiver's user_id)
 - `transfer_in`: Money received from another user (reference contains sender's user_id)
 
 **Error Responses:**
+
 - `400`: Invalid user ID
 - `500`: Failed to fetch transfer history
 
@@ -576,7 +626,7 @@ The game system implements a real-time multiplayer bingo game with server-author
 There are 7 fixed game types, each with a fixed bet amount:
 
 | Game Type | Bet Amount |
-|-----------|------------|
+| --------- | ---------- |
 | G1        | 5          |
 | G2        | 7          |
 | G3        | 10         |
@@ -615,9 +665,11 @@ Each game follows this lifecycle:
 Get available games (WAITING or COUNTDOWN state).
 
 **Query Parameters:**
+
 - `type` (optional): Filter by game type (G1, G2, G3, G4, G5, G6, G7)
 
 **Response:**
+
 ```json
 {
   "games": [
@@ -642,6 +694,7 @@ Get available games (WAITING or COUNTDOWN state).
 ```
 
 **Example:**
+
 ```bash
 # Get all available games
 curl http://localhost:8080/api/v1/games
@@ -655,9 +708,11 @@ curl http://localhost:8080/api/v1/games?type=G1
 Get the current game state (used for initial connection snapshot).
 
 **Path Parameters:**
+
 - `gameId` (UUID, required): The game ID
 
 **Response:**
+
 ```json
 {
   "game": {
@@ -692,6 +747,7 @@ Get the current game state (used for initial connection snapshot).
 ```
 
 **Error Responses:**
+
 - `400`: Invalid game ID
 - `404`: Game not found
 
@@ -700,9 +756,11 @@ Get the current game state (used for initial connection snapshot).
 Join a game. The bet amount is **immediately deducted** from the user's wallet.
 
 **Path Parameters:**
+
 - `gameId` (UUID, required): The game ID
 
 **Request Body:**
+
 ```json
 {
   "user_id": "550e8400-e29b-41d4-a716-446655440000",
@@ -711,6 +769,7 @@ Join a game. The bet amount is **immediately deducted** from the user's wallet.
 ```
 
 **Response:**
+
 ```json
 {
   "player": {
@@ -726,10 +785,12 @@ Join a game. The bet amount is **immediately deducted** from the user's wallet.
 ```
 
 **Error Responses:**
+
 - `400`: Invalid card ID, game not accepting players, user already in game, card already taken, insufficient balance
 - `404`: Game not found
 
 **Rules:**
+
 - ✅ Valid only in WAITING state
 - ✅ Card ID must be between 1 and 100
 - ✅ Card can only be chosen once per game
@@ -741,9 +802,11 @@ Join a game. The bet amount is **immediately deducted** from the user's wallet.
 Leave a game. Refund is issued if game is in WAITING or COUNTDOWN state.
 
 **Path Parameters:**
+
 - `gameId` (UUID, required): The game ID
 
 **Request Body:**
+
 ```json
 {
   "user_id": "550e8400-e29b-41d4-a716-446655440000"
@@ -751,6 +814,7 @@ Leave a game. Refund is issued if game is in WAITING or COUNTDOWN state.
 ```
 
 **Response:**
+
 ```json
 {
   "message": "Successfully left the game"
@@ -758,15 +822,18 @@ Leave a game. Refund is issued if game is in WAITING or COUNTDOWN state.
 ```
 
 **Error Responses:**
+
 - `400`: User not in game, cannot leave during drawing phase
 - `404`: Game not found
 
 **Refund Rules:**
+
 - ✅ **WAITING state**: Full refund
 - ✅ **COUNTDOWN state**: Full refund
 - ❌ **DRAWING state**: No refund (loss)
 
 **Cancellation:**
+
 - If players drop below 2 during COUNTDOWN, game is cancelled and all players are refunded
 
 ### POST /api/v1/games/:gameId/bingo
@@ -774,9 +841,11 @@ Leave a game. Refund is issued if game is in WAITING or COUNTDOWN state.
 Claim bingo. The backend validates the claim against drawn numbers.
 
 **Path Parameters:**
+
 - `gameId` (UUID, required): The game ID
 
 **Request Body:**
+
 ```json
 {
   "user_id": "550e8400-e29b-41d4-a716-446655440000",
@@ -785,6 +854,7 @@ Claim bingo. The backend validates the claim against drawn numbers.
 ```
 
 **Response (Valid Bingo - Winner):**
+
 ```json
 {
   "winner": true,
@@ -793,6 +863,7 @@ Claim bingo. The backend validates the claim against drawn numbers.
 ```
 
 **Response (Invalid Bingo - Eliminated):**
+
 ```json
 {
   "winner": false,
@@ -801,10 +872,12 @@ Claim bingo. The backend validates the claim against drawn numbers.
 ```
 
 **Error Responses:**
+
 - `400`: Game not in drawing phase, user not in game, player already eliminated
 - `404`: Game not found
 
 **Validation:**
+
 - ✅ Server validates card against drawn numbers
 - ✅ Valid bingo: Any row, column, or diagonal (5 numbers)
 - ✅ Invalid claim: Player is eliminated
@@ -816,12 +889,15 @@ Claim bingo. The backend validates the claim against drawn numbers.
 Connect to real-time game updates via WebSocket.
 
 **Path Parameters:**
+
 - `gameId` (UUID, required): The game ID
 
 **Query Parameters:**
+
 - `user_id` (UUID, required): The user ID (must be a player in the game)
 
 **Connection:**
+
 ```javascript
 const ws = new WebSocket('ws://localhost:8080/api/v1/ws/game/{gameId}?user_id={userId}');
 ```
@@ -829,6 +905,7 @@ const ws = new WebSocket('ws://localhost:8080/api/v1/ws/game/{gameId}?user_id={u
 **WebSocket Events:**
 
 All events follow this format:
+
 ```json
 {
   "event": "EVENT_NAME",
@@ -839,6 +916,7 @@ All events follow this format:
 **Event Types:**
 
 1. **INITIAL_STATE** - Sent on connection
+
 ```json
 {
   "event": "INITIAL_STATE",
@@ -853,6 +931,7 @@ All events follow this format:
 ```
 
 2. **GAME_STATUS** - Game state changes
+
 ```json
 {
   "event": "GAME_STATUS",
@@ -864,6 +943,7 @@ All events follow this format:
 ```
 
 3. **PLAYER_COUNT** - Player count updates
+
 ```json
 {
   "event": "PLAYER_COUNT",
@@ -874,6 +954,7 @@ All events follow this format:
 ```
 
 4. **CARDS_TAKEN** - Card selection updates
+
 ```json
 {
   "event": "CARDS_TAKEN",
@@ -884,6 +965,7 @@ All events follow this format:
 ```
 
 5. **COUNTDOWN** - Countdown updates (every second)
+
 ```json
 {
   "event": "COUNTDOWN",
@@ -894,6 +976,7 @@ All events follow this format:
 ```
 
 6. **NUMBER_DRAWN** - New number drawn
+
 ```json
 {
   "event": "NUMBER_DRAWN",
@@ -905,6 +988,7 @@ All events follow this format:
 ```
 
 7. **PLAYER_JOINED** - Player joined the game
+
 ```json
 {
   "event": "PLAYER_JOINED",
@@ -916,6 +1000,7 @@ All events follow this format:
 ```
 
 8. **PLAYER_LEFT** - Player left the game
+
 ```json
 {
   "event": "PLAYER_LEFT",
@@ -926,6 +1011,7 @@ All events follow this format:
 ```
 
 9. **PLAYER_ELIMINATED** - Player eliminated (invalid bingo claim)
+
 ```json
 {
   "event": "PLAYER_ELIMINATED",
@@ -936,6 +1022,7 @@ All events follow this format:
 ```
 
 10. **WINNER** - Game finished, winner announced
+
 ```json
 {
   "event": "WINNER",
@@ -947,6 +1034,7 @@ All events follow this format:
 ```
 
 11. **GAME_CANCELLED** - Game cancelled (insufficient players)
+
 ```json
 {
   "event": "GAME_CANCELLED",
@@ -955,10 +1043,12 @@ All events follow this format:
 ```
 
 **Error Responses:**
+
 - `400`: Invalid game ID or user ID
 - `403`: User is not in this game
 
 **Note:**
+
 - WebSocket connection is read-only for game state
 - All game logic is server-authoritative
 - Events are published via Redis pub/sub for scalability
@@ -968,11 +1058,13 @@ All events follow this format:
 **All admin endpoints require JWT authentication and admin role.**
 
 Include the JWT token in the Authorization header:
+
 ```
 Authorization: Bearer <your_jwt_token>
 ```
 
 **Security:**
+
 - JWT tokens expire after 24 hours (configurable via `JWT_EXPIRATION_HOURS`)
 - Only users with `role='admin'` can access these endpoints
 - Invalid or expired tokens will return `401 Unauthorized`
@@ -985,10 +1077,12 @@ Authorization: Bearer <your_jwt_token>
 Get all users with pagination.
 
 **Query Parameters:**
+
 - `limit` (optional): Number of users to return (default: 50)
 - `offset` (optional): Number of users to skip (default: 0)
 
 **Response:**
+
 ```json
 {
   "users": [
@@ -1013,6 +1107,7 @@ Get all users with pagination.
 **Note:** Passwords are never included in the response for security.
 
 **Error Responses:**
+
 - `401`: Unauthorized (missing or invalid token)
 - `403`: Forbidden (user is not an admin)
 - `500`: Failed to fetch users
@@ -1020,6 +1115,7 @@ Get all users with pagination.
 ## Admin Transaction Query Endpoints
 
 All query endpoints support pagination via query parameters:
+
 - `limit` (default: 50): Number of transactions to return
 - `offset` (default: 0): Number of transactions to skip
 
@@ -1028,10 +1124,12 @@ All query endpoints support pagination via query parameters:
 Get all transactions with pagination.
 
 **Query Parameters:**
+
 - `limit` (optional): Number of transactions to return (default: 50)
 - `offset` (optional): Number of transactions to skip (default: 0)
 
 **Response:**
+
 ```json
 {
   "transactions": [
@@ -1058,10 +1156,12 @@ Get all transactions with pagination.
 Get all pending deposit transactions.
 
 **Query Parameters:**
+
 - `limit` (optional): Number of transactions to return (default: 50)
 - `offset` (optional): Number of transactions to skip (default: 0)
 
 **Response:**
+
 ```json
 {
   "transactions": [
@@ -1088,10 +1188,12 @@ Get all pending deposit transactions.
 Get all pending withdrawal transactions.
 
 **Query Parameters:**
+
 - `limit` (optional): Number of transactions to return (default: 50)
 - `offset` (optional): Number of transactions to skip (default: 0)
 
 **Response:**
+
 ```json
 {
   "transactions": [
@@ -1118,10 +1220,12 @@ Get all pending withdrawal transactions.
 Get all completed (approved) deposit transactions.
 
 **Query Parameters:**
+
 - `limit` (optional): Number of transactions to return (default: 50)
 - `offset` (optional): Number of transactions to skip (default: 0)
 
 **Response:**
+
 ```json
 {
   "transactions": [
@@ -1148,10 +1252,12 @@ Get all completed (approved) deposit transactions.
 Get all completed (approved) withdrawal transactions.
 
 **Query Parameters:**
+
 - `limit` (optional): Number of transactions to return (default: 50)
 - `offset` (optional): Number of transactions to skip (default: 0)
 
 **Response:**
+
 ```json
 {
   "transactions": [
@@ -1178,10 +1284,12 @@ Get all completed (approved) withdrawal transactions.
 Get all failed transactions (any type).
 
 **Query Parameters:**
+
 - `limit` (optional): Number of transactions to return (default: 50)
 - `offset` (optional): Number of transactions to skip (default: 0)
 
 **Response:**
+
 ```json
 {
   "transactions": [
@@ -1208,10 +1316,12 @@ Get all failed transactions (any type).
 Get all transfer transactions (both `transfer_in` and `transfer_out`).
 
 **Query Parameters:**
+
 - `limit` (optional): Number of transactions to return (default: 50)
 - `offset` (optional): Number of transactions to skip (default: 0)
 
 **Response:**
+
 ```json
 {
   "transactions": [
@@ -1251,9 +1361,11 @@ Get all transfer transactions (both `transfer_in` and `transfer_out`).
 Approve a pending deposit transaction. This will update the transaction status to `completed` and add the amount to the user's wallet balance.
 
 **Path Parameters:**
+
 - `id` (UUID, required): The transaction ID
 
 **Response:**
+
 ```json
 {
   "message": "Deposit approved successfully",
@@ -1272,10 +1384,12 @@ Approve a pending deposit transaction. This will update the transaction status t
 ```
 
 **Error Responses:**
+
 - `400`: Transaction is not a deposit or not pending
 - `404`: Transaction not found
 
 **Operation Flow:**
+
 1. Lock wallet row (FOR UPDATE)
 2. Update transaction status → `completed`
 3. Add amount to wallet balance
@@ -1286,9 +1400,11 @@ Approve a pending deposit transaction. This will update the transaction status t
 Reject a pending deposit transaction. The transaction status is updated to `failed` and **no balance change** occurs.
 
 **Path Parameters:**
+
 - `id` (UUID, required): The transaction ID
 
 **Response:**
+
 ```json
 {
   "message": "Deposit rejected successfully",
@@ -1307,6 +1423,7 @@ Reject a pending deposit transaction. The transaction status is updated to `fail
 ```
 
 **Error Responses:**
+
 - `400`: Transaction is not a deposit or not pending
 - `404`: Transaction not found
 
@@ -1315,9 +1432,11 @@ Reject a pending deposit transaction. The transaction status is updated to `fail
 Approve a pending withdrawal transaction. The transaction status is updated to `completed`. The balance was already subtracted when the withdrawal was created.
 
 **Path Parameters:**
+
 - `id` (UUID, required): The transaction ID
 
 **Response:**
+
 ```json
 {
   "message": "Withdrawal approved successfully",
@@ -1336,6 +1455,7 @@ Approve a pending withdrawal transaction. The transaction status is updated to `
 ```
 
 **Error Responses:**
+
 - `400`: Transaction is not a withdrawal or not pending
 - `404`: Transaction not found
 
@@ -1344,9 +1464,11 @@ Approve a pending withdrawal transaction. The transaction status is updated to `
 Reject a pending withdrawal transaction. The transaction status is updated to `failed` and the balance is **refunded** (added back to the wallet).
 
 **Path Parameters:**
+
 - `id` (UUID, required): The transaction ID
 
 **Response:**
+
 ```json
 {
   "message": "Withdrawal rejected and balance refunded",
@@ -1365,10 +1487,12 @@ Reject a pending withdrawal transaction. The transaction status is updated to `f
 ```
 
 **Error Responses:**
+
 - `400`: Transaction is not a withdrawal or not pending
 - `404`: Transaction not found
 
 **Operation Flow:**
+
 1. Lock wallet row (FOR UPDATE)
 2. Refund balance (add amount back)
 3. Update transaction status → `failed`
@@ -1379,9 +1503,11 @@ Reject a pending withdrawal transaction. The transaction status is updated to `f
 Cancel any pending transaction. For deposits, no balance change occurs. For withdrawals, the balance is refunded.
 
 **Path Parameters:**
+
 - `id` (UUID, required): The transaction ID
 
 **Response:**
+
 ```json
 {
   "message": "Transaction cancelled successfully",
@@ -1400,10 +1526,12 @@ Cancel any pending transaction. For deposits, no balance change occurs. For with
 ```
 
 **Error Responses:**
+
 - `400`: Transaction is not pending
 - `404`: Transaction not found
 
 **Behavior:**
+
 - **Deposit**: Status → `cancelled`, no balance change
 - **Withdrawal**: Status → `cancelled`, balance refunded
 
@@ -1419,6 +1547,7 @@ The application uses the following main tables:
 - **drawn_numbers**: Drawn numbers history (game_id, letter, number, drawn_at)
 
 **User Roles:**
+
 - `user`: Regular bot users (default)
 - `admin`: Admin users with access to admin endpoints
 
@@ -1442,6 +1571,7 @@ To create an admin user:
    ```
 
 **Example:**
+
 ```bash
 # 1. Hash password
 go run scripts/create_admin.go myadminpassword
@@ -1480,10 +1610,12 @@ The game system is **server-authoritative**:
 - ✅ Real-time updates via WebSocket (no polling)
 
 **State Management:**
+
 - **Redis**: Real-time game state, countdown timers, drawn numbers, pub/sub events
 - **PostgreSQL**: Game records, player records, transaction ledger (source of truth)
 
 **Security:**
+
 - No client-side win validation
 - No exposure of other players' cards
 - Bingo claims are locked to prevent race conditions
@@ -1492,11 +1624,13 @@ The game system is **server-authoritative**:
 ## Development
 
 ### Running Tests
+
 ```bash
 go test ./...
 ```
 
 ### Building
+
 ```bash
 make build
 # Or manually:
@@ -1506,6 +1640,7 @@ make build
 ### Using Docker
 
 Start PostgreSQL and Redis:
+
 ```bash
 make docker-up
 # Or:
@@ -1515,6 +1650,7 @@ make docker-up
 The database will be automatically initialized with the schema on first start.
 
 Stop services:
+
 ```bash
 make docker-down
 ```
@@ -1522,4 +1658,3 @@ make docker-down
 ## License
 
 MIT
-
