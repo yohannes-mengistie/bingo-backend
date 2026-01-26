@@ -884,7 +884,9 @@ Claim bingo. The backend validates the claim against drawn numbers.
 - ✅ Winner receives: `(bet × number_of_players) - house_cut`
 - ✅ All balance changes are atomic
 
-### WebSocket: GET /api/v1/ws/game/:gameId
+### WebSocket: ws:///api/v1/ws/game/:gameId
+
+> **📖 For detailed WebSocket documentation, see [WEBSOCKET_API.md](./WEBSOCKET_API.md)**
 
 Connect to real-time game updates via WebSocket.
 
