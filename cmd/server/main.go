@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -141,7 +142,7 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 
 	// Debug middleware for WebSocket routes
 	router.Use(func(c *gin.Context) {
-		if c.Request.URL.Path == "/api/v1/ws/game" || c.Request.URL.Path[:15] == "/api/v1/ws/game" {
+		if c.Request.URL.Path == "/api/v1/ws/game" || strings.HasPrefix(c.Request.URL.Path, "/api/v1/ws/game") {
 			log.Printf("[Middleware] WebSocket request - Method: %s, Path: %s, Query: %s, Upgrade: %s, Connection: %s",
 				c.Request.Method, c.Request.URL.Path, c.Request.URL.RawQuery,
 				c.Request.Header.Get("Upgrade"), c.Request.Header.Get("Connection"))
