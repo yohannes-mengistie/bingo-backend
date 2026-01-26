@@ -127,10 +127,10 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 
 	// CORS middleware
 	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:5173", "http://localhost:3000", "https://winner.up.railway.app", "https://bingo-frontend-production-7ee9.up.railway.app"},
+		AllowOrigins:     []string{"*"}, // Allow all origins for WebSocket compatibility
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Length", "Content-Type", "Authorization"},
-		ExposeHeaders:    []string{"Content-Length"},
+		AllowHeaders:     []string{"Origin", "Content-Length", "Content-Type", "Authorization", "Upgrade", "Connection", "Sec-WebSocket-Key", "Sec-WebSocket-Version", "Sec-WebSocket-Extensions", "Sec-WebSocket-Protocol"},
+		ExposeHeaders:    []string{"Content-Length", "Upgrade", "Connection", "Sec-WebSocket-Accept"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}))
@@ -138,6 +138,16 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 	// Middleware
 	router.Use(gin.Logger())
 	router.Use(gin.Recovery())
+	
+	// Debug middleware for WebSocket routes
+	router.Use(func(c *gin.Context) {
+		if c.Request.URL.Path == "/api/v1/ws/game" || c.Request.URL.Path[:15] == "/api/v1/ws/game" {
+			log.Printf("[Middleware] WebSocket request - Method: %s, Path: %s, Query: %s, Upgrade: %s, Connection: %s",
+				c.Request.Method, c.Request.URL.Path, c.Request.URL.RawQuery,
+				c.Request.Header.Get("Upgrade"), c.Request.Header.Get("Connection"))
+		}
+		c.Next()
+	})
 
 	// Health check endpoint
 	router.GET("/health", func(c *gin.Context) {
@@ -197,6 +207,19 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 		// Connect by game type (public viewing): /ws/game?type=G5
 		// Connect by game ID: /ws/game/:gameId
 		// Note: Order matters - more specific route first
+		// Also handle OPTIONS for CORS preflight
+		api.OPTIONS("/ws/game/:gameId", func(c *gin.Context) {
+			c.Header("Access-Control-Allow-Origin", "*")
+			c.Header("Access-Control-Allow-Methods", "GET, OPTIONS")
+			c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization, Upgrade, Connection, Sec-WebSocket-Key, Sec-WebSocket-Version")
+			c.Status(http.StatusOK)
+		})
+		api.OPTIONS("/ws/game", func(c *gin.Context) {
+			c.Header("Access-Control-Allow-Origin", "*")
+			c.Header("Access-Control-Allow-Methods", "GET, OPTIONS")
+			c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization, Upgrade, Connection, Sec-WebSocket-Key, Sec-WebSocket-Version")
+			c.Status(http.StatusOK)
+		})
 		api.GET("/ws/game/:gameId", wsHandler.HandleWebSocket)
 		api.GET("/ws/game", wsHandler.HandleWebSocket)
 
