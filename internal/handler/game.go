@@ -21,6 +21,7 @@ func NewGameHandler(gameUseCase *usecase.GameUseCase) *GameHandler {
 }
 
 // GetGames handles GET /games?type={betAmount}
+// Returns available games. If no games exist for a game type, creates one automatically.
 func (h *GameHandler) GetGames(c *gin.Context) {
 	var req domain.GetGamesRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -31,12 +32,25 @@ func (h *GameHandler) GetGames(c *gin.Context) {
 		return
 	}
 
+	// Get available games
 	games, err := h.gameUseCase.GetAvailableGames(c.Request.Context(), req.GameType)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
 		})
 		return
+	}
+
+	// If filtering by game type and no games found, create one
+	if req.GameType != nil && len(games) == 0 {
+		game, err := h.gameUseCase.CreateOrGetGame(c.Request.Context(), *req.GameType)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": err.Error(),
+			})
+			return
+		}
+		games = []*domain.Game{game}
 	}
 
 	c.JSON(http.StatusOK, gin.H{

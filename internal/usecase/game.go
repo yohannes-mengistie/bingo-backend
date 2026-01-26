@@ -76,10 +76,12 @@ func (uc *GameUseCase) CreateOrGetGame(ctx context.Context, gameType domain.Game
 		return nil, fmt.Errorf("failed to create game: %w", err)
 	}
 
-	// Save to Redis
-	if err := uc.redisService.SaveGameState(ctx, game); err != nil {
-		// Log error but don't fail
-		fmt.Printf("Warning: failed to save game state to Redis: %v\n", err)
+	// Save to Redis (if available)
+	if uc.redisService != nil {
+		if err := uc.redisService.SaveGameState(ctx, game); err != nil {
+			// Log error but don't fail
+			fmt.Printf("Warning: failed to save game state to Redis: %v\n", err)
+		}
 	}
 
 	return game, nil
