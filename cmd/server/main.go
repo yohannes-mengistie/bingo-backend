@@ -17,6 +17,7 @@ import (
 	"github.com/bingo/backend/internal/repository/postgres"
 	"github.com/bingo/backend/internal/usecase"
 	"github.com/bingo/backend/pkg/jwt"
+	redisPkg "github.com/bingo/backend/pkg/redis"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
@@ -46,10 +47,21 @@ func main() {
 	db.SetMaxIdleConns(10)
 	db.SetConnMaxLifetime(time.Hour)
 
+	// Initialize Redis client
+	redisClient, err := redisPkg.NewClient(cfg)
+	if err != nil {
+		log.Fatalf("Failed to connect to Redis: %v", err)
+	}
+	defer redisClient.Close()
+
 	// Initialize repositories
 	userRepo := postgres.NewUserRepository(db)
 	walletRepo := postgres.NewWalletRepository(db)
 	transactionRepo := postgres.NewTransactionRepository(db)
+	gameRepo := postgres.NewGameRepository(db)
+
+	// Initialize Redis services
+	gameStateService := redisPkg.NewGameStateService(redisClient.GetClient())
 
 	// Initialize JWT service
 	jwtService := jwt.NewService(cfg)
@@ -58,14 +70,17 @@ func main() {
 	userUseCase := usecase.NewUserUseCase(userRepo, walletRepo, db)
 	walletUseCase := usecase.NewWalletUseCase(walletRepo, transactionRepo, userRepo, db)
 	authUseCase := usecase.NewAuthUseCase(userRepo, jwtService)
+	gameUseCase := usecase.NewGameUseCase(gameRepo, walletRepo, transactionRepo, userRepo, db, gameStateService)
 
 	// Initialize handlers
 	userHandler := handler.NewUserHandler(userUseCase)
 	walletHandler := handler.NewWalletHandler(walletUseCase)
 	authHandler := handler.NewAuthHandler(authUseCase)
+	gameHandler := handler.NewGameHandler(gameUseCase)
+	wsHandler := handler.NewWebSocketHandler(redisClient.GetClient(), gameStateService)
 
 	// Setup router
-	router := setupRouter(userHandler, walletHandler, authHandler, jwtService)
+	router := setupRouter(userHandler, walletHandler, authHandler, gameHandler, wsHandler, jwtService)
 
 	// Create HTTP server
 	srv := &http.Server{
@@ -102,7 +117,7 @@ func main() {
 	log.Println("Server exited")
 }
 
-func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.WalletHandler, authHandler *handler.AuthHandler, jwtService *jwt.Service) *gin.Engine {
+func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.WalletHandler, authHandler *handler.AuthHandler, gameHandler *handler.GameHandler, wsHandler *handler.WebSocketHandler, jwtService *jwt.Service) *gin.Engine {
 	// Set Gin to release mode in production
 	if os.Getenv("GIN_MODE") == "release" {
 		gin.SetMode(gin.ReleaseMode)
@@ -161,6 +176,19 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			wallet.GET("/:user_id/withdrawals", walletHandler.GetWithdrawalHistory)
 			wallet.GET("/:user_id/transfers", walletHandler.GetTransferHistory)
 		}
+
+		// Public game endpoints
+		games := api.Group("/games")
+		{
+			games.GET("", gameHandler.GetGames)
+			games.GET("/:gameId/state", gameHandler.GetGameState)
+			games.POST("/:gameId/join", gameHandler.JoinGame)
+			games.POST("/:gameId/leave", gameHandler.LeaveGame)
+			games.POST("/:gameId/bingo", gameHandler.ClaimBingo)
+		}
+
+		// WebSocket endpoint
+		api.GET("/ws/game/:gameId", wsHandler.HandleWebSocket)
 
 		// Protected admin endpoints
 		admin := api.Group("/admin")

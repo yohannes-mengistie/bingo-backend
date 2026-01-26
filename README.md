@@ -7,7 +7,7 @@ A high-performance backend service for the Bingo bot built with Go, Gin framewor
 - **Backend**: Golang (Gin)
 - **Database**: PostgreSQL
 - **Cache**: Redis
-- **Realtime**: WebSockets (to be implemented)
+- **Realtime**: WebSockets
 - **Security**: JWT + HTTPS + Transactions
 
 ## Architecture
@@ -567,6 +567,402 @@ Get the top 10 transfer transactions (both incoming and outgoing) for a user, or
 - `400`: Invalid user ID
 - `500`: Failed to fetch transfer history
 
+## Game Endpoints
+
+The game system implements a real-time multiplayer bingo game with server-authoritative logic. All game operations are atomic and use Redis for real-time state management.
+
+### Game Types
+
+There are 7 fixed game types, each with a fixed bet amount:
+
+| Game Type | Bet Amount |
+|-----------|------------|
+| G1        | 5          |
+| G2        | 7          |
+| G3        | 10         |
+| G4        | 20         |
+| G5        | 50         |
+| G6        | 100        |
+| G7        | 200        |
+
+### Game States
+
+Each game follows this lifecycle:
+
+**WAITING** → **COUNTDOWN** → **DRAWING** → **FINISHED** → **CLOSED**
+
+- **WAITING**: Game is open, users can join (requires minimum 2 players)
+- **COUNTDOWN**: 60-second countdown starts when 2nd player joins, no new players can join
+- **DRAWING**: Numbers are being drawn, players can claim bingo
+- **FINISHED**: Winner confirmed, prize distributed
+- **CLOSED**: Game archived, Redis state cleared
+- **CANCELLED**: Game cancelled (players < 2 during countdown), refunds issued
+
+### Bingo Rules
+
+- **Card**: 5×5 grid with columns B-I-N-G-O
+- **Number Ranges**:
+  - B: 1–15
+  - I: 16–30
+  - N: 31–45 (center cell is free)
+  - G: 46–60
+  - O: 61–75
+- **Cards**: 100 unique cards (ID 1–100), server-generated
+- **Winning**: Any row, column, or diagonal (5 numbers)
+
+### GET /api/v1/games
+
+Get available games (WAITING or COUNTDOWN state).
+
+**Query Parameters:**
+- `type` (optional): Filter by game type (G1, G2, G3, G4, G5, G6, G7)
+
+**Response:**
+```json
+{
+  "games": [
+    {
+      "id": "770e8400-e29b-41d4-a716-446655440000",
+      "game_type": "G1",
+      "state": "WAITING",
+      "bet_amount": 5.00,
+      "min_players": 2,
+      "player_count": 1,
+      "prize_pool": 0.00,
+      "house_cut": 0.05,
+      "winner_id": null,
+      "countdown_ends": null,
+      "started_at": null,
+      "finished_at": null,
+      "created_at": "2024-01-01T00:00:00Z",
+      "updated_at": "2024-01-01T00:00:00Z"
+    }
+  ]
+}
+```
+
+**Example:**
+```bash
+# Get all available games
+curl http://localhost:8080/api/v1/games
+
+# Get available G1 games
+curl http://localhost:8080/api/v1/games?type=G1
+```
+
+### GET /api/v1/games/:gameId/state
+
+Get the current game state (used for initial connection snapshot).
+
+**Path Parameters:**
+- `gameId` (UUID, required): The game ID
+
+**Response:**
+```json
+{
+  "game": {
+    "id": "770e8400-e29b-41d4-a716-446655440000",
+    "game_type": "G1",
+    "state": "DRAWING",
+    "bet_amount": 5.00,
+    "player_count": 3,
+    "prize_pool": 14.25,
+    "house_cut": 0.05,
+    "winner_id": null,
+    "countdown_ends": null,
+    "started_at": "2024-01-01T00:05:00Z",
+    "finished_at": null,
+    "created_at": "2024-01-01T00:00:00Z",
+    "updated_at": "2024-01-01T00:05:00Z"
+  },
+  "drawnNumbers": [
+    {
+      "letter": "B",
+      "number": 7,
+      "drawn_at": "2024-01-01T00:05:05Z"
+    },
+    {
+      "letter": "I",
+      "number": 22,
+      "drawn_at": "2024-01-01T00:05:10Z"
+    }
+  ],
+  "takenCards": [1, 5, 12, 33]
+}
+```
+
+**Error Responses:**
+- `400`: Invalid game ID
+- `404`: Game not found
+
+### POST /api/v1/games/:gameId/join
+
+Join a game. The bet amount is **immediately deducted** from the user's wallet.
+
+**Path Parameters:**
+- `gameId` (UUID, required): The game ID
+
+**Request Body:**
+```json
+{
+  "user_id": "550e8400-e29b-41d4-a716-446655440000",
+  "card_id": 1
+}
+```
+
+**Response:**
+```json
+{
+  "player": {
+    "id": "880e8400-e29b-41d4-a716-446655440000",
+    "game_id": "770e8400-e29b-41d4-a716-446655440000",
+    "user_id": "550e8400-e29b-41d4-a716-446655440000",
+    "card_id": 1,
+    "is_eliminated": false,
+    "joined_at": "2024-01-01T00:00:00Z",
+    "left_at": null
+  }
+}
+```
+
+**Error Responses:**
+- `400`: Invalid card ID, game not accepting players, user already in game, card already taken, insufficient balance
+- `404`: Game not found
+
+**Rules:**
+- ✅ Valid only in WAITING state
+- ✅ Card ID must be between 1 and 100
+- ✅ Card can only be chosen once per game
+- ✅ Bet is deducted immediately
+- ✅ If 2nd player joins, countdown starts automatically
+
+### POST /api/v1/games/:gameId/leave
+
+Leave a game. Refund is issued if game is in WAITING or COUNTDOWN state.
+
+**Path Parameters:**
+- `gameId` (UUID, required): The game ID
+
+**Request Body:**
+```json
+{
+  "user_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**Response:**
+```json
+{
+  "message": "Successfully left the game"
+}
+```
+
+**Error Responses:**
+- `400`: User not in game, cannot leave during drawing phase
+- `404`: Game not found
+
+**Refund Rules:**
+- ✅ **WAITING state**: Full refund
+- ✅ **COUNTDOWN state**: Full refund
+- ❌ **DRAWING state**: No refund (loss)
+
+**Cancellation:**
+- If players drop below 2 during COUNTDOWN, game is cancelled and all players are refunded
+
+### POST /api/v1/games/:gameId/bingo
+
+Claim bingo. The backend validates the claim against drawn numbers.
+
+**Path Parameters:**
+- `gameId` (UUID, required): The game ID
+
+**Request Body:**
+```json
+{
+  "user_id": "550e8400-e29b-41d4-a716-446655440000",
+  "marked_numbers": [7, 22, 35, 48, 65]
+}
+```
+
+**Response (Valid Bingo - Winner):**
+```json
+{
+  "winner": true,
+  "message": "Congratulations! You won!"
+}
+```
+
+**Response (Invalid Bingo - Eliminated):**
+```json
+{
+  "winner": false,
+  "message": "Invalid bingo claim. You have been eliminated."
+}
+```
+
+**Error Responses:**
+- `400`: Game not in drawing phase, user not in game, player already eliminated
+- `404`: Game not found
+
+**Validation:**
+- ✅ Server validates card against drawn numbers
+- ✅ Valid bingo: Any row, column, or diagonal (5 numbers)
+- ✅ Invalid claim: Player is eliminated
+- ✅ Winner receives: `(bet × number_of_players) - house_cut`
+- ✅ All balance changes are atomic
+
+### WebSocket: GET /api/v1/ws/game/:gameId
+
+Connect to real-time game updates via WebSocket.
+
+**Path Parameters:**
+- `gameId` (UUID, required): The game ID
+
+**Query Parameters:**
+- `user_id` (UUID, required): The user ID (must be a player in the game)
+
+**Connection:**
+```javascript
+const ws = new WebSocket('ws://localhost:8080/api/v1/ws/game/{gameId}?user_id={userId}');
+```
+
+**WebSocket Events:**
+
+All events follow this format:
+```json
+{
+  "event": "EVENT_NAME",
+  "data": {}
+}
+```
+
+**Event Types:**
+
+1. **INITIAL_STATE** - Sent on connection
+```json
+{
+  "event": "INITIAL_STATE",
+  "data": {
+    "game": {...},
+    "drawnNumbers": [...],
+    "takenCards": [...],
+    "playerCount": 3,
+    "secondsLeft": 42
+  }
+}
+```
+
+2. **GAME_STATUS** - Game state changes
+```json
+{
+  "event": "GAME_STATUS",
+  "data": {
+    "status": "COUNTDOWN",
+    "secondsLeft": 42
+  }
+}
+```
+
+3. **PLAYER_COUNT** - Player count updates
+```json
+{
+  "event": "PLAYER_COUNT",
+  "data": {
+    "count": 4
+  }
+}
+```
+
+4. **CARDS_TAKEN** - Card selection updates
+```json
+{
+  "event": "CARDS_TAKEN",
+  "data": {
+    "takenCards": [2, 5, 19, 33]
+  }
+}
+```
+
+5. **COUNTDOWN** - Countdown updates (every second)
+```json
+{
+  "event": "COUNTDOWN",
+  "data": {
+    "secondsLeft": 18
+  }
+}
+```
+
+6. **NUMBER_DRAWN** - New number drawn
+```json
+{
+  "event": "NUMBER_DRAWN",
+  "data": {
+    "letter": "B",
+    "number": 12
+  }
+}
+```
+
+7. **PLAYER_JOINED** - Player joined the game
+```json
+{
+  "event": "PLAYER_JOINED",
+  "data": {
+    "user_id": "550e8400-e29b-41d4-a716-446655440000",
+    "card_id": 5
+  }
+}
+```
+
+8. **PLAYER_LEFT** - Player left the game
+```json
+{
+  "event": "PLAYER_LEFT",
+  "data": {
+    "user_id": "550e8400-e29b-41d4-a716-446655440000"
+  }
+}
+```
+
+9. **PLAYER_ELIMINATED** - Player eliminated (invalid bingo claim)
+```json
+{
+  "event": "PLAYER_ELIMINATED",
+  "data": {
+    "userId": "550e8400-e29b-41d4-a716-446655440000"
+  }
+}
+```
+
+10. **WINNER** - Game finished, winner announced
+```json
+{
+  "event": "WINNER",
+  "data": {
+    "userId": "550e8400-e29b-41d4-a716-446655440000",
+    "prize": 950.00
+  }
+}
+```
+
+11. **GAME_CANCELLED** - Game cancelled (insufficient players)
+```json
+{
+  "event": "GAME_CANCELLED",
+  "data": {}
+}
+```
+
+**Error Responses:**
+- `400`: Invalid game ID or user ID
+- `403`: User is not in this game
+
+**Note:**
+- WebSocket connection is read-only for game state
+- All game logic is server-authoritative
+- Events are published via Redis pub/sub for scalability
+
 ## Admin Endpoints
 
 **All admin endpoints require JWT authentication and admin role.**
@@ -1013,11 +1409,14 @@ Cancel any pending transaction. For deposits, no balance change occurs. For with
 
 ## Database Schema
 
-The application uses three main tables:
+The application uses the following main tables:
 
 - **users**: User information (UUID primary key, telegram_id, phone_number, referal_code, role, password)
 - **wallets**: User wallets (user_id foreign key, balance, demo_balance)
 - **transactions**: Transaction ledger (deposit, withdraw, transfer_in, transfer_out)
+- **games**: Game instances (UUID primary key, game_type, state, bet_amount, player_count, prize_pool, winner_id)
+- **game_players**: Players in games (game_id, user_id, card_id, is_eliminated)
+- **drawn_numbers**: Drawn numbers history (game_id, letter, number, drawn_at)
 
 **User Roles:**
 - `user`: Regular bot users (default)
@@ -1061,9 +1460,34 @@ docker exec bingo-postgres psql -U postgres -d bingo -c \
 - Efficient phone number normalization
 - Unique referral code generation with collision handling
 - Row-level locking for concurrent wallet operations
-- Atomic transactions for transfers
+- Atomic transactions for transfers and game operations
+- Redis caching for game state and real-time updates
+- WebSocket pub/sub for scalable real-time communication
 - Graceful server shutdown
 - Request timeouts configured
+
+## Game System Architecture
+
+The game system is **server-authoritative**:
+
+- ✅ All game logic runs on the server
+- ✅ All money handling is atomic and transactional
+- ✅ All winner verification is server-side
+- ✅ Clients never decide outcomes
+- ✅ Cards are generated server-side (100 unique cards)
+- ✅ Number drawing uses secure RNG
+- ✅ Bingo claims are validated server-side
+- ✅ Real-time updates via WebSocket (no polling)
+
+**State Management:**
+- **Redis**: Real-time game state, countdown timers, drawn numbers, pub/sub events
+- **PostgreSQL**: Game records, player records, transaction ledger (source of truth)
+
+**Security:**
+- No client-side win validation
+- No exposure of other players' cards
+- Bingo claims are locked to prevent race conditions
+- All money operations are transactional
 
 ## Development
 
