@@ -1,52 +1,43 @@
 package bingo
 
-import (
-	"crypto/rand"
-	"math/big"
-)
-
 // BingoCard represents a 5x5 bingo card
 type BingoCard struct {
-	ID      int
-	Numbers [5][5]int
+	ID      int       `json:"id"`
+	Numbers [5][5]int `json:"numbers"` // 5x5 grid: [row][col]
 }
 
-// GenerateCard generates a valid bingo card with numbers in the correct ranges
-// B: 1-15, I: 16-30, N: 31-45, G: 46-60, O: 61-75
-// Center cell (N column, row 2) is treated as free (0)
+var (
+	// fixedCards stores all 100 predefined bingo cards
+	// Card ID 1-100, each with fixed numbers
+	fixedCards map[int]*BingoCard
+)
+
+func init() {
+	// Initialize fixed cards on package load
+	fixedCards = generateFixedCards()
+}
+
+// GenerateCard returns a fixed bingo card for the given card ID
+// Card ID must be between 1 and 100
+// Each card ID always returns the same card (deterministic)
 func GenerateCard(cardID int) *BingoCard {
-	card := &BingoCard{
-		ID:      cardID,
-		Numbers: [5][5]int{},
+	if cardID < 1 || cardID > 100 {
+		return nil
 	}
 
-	ranges := [5]struct {
-		min, max int
-	}{
-		{1, 15},   // B
-		{16, 30},  // I
-		{31, 45},  // N
-		{46, 60},  // G
-		{61, 75},  // O
+	card, exists := fixedCards[cardID]
+	if !exists {
+		return nil
 	}
 
-	// Generate numbers for each column
-	for col := 0; col < 5; col++ {
-		numbers := generateUniqueNumbers(ranges[col].min, ranges[col].max, 5)
-		for row := 0; row < 5; row++ {
-			// Center cell (col 2, row 2) is free
-			if col == 2 && row == 2 {
-				card.Numbers[row][col] = 0
-			} else {
-				card.Numbers[row][col] = numbers[row]
-			}
-		}
+	// Return a copy to prevent modification
+	return &BingoCard{
+		ID:      card.ID,
+		Numbers: card.Numbers,
 	}
-
-	return card
 }
 
-// GenerateAllCards generates all 100 unique bingo cards
+// GenerateAllCards returns all 100 fixed bingo cards
 func GenerateAllCards() []*BingoCard {
 	cards := make([]*BingoCard, 100)
 	for i := 1; i <= 100; i++ {
@@ -55,24 +46,92 @@ func GenerateAllCards() []*BingoCard {
 	return cards
 }
 
-// generateUniqueNumbers generates n unique random numbers in the range [min, max]
-func generateUniqueNumbers(min, max, n int) []int {
-	numbers := make([]int, 0, n)
-	used := make(map[int]bool)
+// generateFixedCards creates all 100 fixed bingo cards
+// Each card has unique numbers but the same card ID always has the same numbers
+// Uses a deterministic algorithm to ensure consistency
+func generateFixedCards() map[int]*BingoCard {
+	cards := make(map[int]*BingoCard, 100)
 
-	for len(numbers) < n {
-		// Generate random number in range
-		rangeSize := big.NewInt(int64(max - min + 1))
-		randNum, _ := rand.Int(rand.Reader, rangeSize)
-		num := int(randNum.Int64()) + min
+	// Predefined number pools for each column
+	// B: 1-15, I: 16-30, N: 31-45, G: 46-60, O: 61-75
+	bNumbers := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
+	iNumbers := []int{16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30}
+	nNumbers := []int{31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45}
+	gNumbers := []int{46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60}
+	oNumbers := []int{61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75}
 
-		if !used[num] {
-			used[num] = true
-			numbers = append(numbers, num)
+	// Generate 100 unique cards using deterministic algorithm
+	for cardID := 1; cardID <= 100; cardID++ {
+		card := &BingoCard{
+			ID:      cardID,
+			Numbers: [5][5]int{},
 		}
+
+		// Use cardID as seed for deterministic selection
+		seed := int64(cardID)
+
+		// Generate numbers for each column
+		for col := 0; col < 5; col++ {
+			var source []int
+			switch col {
+			case 0: // B
+				source = bNumbers
+			case 1: // I
+				source = iNumbers
+			case 2: // N
+				source = nNumbers
+			case 3: // G
+				source = gNumbers
+			case 4: // O
+				source = oNumbers
+			}
+
+			// Select 5 unique numbers for this column
+			selected := make(map[int]bool)
+			rowIndex := 0
+
+			for row := 0; row < 5; row++ {
+				// Center cell (col 2, row 2) is free
+				if col == 2 && row == 2 {
+					card.Numbers[row][col] = 0
+					continue
+				}
+
+				// Deterministic selection using cardID and position
+				// This ensures same cardID always gets same numbers
+				attempts := 0
+				for attempts < len(source) {
+					// Use a deterministic index based on cardID, column, and row
+					index := int((seed*int64(col+1)*int64(row+1) + int64(attempts)) % int64(len(source)))
+					num := source[index]
+
+					if !selected[num] {
+						card.Numbers[row][col] = num
+						selected[num] = true
+						break
+					}
+					attempts++
+				}
+
+				// Fallback: if all numbers are selected, pick first available
+				if attempts >= len(source) {
+					for _, num := range source {
+						if !selected[num] {
+							card.Numbers[row][col] = num
+							selected[num] = true
+							break
+						}
+					}
+				}
+
+				rowIndex++
+			}
+		}
+
+		cards[cardID] = card
 	}
 
-	return numbers
+	return cards
 }
 
 // ValidateBingo checks if the marked numbers form a valid bingo
@@ -166,4 +225,3 @@ func GetLetterForNumber(num int) string {
 		return ""
 	}
 }
-
