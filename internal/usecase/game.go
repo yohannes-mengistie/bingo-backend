@@ -594,6 +594,11 @@ func (uc *GameUseCase) GetGameState(ctx context.Context, gameID uuid.UUID) (*dom
 	return game, drawnNumbers, takenCards, nil
 }
 
+// GetPlayerInGame checks if a player is in a game (for WebSocket validation)
+func (uc *GameUseCase) GetPlayerInGame(ctx context.Context, gameID, userID uuid.UUID) (*domain.GamePlayer, error) {
+	return uc.gameRepo.FindPlayer(ctx, gameID, userID)
+}
+
 // GetCardData returns the card data for a given card ID
 func (uc *GameUseCase) GetCardData(ctx context.Context, cardID int) (*bingo.BingoCard, error) {
 	// Validate card ID

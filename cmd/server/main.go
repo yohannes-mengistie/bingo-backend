@@ -77,7 +77,7 @@ func main() {
 	walletHandler := handler.NewWalletHandler(walletUseCase)
 	authHandler := handler.NewAuthHandler(authUseCase)
 	gameHandler := handler.NewGameHandler(gameUseCase)
-	wsHandler := handler.NewWebSocketHandler(redisClient.GetClient(), gameStateService)
+	wsHandler := handler.NewWebSocketHandler(redisClient.GetClient(), gameStateService, gameUseCase)
 
 	// Setup router
 	router := setupRouter(userHandler, walletHandler, authHandler, gameHandler, wsHandler, jwtService)

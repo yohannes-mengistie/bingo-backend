@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bingo/backend/internal/domain"
+	"github.com/bingo/backend/internal/usecase"
 	redisPkg "github.com/bingo/backend/pkg/redis"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -28,15 +29,17 @@ var upgrader = websocket.Upgrader{
 type WebSocketHandler struct {
 	redisClient *redis.Client
 	gameService *redisPkg.GameStateService
+	gameUseCase *usecase.GameUseCase                // Add game use case for database checks
 	clients     map[string]map[*websocket.Conn]bool // gameID -> connections
 	mu          sync.RWMutex
 }
 
 // NewWebSocketHandler creates a new WebSocket handler
-func NewWebSocketHandler(redisClient *redis.Client, gameService *redisPkg.GameStateService) *WebSocketHandler {
+func NewWebSocketHandler(redisClient *redis.Client, gameService *redisPkg.GameStateService, gameUseCase *usecase.GameUseCase) *WebSocketHandler {
 	return &WebSocketHandler{
 		redisClient: redisClient,
 		gameService: gameService,
+		gameUseCase: gameUseCase,
 		clients:     make(map[string]map[*websocket.Conn]bool),
 	}
 }
@@ -69,15 +72,31 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 		return
 	}
 
-	// Verify user is in the game (if Redis is available)
-	if h.gameService != nil {
-		isInGame, err := h.gameService.IsPlayerInGame(c.Request.Context(), gameID, userID)
-		if err != nil || !isInGame {
-			c.JSON(http.StatusForbidden, gin.H{
-				"error": "User is not in this game",
-			})
-			return
+	// Verify user is in the game
+	// First try Redis, then fallback to database
+	isInGame := false
+	if h.gameService != nil && h.redisClient != nil {
+		var err error
+		isInGame, err = h.gameService.IsPlayerInGame(c.Request.Context(), gameID, userID)
+		if err != nil {
+			log.Printf("Warning: Redis check failed for user %s in game %s: %v", userID, gameID, err)
 		}
+	}
+
+	// Fallback to database check if Redis check failed or Redis not available
+	if !isInGame && h.gameUseCase != nil {
+		// Check via game repository
+		player, err := h.gameUseCase.GetPlayerInGame(c.Request.Context(), gameID, userID)
+		if err == nil && player != nil {
+			isInGame = true
+		}
+	}
+
+	if !isInGame {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "User is not in this game. Please join the game first via POST /api/v1/games/:gameId/join",
+		})
+		return
 	}
 
 	// Upgrade connection
@@ -106,21 +125,12 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 		h.mu.Unlock()
 	}()
 
-	// Subscribe to Redis pub/sub (if Redis is available)
+	// Subscribe to Redis pub/sub (Redis is already verified above)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	var pubsub *redis.PubSub
-	if h.redisClient != nil {
-		pubsub = h.redisClient.Subscribe(ctx, redisPkg.GameChannel(gameIDStr))
-		defer pubsub.Close()
-	} else {
-		// If Redis is not available, return error
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error": "WebSocket requires Redis to be configured",
-		})
-		return
-	}
+	pubsub := h.redisClient.Subscribe(ctx, redisPkg.GameChannel(gameIDStr))
+	defer pubsub.Close()
 
 	// Send initial game state
 	h.sendInitialState(conn, gameID)
@@ -231,4 +241,3 @@ func (h *WebSocketHandler) sendInitialState(conn *websocket.Conn, gameID uuid.UU
 	data, _ := json.Marshal(initialState)
 	conn.WriteMessage(websocket.TextMessage, data)
 }
-
