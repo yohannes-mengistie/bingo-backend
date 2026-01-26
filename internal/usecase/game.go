@@ -384,7 +384,7 @@ func (uc *GameUseCase) startDrawing(ctx context.Context, gameID uuid.UUID) {
 
 // drawNumbers draws numbers periodically
 func (uc *GameUseCase) drawNumbers(ctx context.Context, gameID uuid.UUID) {
-	ticker := time.NewTicker(5 * time.Second) // Draw every 5 seconds
+	ticker := time.NewTicker(1 * time.Second) // Draw every 1 seconds
 	defer ticker.Stop()
 
 	for {
@@ -457,17 +457,41 @@ func (uc *GameUseCase) ClaimBingo(ctx context.Context, gameID uuid.UUID, req dom
 		return false, fmt.Errorf("failed to get drawn numbers: %w", err)
 	}
 
-	// Convert to list of numbers
-	drawn := make([]int, len(drawnNumbers))
-	for i, dn := range drawnNumbers {
-		drawn[i] = dn.Number
+	// Convert to set for quick lookup
+	drawnSet := make(map[int]bool)
+	for _, dn := range drawnNumbers {
+		drawnSet[dn.Number] = true
 	}
 
 	// Generate card
 	card := bingo.GenerateCard(player.CardID)
+	if card == nil {
+		return false, fmt.Errorf("invalid card ID")
+	}
 
-	// Validate bingo
-	isValid := bingo.ValidateBingo(card, drawn)
+	// Convert marked positions (0-24) to actual card numbers
+	markedNumbers := make([]int, 0, len(req.MarkedNumbers))
+	for _, pos := range req.MarkedNumbers {
+		if pos < 0 || pos >= 25 {
+			return false, fmt.Errorf("invalid position: %d (must be 0-24)", pos)
+		}
+
+		// Convert position to row/col: position = row * 5 + col
+		row := pos / 5
+		col := pos % 5
+		cardNumber := card.Numbers[row][col]
+
+		// Verify this number was actually drawn
+		if cardNumber != 0 && !drawnSet[cardNumber] {
+			return false, fmt.Errorf("number %d at position %d was not drawn", cardNumber, pos)
+		}
+
+		// Add to marked numbers (include 0 for center cell)
+		markedNumbers = append(markedNumbers, cardNumber)
+	}
+
+	// Validate bingo with the marked numbers
+	isValid := bingo.ValidateBingo(card, markedNumbers)
 
 	// Start transaction
 	tx, err := uc.db.BeginTx(ctx, nil)
