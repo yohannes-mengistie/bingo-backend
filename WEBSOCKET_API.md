@@ -400,8 +400,7 @@ The server sends ping messages every 54 seconds to keep the connection alive. Th
 ```typescript
 class GameWebSocket {
   private ws: WebSocket | null = null;
-  private gameId: string;
-  private userId: string;
+  private gameId: string; // Can be game type (G1-G7) or game ID (UUID)
   private onMessageCallback: ((message: any) => void) | null = null;
 
   constructor(gameTypeOrId: string) {
