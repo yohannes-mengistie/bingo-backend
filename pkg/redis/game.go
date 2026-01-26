@@ -1,0 +1,194 @@
+package redis
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/bingo/backend/internal/domain"
+	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
+)
+
+// GameStateService handles game state in Redis
+type GameStateService struct {
+	client *redis.Client
+}
+
+// NewGameStateService creates a new game state service
+func NewGameStateService(client *redis.Client) *GameStateService {
+	return &GameStateService{client: client}
+}
+
+// SaveGameState saves game state to Redis
+func (s *GameStateService) SaveGameState(ctx context.Context, game *domain.Game) error {
+	key := GameStateKey(game.ID.String())
+
+	data, err := json.Marshal(game)
+	if err != nil {
+		return fmt.Errorf("failed to marshal game: %w", err)
+	}
+
+	return s.client.Set(ctx, key, data, 24*time.Hour).Err()
+}
+
+// GetGameState gets game state from Redis
+func (s *GameStateService) GetGameState(ctx context.Context, gameID uuid.UUID) (*domain.Game, error) {
+	key := GameStateKey(gameID.String())
+
+	data, err := s.client.Get(ctx, key).Bytes()
+	if err == redis.Nil {
+		return nil, fmt.Errorf("game state not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get game state: %w", err)
+	}
+
+	var game domain.Game
+	if err := json.Unmarshal(data, &game); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal game: %w", err)
+	}
+
+	return &game, nil
+}
+
+// AddPlayer adds a player to Redis set
+func (s *GameStateService) AddPlayer(ctx context.Context, gameID uuid.UUID, userID uuid.UUID) error {
+	key := GamePlayersKey(gameID.String())
+	return s.client.SAdd(ctx, key, userID.String()).Err()
+}
+
+// RemovePlayer removes a player from Redis set
+func (s *GameStateService) RemovePlayer(ctx context.Context, gameID uuid.UUID, userID uuid.UUID) error {
+	key := GamePlayersKey(gameID.String())
+	return s.client.SRem(ctx, key, userID.String()).Err()
+}
+
+// GetPlayerCount gets the number of players
+func (s *GameStateService) GetPlayerCount(ctx context.Context, gameID uuid.UUID) (int64, error) {
+	key := GamePlayersKey(gameID.String())
+	return s.client.SCard(ctx, key).Result()
+}
+
+// IsPlayerInGame checks if a player is in the game
+func (s *GameStateService) IsPlayerInGame(ctx context.Context, gameID, userID uuid.UUID) (bool, error) {
+	key := GamePlayersKey(gameID.String())
+	return s.client.SIsMember(ctx, key, userID.String()).Result()
+}
+
+// AddDrawnNumber adds a drawn number to Redis list
+func (s *GameStateService) AddDrawnNumber(ctx context.Context, gameID uuid.UUID, number domain.DrawnNumber) error {
+	key := GameDrawnNumbersKey(gameID.String())
+
+	data, err := json.Marshal(number)
+	if err != nil {
+		return fmt.Errorf("failed to marshal drawn number: %w", err)
+	}
+
+	return s.client.RPush(ctx, key, data).Err()
+}
+
+// GetDrawnNumbers gets all drawn numbers
+func (s *GameStateService) GetDrawnNumbers(ctx context.Context, gameID uuid.UUID) ([]domain.DrawnNumber, error) {
+	key := GameDrawnNumbersKey(gameID.String())
+
+	data, err := s.client.LRange(ctx, key, 0, -1).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get drawn numbers: %w", err)
+	}
+
+	numbers := make([]domain.DrawnNumber, 0, len(data))
+	for _, item := range data {
+		var number domain.DrawnNumber
+		if err := json.Unmarshal([]byte(item), &number); err != nil {
+			continue
+		}
+		numbers = append(numbers, number)
+	}
+
+	return numbers, nil
+}
+
+// AddTakenCard adds a taken card ID to Redis set
+func (s *GameStateService) AddTakenCard(ctx context.Context, gameID uuid.UUID, cardID int) error {
+	key := GameTakenCardsKey(gameID.String())
+	return s.client.SAdd(ctx, key, cardID).Err()
+}
+
+// GetTakenCards gets all taken card IDs
+func (s *GameStateService) GetTakenCards(ctx context.Context, gameID uuid.UUID) ([]int, error) {
+	key := GameTakenCardsKey(gameID.String())
+
+	cardIDs, err := s.client.SMembers(ctx, key).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get taken cards: %w", err)
+	}
+
+	cards := make([]int, 0, len(cardIDs))
+	for _, idStr := range cardIDs {
+		var cardID int
+		if _, err := fmt.Sscanf(idStr, "%d", &cardID); err == nil {
+			cards = append(cards, cardID)
+		}
+	}
+
+	return cards, nil
+}
+
+// SetCountdown sets the countdown end time
+func (s *GameStateService) SetCountdown(ctx context.Context, gameID uuid.UUID, endsAt time.Time) error {
+	key := GameCountdownKey(gameID.String())
+	return s.client.Set(ctx, key, endsAt.Unix(), 2*time.Minute).Err()
+}
+
+// GetCountdown gets the countdown end time
+func (s *GameStateService) GetCountdown(ctx context.Context, gameID uuid.UUID) (time.Time, error) {
+	key := GameCountdownKey(gameID.String())
+
+	seconds, err := s.client.Get(ctx, key).Int64()
+	if err == redis.Nil {
+		return time.Time{}, fmt.Errorf("countdown not found")
+	}
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to get countdown: %w", err)
+	}
+
+	return time.Unix(seconds, 0), nil
+}
+
+// PublishEvent publishes a game event to Redis pub/sub
+func (s *GameStateService) PublishEvent(ctx context.Context, gameID uuid.UUID, event string, data interface{}) error {
+	channel := GameChannel(gameID.String())
+
+	message := map[string]interface{}{
+		"event": event,
+		"data":  data,
+	}
+
+	messageJSON, err := json.Marshal(message)
+	if err != nil {
+		return fmt.Errorf("failed to marshal event: %w", err)
+	}
+
+	return s.client.Publish(ctx, channel, messageJSON).Err()
+}
+
+// DeleteGameState deletes all game state from Redis
+func (s *GameStateService) DeleteGameState(ctx context.Context, gameID uuid.UUID) error {
+	keys := []string{
+		GameStateKey(gameID.String()),
+		GamePlayersKey(gameID.String()),
+		GameDrawnNumbersKey(gameID.String()),
+		GameTakenCardsKey(gameID.String()),
+		GameCountdownKey(gameID.String()),
+	}
+
+	for _, key := range keys {
+		if err := s.client.Del(ctx, key).Err(); err != nil {
+			return fmt.Errorf("failed to delete key %s: %w", key, err)
+		}
+	}
+
+	return nil
+}
