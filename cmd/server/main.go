@@ -196,8 +196,9 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 		// WebSocket endpoints
 		// Connect by game type (public viewing): /ws/game?type=G5
 		// Connect by game ID: /ws/game/:gameId
-		api.GET("/ws/game", wsHandler.HandleWebSocket)
+		// Note: Order matters - more specific route first
 		api.GET("/ws/game/:gameId", wsHandler.HandleWebSocket)
+		api.GET("/ws/game", wsHandler.HandleWebSocket)
 
 		// Protected admin endpoints
 		admin := api.Group("/admin")

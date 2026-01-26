@@ -72,6 +72,10 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 
 	// Check if connecting by game type (public viewing) or game ID
 	gameTypeStr := c.Query("type")
+	gameIDParam := c.Param("gameId")
+	
+	log.Printf("WebSocket connection attempt - type: %s, gameId param: %s", gameTypeStr, gameIDParam)
+
 	if gameTypeStr != "" {
 		// Connect by game type - find or create an available game
 		gameType := domain.GameType(gameTypeStr)
@@ -92,28 +96,37 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 
 		game, err := h.gameUseCase.CreateOrGetGame(c.Request.Context(), gameType)
 		if err != nil {
+			log.Printf("Error creating/getting game: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"error": fmt.Sprintf("Failed to get game: %v", err),
 			})
 			return
 		}
-		gameID = game.ID
-	} else {
-		// Connect by game ID (from path parameter)
-		gameIDStr := c.Param("gameId")
-		if gameIDStr == "" {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Either provide 'type' query parameter (e.g., ?type=G5) or game ID in path",
+		if game == nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "Failed to create or retrieve game",
 			})
 			return
 		}
-		gameID, err = uuid.Parse(gameIDStr)
+		gameID = game.ID
+		log.Printf("WebSocket connecting to game %s (type: %s)", gameID, gameType)
+	} else if gameIDParam != "" {
+		// Connect by game ID (from path parameter)
+		gameID, err = uuid.Parse(gameIDParam)
 		if err != nil {
+			log.Printf("Invalid game ID: %s", gameIDParam)
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error": "Invalid game ID",
 			})
 			return
 		}
+		log.Printf("Connecting to game ID: %s", gameID)
+	} else {
+		log.Printf("No game type or game ID provided")
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Either provide 'type' query parameter (e.g., ?type=G5) or game ID in path",
+		})
+		return
 	}
 
 	// Check Redis availability first (before upgrading connection)
@@ -224,30 +237,71 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 
 // sendInitialState sends the initial game state to the client
 func (h *WebSocketHandler) sendInitialState(conn *websocket.Conn, gameID uuid.UUID) {
-	if h.gameService == nil {
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	game, err := h.gameService.GetGameState(ctx, gameID)
-	if err != nil {
+	// Try Redis first, fallback to database
+	var game *domain.Game
+	var err error
+	
+	if h.gameService != nil && h.redisClient != nil {
+		game, err = h.gameService.GetGameState(ctx, gameID)
+	}
+	
+	// Fallback to database if Redis fails or not available
+	if game == nil && h.gameUseCase != nil {
+		game, _, _, err = h.gameUseCase.GetGameState(ctx, gameID)
+	}
+	
+	if err != nil || game == nil {
+		log.Printf("Warning: Could not get game state for %s: %v", gameID, err)
+		// Send minimal state
+		initialState := map[string]interface{}{
+			"event": "INITIAL_STATE",
+			"data": map[string]interface{}{
+				"game": nil,
+				"drawnNumbers": []interface{}{},
+				"takenCards": []int{},
+				"playerCount": 0,
+				"secondsLeft": 0,
+			},
+		}
+		data, _ := json.Marshal(initialState)
+		conn.WriteMessage(websocket.TextMessage, data)
 		return
 	}
 
-	drawnNumbers, _ := h.gameService.GetDrawnNumbers(ctx, gameID)
-	takenCards, _ := h.gameService.GetTakenCards(ctx, gameID)
+	var drawnNumbers []domain.DrawnNumber
+	var takenCards []int
+	var playerCount int64
 
-	// Get player count
-	playerCount, _ := h.gameService.GetPlayerCount(ctx, gameID)
+	if h.gameService != nil && h.redisClient != nil {
+		drawnNumbers, _ = h.gameService.GetDrawnNumbers(ctx, gameID)
+		takenCards, _ = h.gameService.GetTakenCards(ctx, gameID)
+		playerCount, _ = h.gameService.GetPlayerCount(ctx, gameID)
+	} else if h.gameUseCase != nil {
+		// Fallback to database
+		_, drawnNumbers, takenCards, _ = h.gameUseCase.GetGameState(ctx, gameID)
+		// Player count from game
+		if game != nil {
+			playerCount = int64(game.PlayerCount)
+		}
+	}
 
 	// Get countdown if in countdown state
 	var secondsLeft int
 	if game.State == domain.GameStateCountdown {
-		countdownEnds, err := h.gameService.GetCountdown(ctx, gameID)
-		if err == nil {
-			secondsLeft = int(time.Until(countdownEnds).Seconds())
+		if h.gameService != nil && h.redisClient != nil {
+			countdownEnds, err := h.gameService.GetCountdown(ctx, gameID)
+			if err == nil {
+				secondsLeft = int(time.Until(countdownEnds).Seconds())
+				if secondsLeft < 0 {
+					secondsLeft = 0
+				}
+			}
+		} else if game.CountdownEnds != nil {
+			// Fallback to database
+			secondsLeft = int(time.Until(*game.CountdownEnds).Seconds())
 			if secondsLeft < 0 {
 				secondsLeft = 0
 			}
