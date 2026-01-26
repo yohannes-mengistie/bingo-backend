@@ -69,82 +69,128 @@ func NewWebSocketHandler(redisClient *redis.Client, gameService *redisPkg.GameSt
 func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 	var gameID uuid.UUID
 	var err error
+	var errorReason string
 
 	// Check if connecting by game type (public viewing) or game ID
 	gameTypeStr := c.Query("type")
 	gameIDParam := c.Param("gameId")
 	
-	log.Printf("WebSocket connection attempt - type: %s, gameId param: %s", gameTypeStr, gameIDParam)
+	log.Printf("[WebSocket] ===== Connection attempt ===== Path: %s, Query: %s, gameId param: '%s'", 
+		c.Request.URL.Path, c.Request.URL.RawQuery, gameIDParam)
 
 	if gameTypeStr != "" {
 		// Connect by game type - find or create an available game
 		gameType := domain.GameType(gameTypeStr)
 		if !isValidGameType(gameType) {
+			errorReason = fmt.Sprintf("Invalid game type '%s'. Must be one of: G1, G2, G3, G4, G5, G6, G7", gameTypeStr)
+			log.Printf("[WebSocket] ERROR: %s", errorReason)
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Invalid game type. Must be one of: G1, G2, G3, G4, G5, G6, G7",
+				"error": errorReason,
+				"reason": errorReason,
 			})
 			return
 		}
 
 		// Find or create a game of this type
 		if h.gameUseCase == nil {
+			errorReason = "Game use case service is not initialized (nil pointer)"
+			log.Printf("[WebSocket] ERROR: %s", errorReason)
 			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "Game service not available",
+				"error": errorReason,
+				"reason": errorReason,
 			})
 			return
 		}
 
+		log.Printf("[WebSocket] Creating or getting game of type %s", gameType)
 		game, err := h.gameUseCase.CreateOrGetGame(c.Request.Context(), gameType)
 		if err != nil {
-			log.Printf("Error creating/getting game: %v", err)
+			errorReason = fmt.Sprintf("Failed to create or get game of type %s: %v", gameType, err)
+			log.Printf("[WebSocket] ERROR: %s", errorReason)
 			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": fmt.Sprintf("Failed to get game: %v", err),
+				"error": errorReason,
+				"reason": errorReason,
 			})
 			return
 		}
 		if game == nil {
+			errorReason = fmt.Sprintf("Game service returned nil game for type %s", gameType)
+			log.Printf("[WebSocket] ERROR: %s", errorReason)
 			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "Failed to create or retrieve game",
+				"error": errorReason,
+				"reason": errorReason,
 			})
 			return
 		}
 		gameID = game.ID
-		log.Printf("WebSocket connecting to game %s (type: %s)", gameID, gameType)
+		log.Printf("[WebSocket] ✓ Found/created game %s (type: %s, state: %s, players: %d)", 
+			gameID, gameType, game.State, game.PlayerCount)
 	} else if gameIDParam != "" {
 		// Connect by game ID (from path parameter)
 		gameID, err = uuid.Parse(gameIDParam)
 		if err != nil {
-			log.Printf("Invalid game ID: %s", gameIDParam)
+			errorReason = fmt.Sprintf("Invalid game ID format '%s': %v", gameIDParam, err)
+			log.Printf("[WebSocket] ERROR: %s", errorReason)
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Invalid game ID",
+				"error": errorReason,
+				"reason": errorReason,
 			})
 			return
 		}
-		log.Printf("Connecting to game ID: %s", gameID)
+		log.Printf("[WebSocket] ✓ Parsed game ID: %s", gameID)
 	} else {
-		log.Printf("No game type or game ID provided")
+		errorReason = "No game type or game ID provided. Use ?type=G5 or /ws/game/:gameId"
+		log.Printf("[WebSocket] ERROR: %s", errorReason)
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Either provide 'type' query parameter (e.g., ?type=G5) or game ID in path",
+			"error": errorReason,
+			"reason": errorReason,
 		})
 		return
 	}
 
 	// Check Redis availability first (before upgrading connection)
 	if h.redisClient == nil {
+		errorReason = "Redis client is nil. WebSocket requires Redis for real-time updates."
+		log.Printf("[WebSocket] ERROR: %s", errorReason)
 		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error": "WebSocket requires Redis to be configured",
+			"error": errorReason,
+			"reason": errorReason,
 		})
 		return
 	}
 
+	// Verify Redis connection
+	ctx := c.Request.Context()
+	log.Printf("[WebSocket] Testing Redis connection...")
+	if err := h.redisClient.Ping(ctx).Err(); err != nil {
+		errorReason = fmt.Sprintf("Redis ping failed: %v. Check Redis connection and credentials.", err)
+		log.Printf("[WebSocket] ERROR: %s", errorReason)
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": errorReason,
+			"reason": errorReason,
+		})
+		return
+	}
+	log.Printf("[WebSocket] ✓ Redis connection verified")
+
 	gameIDStr := gameID.String()
+	log.Printf("[WebSocket] All pre-checks passed. Attempting WebSocket upgrade for game %s", gameIDStr)
 
 	// Upgrade connection
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		log.Printf("WebSocket upgrade error: %v", err)
+		errorReason = fmt.Sprintf("WebSocket upgrade failed: %v. Check if connection is already upgraded or headers are correct.", err)
+		log.Printf("[WebSocket] ERROR: %s", errorReason)
+		// Try to send error response if connection not yet upgraded
+		if !c.Writer.Written() {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": errorReason,
+				"reason": errorReason,
+			})
+		}
 		return
 	}
+	log.Printf("[WebSocket] ✓ Connection upgraded successfully for game %s", gameIDStr)
 	defer conn.Close()
 
 	// Add client
@@ -169,8 +215,19 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	pubsub := h.redisClient.Subscribe(ctx, redisPkg.GameChannel(gameIDStr))
+	channel := redisPkg.GameChannel(gameIDStr)
+	log.Printf("[WebSocket] Subscribing to Redis channel: %s", channel)
+	pubsub := h.redisClient.Subscribe(ctx, channel)
 	defer pubsub.Close()
+
+	// Verify subscription
+	_, err = pubsub.ReceiveTimeout(ctx, 2*time.Second)
+	if err != nil {
+		log.Printf("[WebSocket] Warning: Subscription verification failed: %v", err)
+		// Continue anyway, subscription might still work
+	} else {
+		log.Printf("[WebSocket] Successfully subscribed to Redis channel")
+	}
 
 	// Send initial game state
 	h.sendInitialState(conn, gameID)
@@ -218,6 +275,7 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 		case <-ticker.C:
 			// Send ping
 			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				log.Printf("[WebSocket] Error sending ping for game %s: %v", gameIDStr, err)
 				return
 			}
 
@@ -243,27 +301,27 @@ func (h *WebSocketHandler) sendInitialState(conn *websocket.Conn, gameID uuid.UU
 	// Try Redis first, fallback to database
 	var game *domain.Game
 	var err error
-	
+
 	if h.gameService != nil && h.redisClient != nil {
 		game, err = h.gameService.GetGameState(ctx, gameID)
 	}
-	
+
 	// Fallback to database if Redis fails or not available
 	if game == nil && h.gameUseCase != nil {
 		game, _, _, err = h.gameUseCase.GetGameState(ctx, gameID)
 	}
-	
+
 	if err != nil || game == nil {
 		log.Printf("Warning: Could not get game state for %s: %v", gameID, err)
 		// Send minimal state
 		initialState := map[string]interface{}{
 			"event": "INITIAL_STATE",
 			"data": map[string]interface{}{
-				"game": nil,
+				"game":         nil,
 				"drawnNumbers": []interface{}{},
-				"takenCards": []int{},
-				"playerCount": 0,
-				"secondsLeft": 0,
+				"takenCards":   []int{},
+				"playerCount":  0,
+				"secondsLeft":  0,
 			},
 		}
 		data, _ := json.Marshal(initialState)
