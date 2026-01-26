@@ -38,6 +38,7 @@ func (h *GameHandler) GetGames(c *gin.Context) {
 	if err != nil {
 		// Log the error for debugging
 		fmt.Printf("[GetGames] Error getting available games (type: %v): %v\n", req.GameType, err)
+		// Ensure we send a proper JSON response even if there's an error
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to get available games",
 			"details": err.Error(),

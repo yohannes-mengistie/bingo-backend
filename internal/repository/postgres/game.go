@@ -186,6 +186,11 @@ func (r *gameRepository) FindAvailable(ctx context.Context, gameType *domain.Gam
 		games = append(games, game)
 	}
 
+	// Check for errors from iterating over rows
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating games: %w", err)
+	}
+
 	return games, nil
 }
 

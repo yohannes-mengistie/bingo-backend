@@ -279,7 +279,7 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 
 	// Channel to signal connection close from read goroutine
 	readDone := make(chan struct{})
-	
+
 	// Separate goroutine to read client messages (handles pong responses)
 	go func() {
 		defer close(readDone)
@@ -304,8 +304,8 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 					return
 				}
 				// Check if it's a "use of closed network connection" error (connection already closed)
-				if err.Error() == "use of closed network connection" || 
-				   err.Error() == "repeated read on failed websocket connection" {
+				if err.Error() == "use of closed network connection" ||
+					err.Error() == "repeated read on failed websocket connection" {
 					log.Printf("[WebSocket] Connection already closed for game %s", gameIDStr)
 					return
 				}
