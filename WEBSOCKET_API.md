@@ -326,31 +326,50 @@ Sent when a player wins the game.
 
 ### Connection Errors
 
-If the connection fails, the server will return an HTTP error before upgrading to WebSocket:
+If the connection fails, the server will return an HTTP error before upgrading to WebSocket. All error responses include both `error` and `reason` fields for detailed debugging:
 
 **400 Bad Request:**
 ```json
 {
-  "error": "Invalid game ID"
+  "error": "Invalid game ID format 'invalid-uuid': invalid UUID format",
+  "reason": "Invalid game ID format 'invalid-uuid': invalid UUID format"
 }
 ```
 
 ```json
 {
-  "error": "Invalid game type. Must be one of: G1, G2, G3, G4, G5, G6, G7"
+  "error": "Invalid game type 'G10'. Must be one of: G1, G2, G3, G4, G5, G6, G7",
+  "reason": "Invalid game type 'G10'. Must be one of: G1, G2, G3, G4, G5, G6, G7"
 }
 ```
 
 ```json
 {
-  "error": "Either provide 'type' query parameter (e.g., ?type=G5) or game ID in path"
+  "error": "No game type or game ID provided. Use ?type=G5 or /ws/game/:gameId",
+  "reason": "No game type or game ID provided. Use ?type=G5 or /ws/game/:gameId"
+}
+```
+
+**500 Internal Server Error:**
+```json
+{
+  "error": "Failed to create or get game of type G5: database error",
+  "reason": "Failed to create or get game of type G5: database error"
 }
 ```
 
 **503 Service Unavailable:**
 ```json
 {
-  "error": "WebSocket requires Redis to be configured"
+  "error": "Redis client is nil. WebSocket requires Redis for real-time updates.",
+  "reason": "Redis client is nil. WebSocket requires Redis for real-time updates."
+}
+```
+
+```json
+{
+  "error": "Redis ping failed: connection refused. Check Redis connection and credentials.",
+  "reason": "Redis ping failed: connection refused. Check Redis connection and credentials."
 }
 ```
 
@@ -358,12 +377,23 @@ If the connection fails, the server will return an HTTP error before upgrading t
 
 - `1000`: Normal closure
 - `1001`: Going away (server shutdown)
-- `1006`: Abnormal closure (connection lost)
+- `1006`: Abnormal closure (connection lost, network error, or timeout)
 - `1011`: Internal server error
+
+**Note:** The server handles connection failures gracefully. If you see a 1006 error, it may indicate:
+- Network connectivity issues
+- Server restart or deployment
+- Redis connection issues (though the connection should fail before upgrade if Redis is unavailable)
 
 ## Keepalive
 
-The server sends ping messages every 54 seconds. The client should respond with pong automatically (handled by the browser WebSocket API).
+The server sends ping messages every 54 seconds to keep the connection alive. The client should respond with pong automatically (handled by the browser WebSocket API). The read deadline is set to 60 seconds, so if no pong is received, the connection will timeout.
+
+**Connection Management:**
+- Server sends ping every 54 seconds
+- Read deadline is 60 seconds (automatically extended on pong)
+- Connection will close if no pong received within 60 seconds
+- All connection errors are logged server-side for debugging
 
 ## Complete Example
 
@@ -374,14 +404,22 @@ class GameWebSocket {
   private userId: string;
   private onMessageCallback: ((message: any) => void) | null = null;
 
-  constructor(gameId: string, userId: string) {
-    this.gameId = gameId;
-    this.userId = userId;
+  constructor(gameTypeOrId: string) {
+    // Can be either game type (G1-G7) or game ID (UUID)
+    this.gameId = gameTypeOrId;
   }
 
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const wsUrl = `ws://localhost:8080/api/v1/ws/game/${this.gameId}?user_id=${this.userId}`;
+      // Connect by game type (recommended) or game ID
+      let wsUrl: string;
+      if (this.gameId.match(/^G[1-7]$/)) {
+        // Game type
+        wsUrl = `ws://localhost:8080/api/v1/ws/game?type=${this.gameId}`;
+      } else {
+        // Game ID (UUID)
+        wsUrl = `ws://localhost:8080/api/v1/ws/game/${this.gameId}`;
+      }
       this.ws = new WebSocket(wsUrl);
 
       this.ws.onopen = () => {
@@ -456,8 +494,11 @@ class GameWebSocket {
   }
 }
 
-// Usage - by game type
-const gameWS = new GameWebSocket("G5"); // or use gameId for specific game
+// Usage - by game type (recommended)
+const gameWS = new GameWebSocket("G5"); // Automatically finds/creates a G5 game
+
+// Or by specific game ID
+// const gameWS = new GameWebSocket("550e8400-e29b-41d4-a716-446655440000");
 
 gameWS.onMessage((message) => {
   // Handle all messages
@@ -521,13 +562,29 @@ class ReconnectingWebSocket {
 
 You can test the WebSocket connection using a browser console:
 
+**By Game Type (Recommended):**
 ```javascript
-const ws = new WebSocket('ws://localhost:8080/api/v1/ws/game/YOUR_GAME_ID?user_id=YOUR_USER_ID');
+const ws = new WebSocket('ws://localhost:8080/api/v1/ws/game?type=G5');
 
 ws.onopen = () => console.log('Connected');
 ws.onmessage = (e) => console.log('Message:', JSON.parse(e.data));
 ws.onerror = (e) => console.error('Error:', e);
 ws.onclose = (e) => console.log('Closed:', e.code, e.reason);
+```
+
+**By Game ID:**
+```javascript
+const ws = new WebSocket('ws://localhost:8080/api/v1/ws/game/YOUR_GAME_ID');
+
+ws.onopen = () => console.log('Connected');
+ws.onmessage = (e) => console.log('Message:', JSON.parse(e.data));
+ws.onerror = (e) => console.error('Error:', e);
+ws.onclose = (e) => console.log('Closed:', e.code, e.reason);
+```
+
+**Production (Railway):**
+```javascript
+const ws = new WebSocket('wss://web-production-201fa.up.railway.app/api/v1/ws/game?type=G5');
 ```
 
 ## Notes
@@ -538,5 +595,8 @@ ws.onclose = (e) => console.log('Closed:', e.code, e.reason);
 - **Public viewing** - No authentication required, anyone can watch games
 - Connect by game type (G1-G7) to automatically find available games
 - Redis must be configured on the server for WebSocket to work
+- Error responses include both `error` and `reason` fields for detailed debugging
+- Server logs all connection attempts and errors with `[WebSocket]` prefix for easy debugging
+- Connection automatically handles timeouts and reconnection is recommended on client side
 
 
