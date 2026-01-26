@@ -258,20 +258,18 @@ func (r *gameRepository) AddPlayer(ctx context.Context, tx *sql.Tx, player *doma
 }
 
 // RemovePlayer removes a player from a game
+// Deletes the record to allow the player to rejoin later
 func (r *gameRepository) RemovePlayer(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID) error {
 	query := `
-		UPDATE game_players
-		SET left_at = $3
+		DELETE FROM game_players
 		WHERE game_id = $1 AND user_id = $2
 	`
 
-	now := time.Now()
-
 	var err error
 	if tx != nil {
-		_, err = tx.ExecContext(ctx, query, gameID, userID, now)
+		_, err = tx.ExecContext(ctx, query, gameID, userID)
 	} else {
-		_, err = r.db.ExecContext(ctx, query, gameID, userID, now)
+		_, err = r.db.ExecContext(ctx, query, gameID, userID)
 	}
 
 	if err != nil {
