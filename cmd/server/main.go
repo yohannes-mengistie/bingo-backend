@@ -187,6 +187,12 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			games.POST("/:gameId/bingo", gameHandler.ClaimBingo)
 		}
 
+		// Public card endpoints
+		cards := api.Group("/cards")
+		{
+			cards.GET("/:cardId", gameHandler.GetCardData)
+		}
+
 		// WebSocket endpoint
 		api.GET("/ws/game/:gameId", wsHandler.HandleWebSocket)
 

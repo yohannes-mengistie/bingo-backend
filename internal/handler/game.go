@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/bingo/backend/internal/domain"
@@ -174,12 +175,12 @@ func (h *GameHandler) ClaimBingo(c *gin.Context) {
 
 	if isWinner {
 		c.JSON(http.StatusOK, gin.H{
-			"winner": true,
+			"winner":  true,
 			"message": "Congratulations! You won!",
 		})
 	} else {
 		c.JSON(http.StatusOK, gin.H{
-			"winner": false,
+			"winner":  false,
 			"message": "Invalid bingo claim. You have been eliminated.",
 		})
 	}
@@ -211,3 +212,34 @@ func (h *GameHandler) GetGameState(c *gin.Context) {
 	})
 }
 
+// GetCardData handles GET /cards/:cardId
+// Returns the bingo card data (5x5 grid) for a given card ID
+func (h *GameHandler) GetCardData(c *gin.Context) {
+	cardIDStr := c.Param("cardId")
+
+	// Parse card ID
+	var cardID int
+	if _, err := fmt.Sscanf(cardIDStr, "%d", &cardID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid card ID",
+		})
+		return
+	}
+
+	card, err := h.gameUseCase.GetCardData(c.Request.Context(), cardID)
+	if err != nil {
+		statusCode := http.StatusBadRequest
+		if err.Error() != "card ID must be between 1 and 100" {
+			statusCode = http.StatusInternalServerError
+		}
+
+		c.JSON(statusCode, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"card": card,
+	})
+}

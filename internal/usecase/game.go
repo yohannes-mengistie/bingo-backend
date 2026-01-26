@@ -579,8 +579,29 @@ func (uc *GameUseCase) GetGameState(ctx context.Context, gameID uuid.UUID) (*dom
 		return nil, nil, nil, fmt.Errorf("game not found: %w", err)
 	}
 
-	drawnNumbers, _ := uc.redisService.GetDrawnNumbers(ctx, gameID)
-	takenCards, _ := uc.redisService.GetTakenCards(ctx, gameID)
+	var drawnNumbers []domain.DrawnNumber
+	var takenCards []int
+
+	if uc.redisService != nil {
+		drawnNumbers, _ = uc.redisService.GetDrawnNumbers(ctx, gameID)
+		takenCards, _ = uc.redisService.GetTakenCards(ctx, gameID)
+	} else {
+		// Fallback to database
+		takenCards, _ = uc.gameRepo.GetTakenCards(ctx, gameID)
+		// drawnNumbers would need DB implementation
+	}
 
 	return game, drawnNumbers, takenCards, nil
+}
+
+// GetCardData returns the card data for a given card ID
+func (uc *GameUseCase) GetCardData(ctx context.Context, cardID int) (*bingo.BingoCard, error) {
+	// Validate card ID
+	if cardID < 1 || cardID > 100 {
+		return nil, errors.New("card ID must be between 1 and 100")
+	}
+
+	// Generate card (deterministic - same card_id always generates same card)
+	card := bingo.GenerateCard(cardID)
+	return card, nil
 }
