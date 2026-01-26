@@ -36,8 +36,11 @@ func (h *GameHandler) GetGames(c *gin.Context) {
 	// Get available games
 	games, err := h.gameUseCase.GetAvailableGames(c.Request.Context(), req.GameType)
 	if err != nil {
+		// Log the error for debugging
+		fmt.Printf("[GetGames] Error getting available games (type: %v): %v\n", req.GameType, err)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
+			"error":   "Failed to get available games",
+			"details": err.Error(),
 		})
 		return
 	}
@@ -46,8 +49,10 @@ func (h *GameHandler) GetGames(c *gin.Context) {
 	if req.GameType != nil && len(games) == 0 {
 		game, err := h.gameUseCase.CreateOrGetGame(c.Request.Context(), *req.GameType)
 		if err != nil {
+			fmt.Printf("[GetGames] Error creating/getting game (type: %v): %v\n", *req.GameType, err)
 			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": err.Error(),
+				"error":   "Failed to create or get game",
+				"details": err.Error(),
 			})
 			return
 		}
