@@ -127,7 +127,7 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 
 	// CORS middleware
 	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"*"}, // Allow all origins for WebSocket compatibility
+		AllowOrigins:     []string{"http://localhost:3000", "https://bingo-frontend-production-7ee9.up.railway.app", "https://winner.up.railway.app"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Length", "Content-Type", "Authorization", "Upgrade", "Connection", "Sec-WebSocket-Key", "Sec-WebSocket-Version", "Sec-WebSocket-Extensions", "Sec-WebSocket-Protocol"},
 		ExposeHeaders:    []string{"Content-Length", "Upgrade", "Connection", "Sec-WebSocket-Accept"},
@@ -138,7 +138,7 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 	// Middleware
 	router.Use(gin.Logger())
 	router.Use(gin.Recovery())
-	
+
 	// Debug middleware for WebSocket routes
 	router.Use(func(c *gin.Context) {
 		if c.Request.URL.Path == "/api/v1/ws/game" || c.Request.URL.Path[:15] == "/api/v1/ws/game" {
