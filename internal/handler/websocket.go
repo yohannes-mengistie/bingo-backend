@@ -282,10 +282,8 @@ func (h *WebSocketHandler) sendInitialState(conn *websocket.Conn, gameID uuid.UU
 	} else if h.gameUseCase != nil {
 		// Fallback to database
 		_, drawnNumbers, takenCards, _ = h.gameUseCase.GetGameState(ctx, gameID)
-		// Player count from game
-		if game != nil {
-			playerCount = int64(game.PlayerCount)
-		}
+		// Player count from game (game is already checked to be non-nil above)
+		playerCount = int64(game.PlayerCount)
 	}
 
 	// Get countdown if in countdown state
