@@ -68,7 +68,7 @@ func NewWebSocketHandler(redisClient *redis.Client, gameService *redisPkg.GameSt
 // Public viewing - anyone can connect by game type (e.g., ?type=G5) or game ID
 func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 	// Log request details for debugging
-	log.Printf("[WebSocket] Request received - Method: %s, Path: %s, Query: %s, Headers: %v", 
+	log.Printf("[WebSocket] Request received - Method: %s, Path: %s, Query: %s, Headers: %v",
 		c.Request.Method, c.Request.URL.Path, c.Request.URL.RawQuery, c.Request.Header)
 	var gameID uuid.UUID
 	var err error
@@ -233,7 +233,12 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 	}
 
 	// Send initial game state
-	h.sendInitialState(conn, gameID)
+	log.Printf("[WebSocket] Sending initial game state for game %s", gameIDStr)
+	if err := h.sendInitialState(conn, gameID); err != nil {
+		log.Printf("[WebSocket] ERROR: Failed to send initial state for game %s: %v", gameIDStr, err)
+		return
+	}
+	log.Printf("[WebSocket] ✓ Initial state sent. Starting message loop for game %s", gameIDStr)
 
 	// Channel for messages from Redis
 	redisMessages := make(chan *redis.Message, 10)
@@ -281,8 +286,10 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 		case msg := <-redisMessages:
 			// Forward Redis message to WebSocket
 			if err := conn.WriteMessage(websocket.TextMessage, []byte(msg.Payload)); err != nil {
+				log.Printf("[WebSocket] Error writing Redis message to client for game %s: %v", gameIDStr, err)
 				return
 			}
+			log.Printf("[WebSocket] ✓ Forwarded Redis message to client for game %s", gameIDStr)
 
 		case <-ticker.C:
 			// Send ping
@@ -296,17 +303,32 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 			conn.SetReadDeadline(time.Now().Add(1 * time.Second))
 			_, _, err := conn.ReadMessage()
 			if err != nil {
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					log.Printf("WebSocket error: %v", err)
+				// Check if it's a timeout/deadline error (expected)
+				if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+					// Expected timeout, continue the loop
+					continue
 				}
-				return
+				// Check if it's a WebSocket close error
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+					log.Printf("[WebSocket] Unexpected close error for game %s: %v", gameIDStr, err)
+					return
+				}
+				// Check if connection was closed normally
+				if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+					log.Printf("[WebSocket] Connection closed normally for game %s", gameIDStr)
+					return
+				}
+				// Other errors - log and continue (might be temporary)
+				log.Printf("[WebSocket] Read error for game %s (continuing): %v", gameIDStr, err)
+				continue
 			}
 		}
 	}
 }
 
 // sendInitialState sends the initial game state to the client
-func (h *WebSocketHandler) sendInitialState(conn *websocket.Conn, gameID uuid.UUID) {
+// Returns an error if the message cannot be sent
+func (h *WebSocketHandler) sendInitialState(conn *websocket.Conn, gameID uuid.UUID) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -336,9 +358,17 @@ func (h *WebSocketHandler) sendInitialState(conn *websocket.Conn, gameID uuid.UU
 				"secondsLeft":  0,
 			},
 		}
-		data, _ := json.Marshal(initialState)
-		conn.WriteMessage(websocket.TextMessage, data)
-		return
+		data, err := json.Marshal(initialState)
+		if err != nil {
+			log.Printf("[WebSocket] ERROR: Failed to marshal minimal initial state for game %s: %v", gameID, err)
+			return err
+		}
+		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+			log.Printf("[WebSocket] ERROR: Failed to write minimal initial state message for game %s: %v", gameID, err)
+			return err
+		}
+		log.Printf("[WebSocket] ✓ Sent minimal initial state for game %s", gameID)
+		return nil
 	}
 
 	var drawnNumbers []domain.DrawnNumber
@@ -387,6 +417,15 @@ func (h *WebSocketHandler) sendInitialState(conn *websocket.Conn, gameID uuid.UU
 		},
 	}
 
-	data, _ := json.Marshal(initialState)
-	conn.WriteMessage(websocket.TextMessage, data)
+	data, err := json.Marshal(initialState)
+	if err != nil {
+		log.Printf("[WebSocket] ERROR: Failed to marshal initial state for game %s: %v", gameID, err)
+		return err
+	}
+	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+		log.Printf("[WebSocket] ERROR: Failed to write initial state message for game %s: %v", gameID, err)
+		return err
+	}
+	log.Printf("[WebSocket] ✓ Initial state message sent successfully for game %s", gameID)
+	return nil
 }
