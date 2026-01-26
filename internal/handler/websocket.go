@@ -270,14 +270,53 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 		}
 	}()
 
-	// Set read deadline
+	// Set read deadline and pong handler
 	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	conn.SetPongHandler(func(string) error {
 		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		return nil
 	})
 
-	// Main loop
+	// Channel to signal connection close from read goroutine
+	readDone := make(chan struct{})
+	
+	// Separate goroutine to read client messages (handles pong responses)
+	go func() {
+		defer close(readDone)
+		for {
+			// Set a reasonable read deadline
+			conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+			_, _, err := conn.ReadMessage()
+			if err != nil {
+				// Check if it's a timeout/deadline error (expected - means no message)
+				if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+					// Expected timeout, continue reading
+					continue
+				}
+				// Check if it's a WebSocket close error
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+					log.Printf("[WebSocket] Unexpected close error in read goroutine for game %s: %v", gameIDStr, err)
+					return
+				}
+				// Check if connection was closed normally
+				if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+					log.Printf("[WebSocket] Connection closed normally in read goroutine for game %s", gameIDStr)
+					return
+				}
+				// Check if it's a "use of closed network connection" error (connection already closed)
+				if err.Error() == "use of closed network connection" || 
+				   err.Error() == "repeated read on failed websocket connection" {
+					log.Printf("[WebSocket] Connection already closed for game %s", gameIDStr)
+					return
+				}
+				// Other errors - log and return (connection likely failed)
+				log.Printf("[WebSocket] Read error in read goroutine for game %s: %v", gameIDStr, err)
+				return
+			}
+		}
+	}()
+
+	// Main write loop
 	ticker := time.NewTicker(54 * time.Second)
 	defer ticker.Stop()
 
@@ -298,30 +337,15 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 				return
 			}
 
-		default:
-			// Check for client messages (read-only, but we handle pong)
-			conn.SetReadDeadline(time.Now().Add(1 * time.Second))
-			_, _, err := conn.ReadMessage()
-			if err != nil {
-				// Check if it's a timeout/deadline error (expected)
-				if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-					// Expected timeout, continue the loop
-					continue
-				}
-				// Check if it's a WebSocket close error
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					log.Printf("[WebSocket] Unexpected close error for game %s: %v", gameIDStr, err)
-					return
-				}
-				// Check if connection was closed normally
-				if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-					log.Printf("[WebSocket] Connection closed normally for game %s", gameIDStr)
-					return
-				}
-				// Other errors - log and continue (might be temporary)
-				log.Printf("[WebSocket] Read error for game %s (continuing): %v", gameIDStr, err)
-				continue
-			}
+		case <-readDone:
+			// Read goroutine detected connection close
+			log.Printf("[WebSocket] Read goroutine signaled connection close for game %s", gameIDStr)
+			return
+
+		case <-ctx.Done():
+			// Context canceled (e.g., Redis subscription closed)
+			log.Printf("[WebSocket] Context done for game %s", gameIDStr)
+			return
 		}
 	}
 }
