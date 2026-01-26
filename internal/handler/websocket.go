@@ -69,13 +69,15 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 		return
 	}
 
-	// Verify user is in the game
-	isInGame, err := h.gameService.IsPlayerInGame(c.Request.Context(), gameID, userID)
-	if err != nil || !isInGame {
-		c.JSON(http.StatusForbidden, gin.H{
-			"error": "User is not in this game",
-		})
-		return
+	// Verify user is in the game (if Redis is available)
+	if h.gameService != nil {
+		isInGame, err := h.gameService.IsPlayerInGame(c.Request.Context(), gameID, userID)
+		if err != nil || !isInGame {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": "User is not in this game",
+			})
+			return
+		}
 	}
 
 	// Upgrade connection
@@ -104,12 +106,21 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 		h.mu.Unlock()
 	}()
 
-	// Subscribe to Redis pub/sub
+	// Subscribe to Redis pub/sub (if Redis is available)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	pubsub := h.redisClient.Subscribe(ctx, redisPkg.GameChannel(gameIDStr))
-	defer pubsub.Close()
+	var pubsub *redis.PubSub
+	if h.redisClient != nil {
+		pubsub = h.redisClient.Subscribe(ctx, redisPkg.GameChannel(gameIDStr))
+		defer pubsub.Close()
+	} else {
+		// If Redis is not available, return error
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "WebSocket requires Redis to be configured",
+		})
+		return
+	}
 
 	// Send initial game state
 	h.sendInitialState(conn, gameID)
@@ -119,6 +130,9 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 
 	// Goroutine to receive Redis messages
 	go func() {
+		if pubsub == nil {
+			return
+		}
 		for {
 			msg, err := pubsub.ReceiveMessage(ctx)
 			if err != nil {
@@ -173,6 +187,10 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 
 // sendInitialState sends the initial game state to the client
 func (h *WebSocketHandler) sendInitialState(conn *websocket.Conn, gameID uuid.UUID) {
+	if h.gameService == nil {
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 

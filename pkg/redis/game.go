@@ -23,6 +23,9 @@ func NewGameStateService(client *redis.Client) *GameStateService {
 
 // SaveGameState saves game state to Redis
 func (s *GameStateService) SaveGameState(ctx context.Context, game *domain.Game) error {
+	if s.client == nil {
+		return fmt.Errorf("Redis client is not configured")
+	}
 	key := GameStateKey(game.ID.String())
 
 	data, err := json.Marshal(game)
@@ -35,6 +38,9 @@ func (s *GameStateService) SaveGameState(ctx context.Context, game *domain.Game)
 
 // GetGameState gets game state from Redis
 func (s *GameStateService) GetGameState(ctx context.Context, gameID uuid.UUID) (*domain.Game, error) {
+	if s.client == nil {
+		return nil, fmt.Errorf("Redis client is not configured")
+	}
 	key := GameStateKey(gameID.String())
 
 	data, err := s.client.Get(ctx, key).Bytes()
@@ -67,12 +73,18 @@ func (s *GameStateService) RemovePlayer(ctx context.Context, gameID uuid.UUID, u
 
 // GetPlayerCount gets the number of players
 func (s *GameStateService) GetPlayerCount(ctx context.Context, gameID uuid.UUID) (int64, error) {
+	if s.client == nil {
+		return 0, fmt.Errorf("Redis client is not configured")
+	}
 	key := GamePlayersKey(gameID.String())
 	return s.client.SCard(ctx, key).Result()
 }
 
 // IsPlayerInGame checks if a player is in the game
 func (s *GameStateService) IsPlayerInGame(ctx context.Context, gameID, userID uuid.UUID) (bool, error) {
+	if s.client == nil {
+		return false, fmt.Errorf("Redis client is not configured")
+	}
 	key := GamePlayersKey(gameID.String())
 	return s.client.SIsMember(ctx, key, userID.String()).Result()
 }
@@ -91,6 +103,9 @@ func (s *GameStateService) AddDrawnNumber(ctx context.Context, gameID uuid.UUID,
 
 // GetDrawnNumbers gets all drawn numbers
 func (s *GameStateService) GetDrawnNumbers(ctx context.Context, gameID uuid.UUID) ([]domain.DrawnNumber, error) {
+	if s.client == nil {
+		return nil, fmt.Errorf("Redis client is not configured")
+	}
 	key := GameDrawnNumbersKey(gameID.String())
 
 	data, err := s.client.LRange(ctx, key, 0, -1).Result()
@@ -118,6 +133,9 @@ func (s *GameStateService) AddTakenCard(ctx context.Context, gameID uuid.UUID, c
 
 // GetTakenCards gets all taken card IDs
 func (s *GameStateService) GetTakenCards(ctx context.Context, gameID uuid.UUID) ([]int, error) {
+	if s.client == nil {
+		return nil, fmt.Errorf("Redis client is not configured")
+	}
 	key := GameTakenCardsKey(gameID.String())
 
 	cardIDs, err := s.client.SMembers(ctx, key).Result()
@@ -144,6 +162,9 @@ func (s *GameStateService) SetCountdown(ctx context.Context, gameID uuid.UUID, e
 
 // GetCountdown gets the countdown end time
 func (s *GameStateService) GetCountdown(ctx context.Context, gameID uuid.UUID) (time.Time, error) {
+	if s.client == nil {
+		return time.Time{}, fmt.Errorf("Redis client is not configured")
+	}
 	key := GameCountdownKey(gameID.String())
 
 	seconds, err := s.client.Get(ctx, key).Int64()
