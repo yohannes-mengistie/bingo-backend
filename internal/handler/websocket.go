@@ -238,16 +238,25 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 	// Goroutine to receive Redis messages
 	go func() {
 		if pubsub == nil {
+			log.Printf("[WebSocket] ERROR: PubSub is nil, cannot receive messages for game %s", gameIDStr)
 			return
 		}
+		log.Printf("[WebSocket] Starting Redis message receiver for game %s", gameIDStr)
 		for {
 			msg, err := pubsub.ReceiveMessage(ctx)
 			if err != nil {
+				if err == context.Canceled {
+					log.Printf("[WebSocket] Redis subscription context canceled for game %s", gameIDStr)
+				} else {
+					log.Printf("[WebSocket] Redis receive error for game %s: %v", gameIDStr, err)
+				}
 				return
 			}
+			log.Printf("[WebSocket] Received Redis message for game %s: %s", gameIDStr, msg.Payload)
 			select {
 			case redisMessages <- msg:
 			case <-ctx.Done():
+				log.Printf("[WebSocket] Context done, stopping Redis receiver for game %s", gameIDStr)
 				return
 			}
 		}
