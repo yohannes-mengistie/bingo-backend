@@ -40,3 +40,18 @@ type TransactionRepository interface {
 	FindAll(ctx context.Context, limit, offset int) ([]*Transaction, error)
 	UpdateStatus(ctx context.Context, tx *sql.Tx, id uuid.UUID, status TransactionStatus) error
 }
+
+// GameRepository defines the interface for game data operations
+type GameRepository interface {
+	Create(ctx context.Context, game *Game) error
+	FindByID(ctx context.Context, id uuid.UUID) (*Game, error)
+	FindAvailable(ctx context.Context, gameType *GameType, limit int) ([]*Game, error)
+	Update(ctx context.Context, game *Game) error
+	AddPlayer(ctx context.Context, tx *sql.Tx, player *GamePlayer) error
+	RemovePlayer(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID) error
+	FindPlayer(ctx context.Context, gameID, userID uuid.UUID) (*GamePlayer, error)
+	GetPlayers(ctx context.Context, gameID uuid.UUID) ([]*GamePlayer, error)
+	EliminatePlayer(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID) error
+	GetTakenCards(ctx context.Context, gameID uuid.UUID) ([]int, error)
+	SaveDrawnNumber(ctx context.Context, gameID uuid.UUID, letter string, number int) error
+}
