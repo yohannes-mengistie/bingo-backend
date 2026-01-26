@@ -60,6 +60,11 @@ func (r *gameRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Ga
 	`
 
 	game := &domain.Game{}
+	var winnerID sql.NullString
+	var countdownEnds sql.NullTime
+	var startedAt sql.NullTime
+	var finishedAt sql.NullTime
+
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&game.ID,
 		&game.GameType,
@@ -69,10 +74,10 @@ func (r *gameRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Ga
 		&game.PlayerCount,
 		&game.PrizePool,
 		&game.HouseCut,
-		&game.WinnerID,
-		&game.CountdownEnds,
-		&game.StartedAt,
-		&game.FinishedAt,
+		&winnerID,
+		&countdownEnds,
+		&startedAt,
+		&finishedAt,
 		&game.CreatedAt,
 		&game.UpdatedAt,
 	)
@@ -82,6 +87,24 @@ func (r *gameRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Ga
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to find game: %w", err)
+	}
+
+	// Handle nullable fields
+	if winnerID.Valid {
+		parsedID, err := uuid.Parse(winnerID.String)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse winner_id: %w", err)
+		}
+		game.WinnerID = &parsedID
+	}
+	if countdownEnds.Valid {
+		game.CountdownEnds = &countdownEnds.Time
+	}
+	if startedAt.Valid {
+		game.StartedAt = &startedAt.Time
+	}
+	if finishedAt.Valid {
+		game.FinishedAt = &finishedAt.Time
 	}
 
 	return game, nil
@@ -117,6 +140,11 @@ func (r *gameRepository) FindAvailable(ctx context.Context, gameType *domain.Gam
 	games := []*domain.Game{}
 	for rows.Next() {
 		game := &domain.Game{}
+		var winnerID sql.NullString
+		var countdownEnds sql.NullTime
+		var startedAt sql.NullTime
+		var finishedAt sql.NullTime
+
 		err := rows.Scan(
 			&game.ID,
 			&game.GameType,
@@ -126,16 +154,35 @@ func (r *gameRepository) FindAvailable(ctx context.Context, gameType *domain.Gam
 			&game.PlayerCount,
 			&game.PrizePool,
 			&game.HouseCut,
-			&game.WinnerID,
-			&game.CountdownEnds,
-			&game.StartedAt,
-			&game.FinishedAt,
+			&winnerID,
+			&countdownEnds,
+			&startedAt,
+			&finishedAt,
 			&game.CreatedAt,
 			&game.UpdatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan game: %w", err)
 		}
+
+		// Handle nullable fields
+		if winnerID.Valid {
+			parsedID, err := uuid.Parse(winnerID.String)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse winner_id: %w", err)
+			}
+			game.WinnerID = &parsedID
+		}
+		if countdownEnds.Valid {
+			game.CountdownEnds = &countdownEnds.Time
+		}
+		if startedAt.Valid {
+			game.StartedAt = &startedAt.Time
+		}
+		if finishedAt.Valid {
+			game.FinishedAt = &finishedAt.Time
+		}
+
 		games = append(games, game)
 	}
 
