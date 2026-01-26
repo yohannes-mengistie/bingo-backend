@@ -123,13 +123,11 @@
         </div>
         
         <div class="input-group">
-            <label for="gameId">Game ID (UUID):</label>
-            <input type="text" id="gameId" placeholder="550e8400-e29b-41d4-a716-446655440000">
-        </div>
-        
-        <div class="input-group">
-            <label for="userId">User ID (UUID):</label>
-            <input type="text" id="userId" placeholder="770e8400-e29b-41d4-a716-446655440000">
+            <label for="gameType">Game Type (G1-G7) or Game ID (UUID):</label>
+            <input type="text" id="gameType" placeholder="G5" value="G5">
+            <small style="color: #666; display: block; margin-top: 5px;">
+                Enter game type (G1, G2, G3, G4, G5, G6, G7) for public viewing, or UUID for specific game
+            </small>
         </div>
         
         <div>
@@ -147,8 +145,7 @@
     <script>
         let ws = null;
         const backendUrlInput = document.getElementById('backendUrl');
-        const gameIdInput = document.getElementById('gameId');
-        const userIdInput = document.getElementById('userId');
+        const gameTypeInput = document.getElementById('gameType');
         const statusDiv = document.getElementById('status');
         const messagesDiv = document.getElementById('messages');
         const connectBtn = document.getElementById('connectBtn');
@@ -170,16 +167,19 @@
 
         function connect() {
             const backendUrl = backendUrlInput.value.trim();
-            const gameId = gameIdInput.value.trim();
-            const userId = userIdInput.value.trim();
+            const gameTypeOrId = gameTypeInput.value.trim();
 
-            if (!backendUrl || !gameId || !userId) {
-                addMessage('Please fill in all fields', 'error');
+            if (!backendUrl || !gameTypeOrId) {
+                addMessage('Please fill in backend URL and game type/ID', 'error');
                 return;
             }
 
-            // Convert https:// to wss:// for WebSocket
-            const wsUrl = backendUrl.replace(/^https?:\/\//, 'wss://') + `/api/v1/ws/game/${gameId}?user_id=${userId}`;
+            // Check if it's a game type (G1-G7) or game ID (UUID)
+            const isGameType = /^G[1-7]$/.test(gameTypeOrId);
+            const wsUrl = backendUrl.replace(/^https?:\/\//, 'wss://') + 
+                (isGameType 
+                    ? `/api/v1/ws/game?type=${gameTypeOrId}`
+                    : `/api/v1/ws/game/${gameTypeOrId}`);
             
             addMessage(`Connecting to: ${wsUrl}`, 'info');
             updateStatus('Connecting...', 'connecting');
@@ -235,12 +235,10 @@
         }
 
         // Allow Enter key to connect
-        [gameIdInput, userIdInput].forEach(input => {
-            input.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    connect();
-                }
-            });
+        gameTypeInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                connect();
+            }
         });
     </script>
 </body>
