@@ -100,8 +100,8 @@ func (uc *GameUseCase) JoinGame(ctx context.Context, gameID uuid.UUID, req domai
 		return nil, fmt.Errorf("game not found: %w", err)
 	}
 
-	// Check game state
-	if game.State != domain.GameStateWaiting {
+	// Check game state - allow joining in WAITING or COUNTDOWN
+	if game.State != domain.GameStateWaiting && game.State != domain.GameStateCountdown {
 		return nil, errors.New("game is not accepting new players")
 	}
 
