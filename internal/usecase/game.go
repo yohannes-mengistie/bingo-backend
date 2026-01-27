@@ -557,6 +557,24 @@ func (uc *GameUseCase) ClaimBingo(ctx context.Context, gameID uuid.UUID, req dom
 			"prize":  game.PrizePool,
 		})
 
+		// Publish game finished status
+		uc.redisService.PublishEvent(ctx, gameID, "GAME_STATUS", map[string]interface{}{
+			"status": "FINISHED",
+		})
+
+		// Create a new game of the same type and notify clients
+		go func() {
+			newGame, err := uc.CreateOrGetGame(context.Background(), game.GameType)
+			if err == nil && newGame != nil {
+				// Publish new game available event to the same channel
+				// Clients can reconnect to this new game
+				uc.redisService.PublishEvent(context.Background(), gameID, "NEW_GAME_AVAILABLE", map[string]interface{}{
+					"gameId":   newGame.ID.String(),
+					"gameType": string(newGame.GameType),
+				})
+			}
+		}()
+
 		return true, nil
 	} else {
 		// Invalid claim - eliminate player
@@ -600,6 +618,24 @@ func (uc *GameUseCase) ClaimBingo(ctx context.Context, gameID uuid.UUID, req dom
 		uc.redisService.PublishEvent(ctx, gameID, "PLAYER_ELIMINATED", map[string]interface{}{
 			"userId": req.UserID.String(),
 		})
+
+		// If game was cancelled, publish status and create new game
+		if game.State == domain.GameStateCancelled {
+			uc.redisService.PublishEvent(ctx, gameID, "GAME_STATUS", map[string]interface{}{
+				"status": "CANCELLED",
+			})
+
+			// Create a new game of the same type and notify clients
+			go func() {
+				newGame, err := uc.CreateOrGetGame(context.Background(), game.GameType)
+				if err == nil && newGame != nil {
+					uc.redisService.PublishEvent(context.Background(), gameID, "NEW_GAME_AVAILABLE", map[string]interface{}{
+						"gameId":   newGame.ID.String(),
+						"gameType": string(newGame.GameType),
+					})
+				}
+			}()
+		}
 
 		return false, nil
 	}
