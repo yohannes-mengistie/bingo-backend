@@ -129,7 +129,7 @@ func (h *GameHandler) LeaveGame(c *gin.Context) {
 	if err := h.gameUseCase.LeaveGame(c.Request.Context(), gameID, req); err != nil {
 		statusCode := http.StatusInternalServerError
 		if err.Error() == "user is not in this game" ||
-			err.Error() == "cannot leave during drawing phase" {
+			err.Error() == "game is no longer active" {
 			statusCode = http.StatusBadRequest
 		}
 
