@@ -217,17 +217,29 @@ func (uc *GameUseCase) LeaveGame(ctx context.Context, gameID uuid.UUID, req doma
 		return errors.New("user is not in this game")
 	}
 
-	// Check game state
-	if game.State == domain.GameStateDrawing {
-		return errors.New("cannot leave during drawing phase")
-	}
-
 	// Start transaction
 	tx, err := uc.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
+
+	// Re-fetch game state to get latest state (prevents race condition if countdown ended)
+	// Note: This happens right after transaction starts to minimize race window
+	game, err = uc.gameRepo.FindByID(ctx, gameID)
+	if err != nil {
+		return fmt.Errorf("game not found: %w", err)
+	}
+
+	// Check game state - block leaving during DRAWING phase
+	if game.State == domain.GameStateDrawing {
+		return errors.New("cannot leave during drawing phase")
+	}
+
+	// Also check if game is already finished/cancelled
+	if game.State == domain.GameStateFinished || game.State == domain.GameStateClosed || game.State == domain.GameStateCancelled {
+		return errors.New("game is no longer active")
+	}
 
 	// Remove player
 	if err := uc.gameRepo.RemovePlayer(ctx, tx, gameID, req.UserID); err != nil {
