@@ -111,17 +111,8 @@ func (uc *GameUseCase) JoinGame(ctx context.Context, gameID uuid.UUID, req domai
 		return nil, errors.New("user is already in this game")
 	}
 
-	// Check if card is already taken
-	takenCards, err := uc.gameRepo.GetTakenCards(ctx, gameID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get taken cards: %w", err)
-	}
-
-	for _, takenCardID := range takenCards {
-		if takenCardID == req.CardID {
-			return nil, errors.New("card is already taken")
-		}
-	}
+	// Note: Multiple players can now select the same card
+	// The unique constraint on (game_id, card_id) has been removed
 
 	// Start transaction
 	tx, err := uc.db.BeginTx(ctx, nil)
