@@ -109,7 +109,7 @@ type DrawnNumber struct {
 // JoinGameRequest represents the request to join a game
 type JoinGameRequest struct {
 	UserID uuid.UUID `json:"user_id" binding:"required"`
-	CardID int       `json:"card_id" binding:"required,min=1,max=100"`
+	CardID int       `json:"card_id" binding:"required,min=1,max=100"` // min=MinCardID, max=MaxCardID (see constants.go)
 }
 
 // LeaveGameRequest represents the request to leave a game

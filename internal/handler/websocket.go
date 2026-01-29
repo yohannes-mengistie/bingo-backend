@@ -271,9 +271,9 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 	}()
 
 	// Set read deadline and pong handler
-	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	conn.SetReadDeadline(time.Now().Add(domain.WebSocketReadDeadline))
 	conn.SetPongHandler(func(string) error {
-		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		conn.SetReadDeadline(time.Now().Add(domain.WebSocketReadDeadline))
 		return nil
 	})
 
@@ -285,7 +285,7 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 		defer close(readDone)
 		for {
 			// Set a reasonable read deadline
-			conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+			conn.SetReadDeadline(time.Now().Add(domain.WebSocketReadDeadline))
 			_, _, err := conn.ReadMessage()
 			if err != nil {
 				// Check if it's a timeout/deadline error (expected - means no message)
@@ -317,7 +317,7 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 	}()
 
 	// Main write loop
-	ticker := time.NewTicker(54 * time.Second)
+	ticker := time.NewTicker(domain.WebSocketPingInterval)
 	defer ticker.Stop()
 
 	for {

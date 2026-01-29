@@ -66,10 +66,10 @@ func (uc *GameUseCase) CreateOrGetGame(ctx context.Context, gameType domain.Game
 		GameType:    gameType,
 		State:       domain.GameStateWaiting,
 		BetAmount:   gameType.GetBetAmount(),
-		MinPlayers:  2,
+		MinPlayers:  domain.MinPlayers,
 		PlayerCount: 0,
 		PrizePool:   0,
-		HouseCut:    0.05, // 5% house cut
+		HouseCut:    domain.HouseCut,
 	}
 
 	if err := uc.gameRepo.Create(ctx, game); err != nil {
@@ -90,8 +90,8 @@ func (uc *GameUseCase) CreateOrGetGame(ctx context.Context, gameType domain.Game
 // JoinGame allows a user to join a game
 func (uc *GameUseCase) JoinGame(ctx context.Context, gameID uuid.UUID, req domain.JoinGameRequest) (*domain.GamePlayer, error) {
 	// Validate card ID
-	if req.CardID < 1 || req.CardID > 100 {
-		return nil, errors.New("card ID must be between 1 and 100")
+	if req.CardID < domain.MinCardID || req.CardID > domain.MaxCardID {
+		return nil, fmt.Errorf("card ID must be between %d and %d", domain.MinCardID, domain.MaxCardID)
 	}
 
 	// Get game
@@ -180,8 +180,8 @@ func (uc *GameUseCase) JoinGame(ctx context.Context, gameID uuid.UUID, req domai
 	uc.redisService.AddTakenCard(ctx, gameID, req.CardID)
 	uc.redisService.SaveGameState(ctx, game)
 
-	// If this is the 2nd player, start countdown
-	if game.PlayerCount == 2 {
+	// If this is the minimum required player, start countdown
+	if game.PlayerCount == domain.MinPlayers {
 		go uc.startCountdown(context.Background(), gameID)
 	}
 
@@ -266,13 +266,13 @@ func (uc *GameUseCase) LeaveGame(ctx context.Context, gameID uuid.UUID, req doma
 	// Update game player count
 	game.PlayerCount--
 
-	// If players drop below 2 during countdown, revert to WAITING state
+	// If players drop below minimum during countdown, revert to WAITING state
 	// This allows the game to continue when more players join, rather than cancelling
-	if game.State == domain.GameStateCountdown && game.PlayerCount < 2 {
+	if game.State == domain.GameStateCountdown && game.PlayerCount < domain.MinPlayers {
 		game.State = domain.GameStateWaiting
 		game.CountdownEnds = nil // Clear countdown timestamp
-		// Note: Remaining players stay in the game and will continue when a 2nd player joins
-		// The countdown will automatically restart when player count reaches 2 again
+		// Note: Remaining players stay in the game and will continue when minimum players join
+		// The countdown will automatically restart when player count reaches MinPlayers again
 	}
 
 	if err := uc.gameRepo.Update(ctx, game); err != nil {
@@ -315,7 +315,7 @@ func (uc *GameUseCase) startCountdown(ctx context.Context, gameID uuid.UUID) {
 
 	// Update game state to COUNTDOWN
 	game.State = domain.GameStateCountdown
-	countdownEnds := time.Now().Add(60 * time.Second)
+	countdownEnds := time.Now().Add(domain.CountdownDuration)
 	game.CountdownEnds = &countdownEnds
 
 	if err := uc.gameRepo.Update(ctx, game); err != nil {
@@ -328,14 +328,15 @@ func (uc *GameUseCase) startCountdown(ctx context.Context, gameID uuid.UUID) {
 	// Publish countdown start
 	uc.redisService.PublishEvent(ctx, gameID, "GAME_STATUS", map[string]interface{}{
 		"status":      "COUNTDOWN",
-		"secondsLeft": 60,
+		"secondsLeft": int(domain.CountdownDuration.Seconds()),
 	})
 
 	// Countdown ticker
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(domain.CountdownTickerInterval)
 	defer ticker.Stop()
 
-	for i := 60; i > 0; i-- {
+	countdownSeconds := int(domain.CountdownDuration.Seconds())
+	for i := countdownSeconds; i > 0; i-- {
 		<-ticker.C
 
 		// Check if game still exists and is in countdown
@@ -344,10 +345,10 @@ func (uc *GameUseCase) startCountdown(ctx context.Context, gameID uuid.UUID) {
 			return
 		}
 
-		// Check if players dropped below 2
+		// Check if players dropped below minimum
 		// If so, the countdown ticker will exit and LeaveGame will handle reverting to WAITING
 		// This check ensures we don't continue countdown with insufficient players
-		if game.PlayerCount < 2 {
+		if game.PlayerCount < domain.MinPlayers {
 			// Exit countdown - LeaveGame will handle state transition to WAITING
 			// The countdown ticker will stop, and when state changes, this goroutine exits
 			return
@@ -668,8 +669,8 @@ func (uc *GameUseCase) GetPlayerInGame(ctx context.Context, gameID, userID uuid.
 // GetCardData returns the card data for a given card ID
 func (uc *GameUseCase) GetCardData(ctx context.Context, cardID int) (*bingo.BingoCard, error) {
 	// Validate card ID
-	if cardID < 1 || cardID > 100 {
-		return nil, errors.New("card ID must be between 1 and 100")
+	if cardID < domain.MinCardID || cardID > domain.MaxCardID {
+		return nil, fmt.Errorf("card ID must be between %d and %d", domain.MinCardID, domain.MaxCardID)
 	}
 
 	// Generate card (deterministic - same card_id always generates same card)
