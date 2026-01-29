@@ -181,12 +181,19 @@ Sent immediately after connection is established. Contains the current game stat
 ```
 
 **Game States:**
-- `WAITING`: Game is waiting for players
-- `COUNTDOWN`: Countdown before game starts
+- `WAITING`: Game is waiting for players (minimum 2 required)
+- `COUNTDOWN`: 60-second countdown before game starts (starts when 2nd player joins)
 - `DRAWING`: Numbers are being drawn
 - `FINISHED`: Game finished, winner determined
 - `CLOSED`: Game archived
-- `CANCELLED`: Game cancelled (insufficient players)
+- `CANCELLED`: Game cancelled (all players eliminated or other error)
+
+**State Transitions:**
+- **WAITING** → **COUNTDOWN**: When 2nd player joins
+- **COUNTDOWN** → **WAITING**: If players drop below 2 during countdown (countdown stops, remaining players stay)
+- **COUNTDOWN** → **DRAWING**: When countdown reaches 0
+- **DRAWING** → **FINISHED**: When valid bingo is claimed
+- **DRAWING** → **CANCELLED**: If all players are eliminated
 
 ### 2. GAME_STATUS
 

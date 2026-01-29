@@ -646,7 +646,14 @@ Each game follows this lifecycle:
 - **DRAWING**: Numbers are being drawn, players can claim bingo
 - **FINISHED**: Winner confirmed, prize distributed
 - **CLOSED**: Game archived, Redis state cleared
-- **CANCELLED**: Game cancelled (players < 2 during countdown), refunds issued
+- **CANCELLED**: Game cancelled (all players eliminated or other error), refunds issued
+
+**State Transitions:**
+- When 2nd player joins: **WAITING** → **COUNTDOWN** (60-second countdown starts)
+- If players drop below 2 during **COUNTDOWN**: **COUNTDOWN** → **WAITING** (game reverts, countdown stops, remaining players stay in game)
+- When countdown ends: **COUNTDOWN** → **DRAWING** (numbers start being drawn)
+- When winner claims bingo: **DRAWING** → **FINISHED** (prize distributed)
+- If all players eliminated: **DRAWING** → **CANCELLED** (all players refunded)
 
 ### Bingo Rules
 
@@ -832,9 +839,14 @@ Leave a game. Refund is issued if game is in WAITING or COUNTDOWN state.
 - ✅ **COUNTDOWN state**: Full refund
 - ❌ **DRAWING state**: No refund (loss)
 
-**Cancellation:**
+**State Reversion:**
 
-- If players drop below 2 during COUNTDOWN, game is cancelled and all players are refunded
+- If players drop below 2 during **COUNTDOWN**, the game reverts to **WAITING** state
+- The countdown stops and is cleared
+- Remaining players stay in the game (no refund)
+- When a 2nd player joins again, the countdown will restart automatically
+- This allows games to continue naturally without cancellation
+- Prize pool decreases when players leave (their bet is refunded)
 
 ### POST /api/v1/games/:gameId/bingo
 

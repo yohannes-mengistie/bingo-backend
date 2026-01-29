@@ -266,17 +266,13 @@ func (uc *GameUseCase) LeaveGame(ctx context.Context, gameID uuid.UUID, req doma
 	// Update game player count
 	game.PlayerCount--
 
-	// If players drop below 2 during countdown, cancel game
+	// If players drop below 2 during countdown, revert to WAITING state
+	// This allows the game to continue when more players join, rather than cancelling
 	if game.State == domain.GameStateCountdown && game.PlayerCount < 2 {
-		game.State = domain.GameStateCancelled
-		// Refund all remaining players
-		players, _ := uc.gameRepo.GetPlayers(ctx, gameID)
-		for _, p := range players {
-			_, err := uc.walletRepo.LockForUpdate(ctx, tx, p.UserID)
-			if err == nil {
-				uc.walletRepo.UpdateBalance(ctx, tx, p.UserID, game.BetAmount)
-			}
-		}
+		game.State = domain.GameStateWaiting
+		game.CountdownEnds = nil // Clear countdown timestamp
+		// Note: Remaining players stay in the game and will continue when a 2nd player joins
+		// The countdown will automatically restart when player count reaches 2 again
 	}
 
 	if err := uc.gameRepo.Update(ctx, game); err != nil {
@@ -290,6 +286,16 @@ func (uc *GameUseCase) LeaveGame(ctx context.Context, gameID uuid.UUID, req doma
 
 	// Update Redis
 	uc.redisService.RemovePlayer(ctx, gameID, req.UserID)
+
+	// If game reverted to WAITING from COUNTDOWN, clear countdown state and notify
+	revertedFromCountdown := game.State == domain.GameStateWaiting && game.CountdownEnds == nil
+	if revertedFromCountdown {
+		uc.redisService.ClearCountdown(ctx, gameID)
+		uc.redisService.PublishEvent(ctx, gameID, "GAME_STATUS", map[string]interface{}{
+			"status": "WAITING",
+		})
+	}
+
 	uc.redisService.SaveGameState(ctx, game)
 
 	// Publish event
@@ -339,11 +345,11 @@ func (uc *GameUseCase) startCountdown(ctx context.Context, gameID uuid.UUID) {
 		}
 
 		// Check if players dropped below 2
+		// If so, the countdown ticker will exit and LeaveGame will handle reverting to WAITING
+		// This check ensures we don't continue countdown with insufficient players
 		if game.PlayerCount < 2 {
-			// Cancel game
-			game.State = domain.GameStateCancelled
-			uc.gameRepo.Update(ctx, game)
-			uc.redisService.PublishEvent(ctx, gameID, "GAME_CANCELLED", map[string]interface{}{})
+			// Exit countdown - LeaveGame will handle state transition to WAITING
+			// The countdown ticker will stop, and when state changes, this goroutine exits
 			return
 		}
 

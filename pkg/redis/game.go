@@ -178,6 +178,15 @@ func (s *GameStateService) GetCountdown(ctx context.Context, gameID uuid.UUID) (
 	return time.Unix(seconds, 0), nil
 }
 
+// ClearCountdown clears the countdown from Redis
+func (s *GameStateService) ClearCountdown(ctx context.Context, gameID uuid.UUID) error {
+	if s.client == nil {
+		return fmt.Errorf("Redis client is not configured")
+	}
+	key := GameCountdownKey(gameID.String())
+	return s.client.Del(ctx, key).Err()
+}
+
 // PublishEvent publishes a game event to Redis pub/sub
 func (s *GameStateService) PublishEvent(ctx context.Context, gameID uuid.UUID, event string, data interface{}) error {
 	channel := GameChannel(gameID.String())
