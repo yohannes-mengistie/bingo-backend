@@ -178,11 +178,14 @@ func (r *transactionRepository) FindByUserID(ctx context.Context, userID uuid.UU
 }
 
 // FindByUserIDAndType finds transactions by user ID and transaction type
+// Excludes game-related transactions (GAME_BET, GAME_REFUND, GAME_PRIZE)
 func (r *transactionRepository) FindByUserIDAndType(ctx context.Context, userID uuid.UUID, transactionType domain.TransactionType, limit int) ([]*domain.Transaction, error) {
 	query := `
 		SELECT id, user_id, type, amount, status, transaction_type, transaction_id, reference, created_at
 		FROM transactions
-		WHERE user_id = $1 AND type = $2
+		WHERE user_id = $1 
+		  AND type = $2
+		  AND (reference IS NULL OR reference NOT LIKE 'GAME_%')
 		ORDER BY created_at DESC
 		LIMIT $3
 	`
@@ -197,6 +200,7 @@ func (r *transactionRepository) FindByUserIDAndType(ctx context.Context, userID 
 }
 
 // FindByUserIDAndTypes finds transactions by user ID and multiple transaction types
+// Excludes game-related transactions (GAME_BET, GAME_REFUND, GAME_PRIZE)
 func (r *transactionRepository) FindByUserIDAndTypes(ctx context.Context, userID uuid.UUID, transactionTypes []domain.TransactionType, limit int) ([]*domain.Transaction, error) {
 	if len(transactionTypes) == 0 {
 		return []*domain.Transaction{}, nil
@@ -206,7 +210,9 @@ func (r *transactionRepository) FindByUserIDAndTypes(ctx context.Context, userID
 	query := `
 		SELECT id, user_id, type, amount, status, transaction_type, transaction_id, reference, created_at
 		FROM transactions
-		WHERE user_id = $1 AND type = ANY($2)
+		WHERE user_id = $1 
+		  AND type = ANY($2)
+		  AND (reference IS NULL OR reference NOT LIKE 'GAME_%')
 		ORDER BY created_at DESC
 		LIMIT $3
 	`
