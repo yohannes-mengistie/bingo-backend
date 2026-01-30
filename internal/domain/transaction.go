@@ -10,20 +10,20 @@ import (
 type TransactionType string
 
 const (
-	TransactionTypeDeposit      TransactionType = "deposit"
-	TransactionTypeWithdraw     TransactionType = "withdraw"
-	TransactionTypeTransferIn   TransactionType = "transfer_in"
-	TransactionTypeTransferOut  TransactionType = "transfer_out"
+	TransactionTypeDeposit     TransactionType = "deposit"
+	TransactionTypeWithdraw    TransactionType = "withdraw"
+	TransactionTypeTransferIn  TransactionType = "transfer_in"
+	TransactionTypeTransferOut TransactionType = "transfer_out"
 )
 
 // TransactionStatus represents the status of a transaction
 type TransactionStatus string
 
 const (
-	TransactionStatusPending    TransactionStatus = "pending"
-	TransactionStatusCompleted  TransactionStatus = "completed"
-	TransactionStatusFailed     TransactionStatus = "failed"
-	TransactionStatusCancelled  TransactionStatus = "cancelled"
+	TransactionStatusPending   TransactionStatus = "pending"
+	TransactionStatusCompleted TransactionStatus = "completed"
+	TransactionStatusFailed    TransactionStatus = "failed"
+	TransactionStatusCancelled TransactionStatus = "cancelled"
 )
 
 // PaymentMethod represents the payment method
@@ -36,12 +36,12 @@ const (
 
 // Transaction represents a transaction entity in the domain
 type Transaction struct {
-	ID              uuid.UUID        `json:"id" db:"id"`
-	UserID          uuid.UUID        `json:"user_id" db:"user_id"`
+	ID              uuid.UUID         `json:"id" db:"id"`
+	UserID          uuid.UUID         `json:"user_id" db:"user_id"`
 	Type            TransactionType   `json:"type" db:"type"`
 	Amount          float64           `json:"amount" db:"amount"`
 	Status          TransactionStatus `json:"status" db:"status"`
-	TransactionType *PaymentMethod   `json:"transaction_type,omitempty" db:"transaction_type"`
+	TransactionType *PaymentMethod    `json:"transaction_type,omitempty" db:"transaction_type"`
 	TransactionID   *string           `json:"transaction_id,omitempty" db:"transaction_id"`
 	Reference       *string           `json:"reference,omitempty" db:"reference"`
 	CreatedAt       time.Time         `json:"created_at" db:"created_at"`
@@ -68,3 +68,8 @@ type TransferRequest struct {
 	Amount     float64   `json:"amount" binding:"required,gt=0"`
 }
 
+// TransferHistoryEntry represents a transfer transaction with user information
+type TransferHistoryEntry struct {
+	Transaction *Transaction `json:"transaction"`
+	To          *User        `json:"to,omitempty"` // User info for transfer_out (receiver) or transfer_in (sender)
+}

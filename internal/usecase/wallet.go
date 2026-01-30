@@ -175,11 +175,58 @@ func (uc *WalletUseCase) GetWithdrawalHistory(ctx context.Context, userID uuid.U
 }
 
 // GetTransferHistory returns the top transfer transactions (both in and out) for a user
-func (uc *WalletUseCase) GetTransferHistory(ctx context.Context, userID uuid.UUID) ([]*domain.Transaction, error) {
-	return uc.transactionRepo.FindByUserIDAndTypes(ctx, userID, []domain.TransactionType{
+// Includes user information for the other party in the transfer
+func (uc *WalletUseCase) GetTransferHistory(ctx context.Context, userID uuid.UUID) ([]*domain.TransferHistoryEntry, error) {
+	transactions, err := uc.transactionRepo.FindByUserIDAndTypes(ctx, userID, []domain.TransactionType{
 		domain.TransactionTypeTransferIn,
 		domain.TransactionTypeTransferOut,
 	}, domain.DefaultTransactionHistoryLimit)
+	if err != nil {
+		return nil, err
+	}
+
+	// Collect unique user IDs from references
+	userIDs := make(map[uuid.UUID]bool)
+	for _, tx := range transactions {
+		if tx.Reference != nil {
+			otherUserID, err := uuid.Parse(*tx.Reference)
+			if err == nil {
+				userIDs[otherUserID] = true
+			}
+		}
+	}
+
+	// Fetch all users in one batch
+	usersMap := make(map[uuid.UUID]*domain.User)
+	for otherUserID := range userIDs {
+		user, err := uc.userRepo.FindByID(ctx, otherUserID)
+		if err == nil && user != nil {
+			usersMap[otherUserID] = user
+		}
+	}
+
+	// Build response with user information
+	entries := make([]*domain.TransferHistoryEntry, 0, len(transactions))
+	for _, tx := range transactions {
+		entry := &domain.TransferHistoryEntry{
+			Transaction: tx,
+		}
+
+		// For transfer_out: reference is receiver's ID
+		// For transfer_in: reference is sender's ID
+		if tx.Reference != nil {
+			otherUserID, err := uuid.Parse(*tx.Reference)
+			if err == nil {
+				if user, exists := usersMap[otherUserID]; exists {
+					entry.To = user
+				}
+			}
+		}
+
+		entries = append(entries, entry)
+	}
+
+	return entries, nil
 }
 
 // Admin transaction query methods

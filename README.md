@@ -569,7 +569,7 @@ Get the top 10 withdrawal transactions for a user, ordered by most recent first.
 
 ### GET /api/v1/wallet/:user_id/transfers
 
-Get the top 10 transfer transactions (both incoming and outgoing) for a user, ordered by most recent first.
+Get the top 10 transfer transactions (both incoming and outgoing) for a user, ordered by most recent first. Includes user information for the other party in each transfer.
 
 **Path Parameters:**
 
@@ -581,36 +581,70 @@ Get the top 10 transfer transactions (both incoming and outgoing) for a user, or
 {
   "transfers": [
     {
-      "id": "660e8400-e29b-41d4-a716-446655440003",
-      "user_id": "550e8400-e29b-41d4-a716-446655440000",
-      "type": "transfer_out",
-      "amount": 25.00,
-      "status": "completed",
-      "transaction_type": null,
-      "transaction_id": null,
-      "reference": "770e8400-e29b-41d4-a716-446655440000",
-      "created_at": "2024-01-01T00:00:00Z"
+      "transaction": {
+        "id": "660e8400-e29b-41d4-a716-446655440003",
+        "user_id": "550e8400-e29b-41d4-a716-446655440000",
+        "type": "transfer_out",
+        "amount": 25.00,
+        "status": "completed",
+        "transaction_type": null,
+        "transaction_id": null,
+        "reference": "770e8400-e29b-41d4-a716-446655440000",
+        "created_at": "2024-01-01T00:00:00Z"
+      },
+      "to": {
+        "id": "770e8400-e29b-41d4-a716-446655440000",
+        "telegram_id": 987654321,
+        "first_name": "Jane",
+        "last_name": "Doe",
+        "phone_number": "9876543210",
+        "referal_code": "XYZ789",
+        "role": "user",
+        "created_at": "2024-01-01T00:00:00Z",
+        "updated_at": "2024-01-01T00:00:00Z"
+      }
     },
     {
-      "id": "660e8400-e29b-41d4-a716-446655440004",
-      "user_id": "550e8400-e29b-41d4-a716-446655440000",
-      "type": "transfer_in",
-      "amount": 15.00,
-      "status": "completed",
-      "transaction_type": null,
-      "transaction_id": null,
-      "reference": "880e8400-e29b-41d4-a716-446655440000",
-      "created_at": "2024-01-01T00:00:00Z"
+      "transaction": {
+        "id": "660e8400-e29b-41d4-a716-446655440004",
+        "user_id": "550e8400-e29b-41d4-a716-446655440000",
+        "type": "transfer_in",
+        "amount": 15.00,
+        "status": "completed",
+        "transaction_type": null,
+        "transaction_id": null,
+        "reference": "880e8400-e29b-41d4-a716-446655440000",
+        "created_at": "2024-01-01T00:00:00Z"
+      },
+      "to": {
+        "id": "880e8400-e29b-41d4-a716-446655440000",
+        "telegram_id": 111222333,
+        "first_name": "Bob",
+        "last_name": "Smith",
+        "phone_number": "1112223333",
+        "referal_code": "ABC456",
+        "role": "user",
+        "created_at": "2024-01-01T00:00:00Z",
+        "updated_at": "2024-01-01T00:00:00Z"
+      }
     }
   ],
   "count": 2
 }
 ```
 
+**Response Fields:**
+
+- `transaction`: The transfer transaction details
+- `to`: User information for the other party:
+  - For `transfer_out`: The receiver (user who received the money)
+  - For `transfer_in`: The sender (user who sent the money)
+
 **Note:**
 
-- `transfer_out`: Money sent to another user (reference contains receiver's user_id)
-- `transfer_in`: Money received from another user (reference contains sender's user_id)
+- `transfer_out`: Money sent to another user (the `to` field contains receiver's information)
+- `transfer_in`: Money received from another user (the `to` field contains sender's information)
+- The `to` field will be `null` if the user information cannot be found
 
 **Error Responses:**
 
@@ -710,6 +744,101 @@ curl http://localhost:8080/api/v1/games
 
 # Get available G1 games
 curl http://localhost:8080/api/v1/games?type=G1
+```
+
+### GET /api/v1/games/user/:user_id/history
+
+Get game history for a user. Returns all games the user has participated in, ordered by most recent first.
+
+**Path Parameters:**
+
+- `user_id` (UUID, required): The user ID
+
+**Query Parameters:**
+
+- `limit` (optional): Number of games to return (default: 10)
+- `offset` (optional): Number of games to skip (default: 0)
+
+**Response:**
+
+```json
+{
+  "games": [
+    {
+      "game": {
+        "id": "770e8400-e29b-41d4-a716-446655440000",
+        "game_type": "G5",
+        "state": "FINISHED",
+        "bet_amount": 50.00,
+        "min_players": 2,
+        "player_count": 10,
+        "prize_pool": 400.00,
+        "house_cut": 0.2,
+        "winner_id": "550e8400-e29b-41d4-a716-446655440000",
+        "countdown_ends": null,
+        "started_at": "2024-01-01T00:05:00Z",
+        "finished_at": "2024-01-01T00:10:00Z",
+        "created_at": "2024-01-01T00:00:00Z",
+        "updated_at": "2024-01-01T00:10:00Z"
+      },
+      "card_id": 42,
+      "is_eliminated": false,
+      "joined_at": "2024-01-01T00:00:00Z",
+      "left_at": null,
+      "is_winner": true
+    },
+    {
+      "game": {
+        "id": "880e8400-e29b-41d4-a716-446655440000",
+        "game_type": "G3",
+        "state": "FINISHED",
+        "bet_amount": 10.00,
+        "min_players": 2,
+        "player_count": 5,
+        "prize_pool": 40.00,
+        "house_cut": 0.2,
+        "winner_id": "660e8400-e29b-41d4-a716-446655440000",
+        "countdown_ends": null,
+        "started_at": "2024-01-01T00:15:00Z",
+        "finished_at": "2024-01-01T00:20:00Z",
+        "created_at": "2024-01-01T00:14:00Z",
+        "updated_at": "2024-01-01T00:20:00Z"
+      },
+      "card_id": 15,
+      "is_eliminated": true,
+      "joined_at": "2024-01-01T00:14:00Z",
+      "left_at": null,
+      "is_winner": false
+    }
+  ],
+  "count": 2,
+  "limit": 10,
+  "offset": 0
+}
+```
+
+**Response Fields:**
+
+- `game`: Full game details
+- `card_id`: The card ID the user selected (1-100)
+- `is_eliminated`: Whether the user was eliminated (invalid bingo claim)
+- `joined_at`: When the user joined the game
+- `left_at`: When the user left the game (null if still in game or game finished)
+- `is_winner`: Whether the user won this game
+
+**Error Responses:**
+
+- `400`: Invalid user ID
+- `500`: Failed to fetch game history
+
+**Example:**
+
+```bash
+# Get game history for a user
+curl http://localhost:8080/api/v1/games/user/550e8400-e29b-41d4-a716-446655440000/history
+
+# Get game history with pagination
+curl http://localhost:8080/api/v1/games/user/550e8400-e29b-41d4-a716-446655440000/history?limit=20&offset=0
 ```
 
 ### GET /api/v1/games/:gameId/state
