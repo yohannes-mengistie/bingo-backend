@@ -8,7 +8,7 @@ import "time"
 const MinPlayers = 2
 
 // HouseCut is the percentage of each bet that goes to the house (5%)
-const HouseCut = 0.05
+const HouseCut = 0.2
 
 // CountdownDuration is the duration of the countdown before a game starts
 const CountdownDuration = 60 * time.Second
