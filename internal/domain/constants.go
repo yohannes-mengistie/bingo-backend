@@ -147,7 +147,7 @@ const MaxAvailableGamesLimit = 50
 // Drawing Constants
 
 // DrawInterval is the interval between drawing numbers
-const DrawInterval = 1 * time.Second
+const DrawInterval = 250 * time.Millisecond
 
 // WebSocket Handler Constants
 
