@@ -636,6 +636,7 @@ Get the top 10 transfer transactions (both incoming and outgoing) for a user, or
 **Response:**
 
 ```json
+
 {
   "transfers": [
     {
@@ -741,6 +742,7 @@ Each game follows this lifecycle:
 - **CANCELLED**: Game cancelled (all players eliminated or other error), refunds issued
 
 **State Transitions:**
+
 - When 2nd player joins: **WAITING** → **COUNTDOWN** (60-second countdown starts)
 - If players drop below 2 during **COUNTDOWN**: **COUNTDOWN** → **WAITING** (game reverts, countdown stops, remaining players stay in game)
 - When countdown ends: **COUNTDOWN** → **DRAWING** (numbers start being drawn every 1 second)
@@ -1087,6 +1089,7 @@ Claim bingo. The backend validates the claim against drawn numbers.
 ```
 
 **Note:** `marked_numbers` is an array of card positions (0-24), not the actual numbers. Positions are numbered left-to-right, top-to-bottom:
+
 - Row 1: positions 0-4
 - Row 2: positions 5-9
 - Row 3: positions 10-14 (position 12 is the center free space)
@@ -1133,20 +1136,24 @@ Connect to real-time game updates via WebSocket. **No authentication required** 
 **Connection Options:**
 
 **Option 1: Connect by Game Type (Recommended)**
+
 ```javascript
 // Automatically finds or creates an available game of the specified type
 const ws = new WebSocket('ws://localhost:8080/api/v1/ws/game?type=G5');
 ```
 
 **Option 2: Connect by Game ID**
+
 ```javascript
 const ws = new WebSocket('ws://localhost:8080/api/v1/ws/game/{gameId}');
 ```
 
 **Query Parameters (for Option 1):**
+
 - `type` (string, required): Game type (G1, G2, G3, G4, G5, G6, G7)
 
 **Path Parameters (for Option 2):**
+
 - `gameId` (UUID, required): The game ID
 
 **WebSocket Events:**
