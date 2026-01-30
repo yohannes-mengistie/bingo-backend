@@ -27,3 +27,9 @@ type CreateUserRequest struct {
 	LastName   *string `json:"last_name,omitempty"`
 	Phone      string  `json:"phone" binding:"required"`
 }
+
+// UpdateUserNameRequest represents the data needed to update a user's name
+type UpdateUserNameRequest struct {
+	FirstName string  `json:"first_name" binding:"required"`
+	LastName  *string `json:"last_name,omitempty"`
+}

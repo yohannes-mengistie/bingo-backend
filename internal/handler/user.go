@@ -6,6 +6,7 @@ import (
 	"github.com/bingo/backend/internal/domain"
 	"github.com/bingo/backend/internal/usecase"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type UserHandler struct {
@@ -145,6 +146,45 @@ func (h *UserHandler) GetAllUsers(c *gin.Context) {
 		"count": len(users),
 		"limit": limit,
 		"offset": offset,
+	})
+}
+
+// UpdateUserName handles the PUT /user/:user_id/name endpoint
+func (h *UserHandler) UpdateUserName(c *gin.Context) {
+	userIDStr := c.Param("user_id")
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid user ID",
+		})
+		return
+	}
+
+	var req domain.UpdateUserNameRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid request data",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	user, err := h.userUseCase.UpdateUserName(c.Request.Context(), userID, req)
+	if err != nil {
+		statusCode := http.StatusInternalServerError
+		if err.Error() == "user not found" {
+			statusCode = http.StatusNotFound
+		}
+
+		c.JSON(statusCode, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "User name updated successfully",
+		"user":    user,
 	})
 }
 

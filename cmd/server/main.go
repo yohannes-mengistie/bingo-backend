@@ -173,6 +173,7 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			user.GET("/telegram/:telegram_id", userHandler.FindByTelegramID)
 			user.GET("/phone", userHandler.FindByPhone)
 			user.GET("/referral/:referral_code", userHandler.FindByReferralCode)
+			user.PUT("/:user_id/name", userHandler.UpdateUserName)
 		}
 
 		// Public wallet endpoints (for bot access)

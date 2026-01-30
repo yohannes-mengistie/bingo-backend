@@ -307,6 +307,64 @@ Find a user by their referral code.
 }
 ```
 
+### PUT /api/v1/user/:user_id/name
+
+Update a user's first and last name.
+
+**Path Parameters:**
+
+- `user_id` (UUID, required): The user ID
+
+**Request Body:**
+
+```json
+{
+  "first_name": "Jane",
+  "last_name": "Smith"
+}
+```
+
+**Request Fields:**
+
+- `first_name` (string, required): The new first name
+- `last_name` (string, optional): The new last name (can be null)
+
+**Response:**
+
+```json
+{
+  "message": "User name updated successfully",
+  "user": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "telegram_id": 123456789,
+    "first_name": "Jane",
+    "last_name": "Smith",
+    "phone_number": "1234567890",
+    "referal_code": "ABC123XY",
+    "role": "user",
+    "created_at": "2024-01-01T00:00:00Z",
+    "updated_at": "2024-01-01T00:01:00Z"
+  }
+}
+```
+
+**Error Responses:**
+
+- `400`: Invalid user ID or invalid request data
+- `404`: User not found
+- `500`: Failed to update user
+
+**Example:**
+
+```bash
+curl -X PUT http://localhost:8080/api/v1/user/550e8400-e29b-41d4-a716-446655440000/name \
+  -H "Content-Type: application/json" \
+  -d '{
+    "first_name": "Jane",
+    "last_name": "Smith"
+  }'
+```
+
 ## Wallet Endpoints
 
 ### POST /api/v1/wallet/deposit

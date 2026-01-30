@@ -9,6 +9,7 @@ import (
 	"github.com/bingo/backend/internal/domain"
 	"github.com/bingo/backend/pkg/referral"
 	"github.com/bingo/backend/pkg/utils"
+	"github.com/google/uuid"
 )
 
 type UserUseCase struct {
@@ -135,4 +136,24 @@ func (uc *UserUseCase) FindUserByReferralCode(ctx context.Context, referralCode 
 // GetAllUsers returns all users with pagination (for admin)
 func (uc *UserUseCase) GetAllUsers(ctx context.Context, limit, offset int) ([]*domain.User, error) {
 	return uc.userRepo.FindAll(ctx, limit, offset)
+}
+
+// UpdateUserName updates a user's first and last name
+func (uc *UserUseCase) UpdateUserName(ctx context.Context, userID uuid.UUID, req domain.UpdateUserNameRequest) (*domain.User, error) {
+	// Find the user first
+	user, err := uc.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("user not found: %w", err)
+	}
+
+	// Update the name fields
+	user.FirstName = req.FirstName
+	user.LastName = req.LastName
+
+	// Update in database
+	if err := uc.userRepo.Update(ctx, user); err != nil {
+		return nil, fmt.Errorf("failed to update user: %w", err)
+	}
+
+	return user, nil
 }
