@@ -192,6 +192,7 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 		games := api.Group("/games")
 		{
 			games.GET("", gameHandler.GetGames)
+			games.GET("/user/:user_id/history", gameHandler.GetGameHistory)
 			games.GET("/:gameId/state", gameHandler.GetGameState)
 			games.POST("/:gameId/join", gameHandler.JoinGame)
 			games.POST("/:gameId/leave", gameHandler.LeaveGame)

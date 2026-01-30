@@ -693,3 +693,20 @@ func (uc *GameUseCase) GetCardData(ctx context.Context, cardID int) (*bingo.Bing
 	card := bingo.GenerateCard(cardID)
 	return card, nil
 }
+
+// GetGameHistory returns the game history for a user
+func (uc *GameUseCase) GetGameHistory(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*domain.GameHistoryEntry, error) {
+	if limit <= 0 {
+		limit = domain.DefaultTransactionHistoryLimit
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	history, err := uc.gameRepo.FindGamesByUserID(ctx, userID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get game history: %w", err)
+	}
+
+	return history, nil
+}

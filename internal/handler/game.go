@@ -249,3 +249,47 @@ func (h *GameHandler) GetCardData(c *gin.Context) {
 		"card": card,
 	})
 }
+
+// GetGameHistory handles GET /games/user/:user_id/history
+// Returns the game history for a user
+func (h *GameHandler) GetGameHistory(c *gin.Context) {
+	userIDStr := c.Param("user_id")
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid user ID",
+		})
+		return
+	}
+
+	// Parse query parameters for pagination
+	limit := 10 // default limit
+	offset := 0  // default offset
+
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if parsedLimit := parseInt(limitStr); parsedLimit > 0 {
+			limit = parsedLimit
+		}
+	}
+
+	if offsetStr := c.Query("offset"); offsetStr != "" {
+		if parsedOffset := parseInt(offsetStr); parsedOffset >= 0 {
+			offset = parsedOffset
+		}
+	}
+
+	history, err := h.gameUseCase.GetGameHistory(c.Request.Context(), userID, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to fetch game history",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"games":  history,
+		"count":  len(history),
+		"limit":  limit,
+		"offset": offset,
+	})
+}

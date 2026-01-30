@@ -406,3 +406,91 @@ func (r *gameRepository) SaveDrawnNumber(ctx context.Context, gameID uuid.UUID, 
 
 	return nil
 }
+
+// FindGamesByUserID finds all games a user has participated in
+func (r *gameRepository) FindGamesByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*domain.GameHistoryEntry, error) {
+	query := `
+		SELECT 
+			g.id, g.game_type, g.state, g.bet_amount, g.min_players, g.player_count, 
+			g.prize_pool, g.house_cut, g.winner_id, g.countdown_ends, g.started_at, 
+			g.finished_at, g.created_at, g.updated_at,
+			gp.card_id, gp.is_eliminated, gp.joined_at, gp.left_at
+		FROM game_players gp
+		INNER JOIN games g ON gp.game_id = g.id
+		WHERE gp.user_id = $1
+		ORDER BY gp.joined_at DESC
+		LIMIT $2 OFFSET $3
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, userID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find games by user ID: %w", err)
+	}
+	defer rows.Close()
+
+	entries := []*domain.GameHistoryEntry{}
+	for rows.Next() {
+		entry := &domain.GameHistoryEntry{
+			Game: &domain.Game{},
+		}
+		var winnerID sql.NullString
+		var countdownEnds sql.NullTime
+		var startedAt sql.NullTime
+		var finishedAt sql.NullTime
+		var leftAt sql.NullTime
+
+		err := rows.Scan(
+			&entry.Game.ID,
+			&entry.Game.GameType,
+			&entry.Game.State,
+			&entry.Game.BetAmount,
+			&entry.Game.MinPlayers,
+			&entry.Game.PlayerCount,
+			&entry.Game.PrizePool,
+			&entry.Game.HouseCut,
+			&winnerID,
+			&countdownEnds,
+			&startedAt,
+			&finishedAt,
+			&entry.Game.CreatedAt,
+			&entry.Game.UpdatedAt,
+			&entry.CardID,
+			&entry.IsEliminated,
+			&entry.JoinedAt,
+			&leftAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan game history entry: %w", err)
+		}
+
+		// Handle nullable fields
+		if winnerID.Valid {
+			parsedID, err := uuid.Parse(winnerID.String)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse winner_id: %w", err)
+			}
+			entry.Game.WinnerID = &parsedID
+			entry.IsWinner = parsedID == userID
+		}
+		if countdownEnds.Valid {
+			entry.Game.CountdownEnds = &countdownEnds.Time
+		}
+		if startedAt.Valid {
+			entry.Game.StartedAt = &startedAt.Time
+		}
+		if finishedAt.Valid {
+			entry.Game.FinishedAt = &finishedAt.Time
+		}
+		if leftAt.Valid {
+			entry.LeftAt = &leftAt.Time
+		}
+
+		entries = append(entries, entry)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating game history entries: %w", err)
+	}
+
+	return entries, nil
+}

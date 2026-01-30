@@ -3,6 +3,7 @@ package domain
 import (
 	"context"
 	"database/sql"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -41,6 +42,16 @@ type TransactionRepository interface {
 	UpdateStatus(ctx context.Context, tx *sql.Tx, id uuid.UUID, status TransactionStatus) error
 }
 
+// GameHistoryEntry represents a game with user's participation details
+type GameHistoryEntry struct {
+	Game         *Game      `json:"game"`
+	CardID       int        `json:"card_id"`
+	IsEliminated bool       `json:"is_eliminated"`
+	JoinedAt     time.Time  `json:"joined_at"`
+	LeftAt       *time.Time `json:"left_at,omitempty"`
+	IsWinner     bool       `json:"is_winner"`
+}
+
 // GameRepository defines the interface for game data operations
 type GameRepository interface {
 	Create(ctx context.Context, game *Game) error
@@ -54,4 +65,5 @@ type GameRepository interface {
 	EliminatePlayer(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID) error
 	GetTakenCards(ctx context.Context, gameID uuid.UUID) ([]int, error)
 	SaveDrawnNumber(ctx context.Context, gameID uuid.UUID, letter string, number int) error
+	FindGamesByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*GameHistoryEntry, error)
 }
