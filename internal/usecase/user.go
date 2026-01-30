@@ -138,6 +138,39 @@ func (uc *UserUseCase) GetAllUsers(ctx context.Context, limit, offset int) ([]*d
 	return uc.userRepo.FindAll(ctx, limit, offset)
 }
 
+// GetAllUsersWithWallets returns all users with their wallets (for admin)
+func (uc *UserUseCase) GetAllUsersWithWallets(ctx context.Context, limit, offset int) ([]*domain.UserWithWallet, int, error) {
+	// Get users
+	users, err := uc.userRepo.FindAll(ctx, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// Get total count
+	totalCount, err := uc.userRepo.CountAll(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// Fetch wallets for each user
+	usersWithWallets := make([]*domain.UserWithWallet, 0, len(users))
+	for _, user := range users {
+		uw := &domain.UserWithWallet{
+			User: user,
+		}
+
+		// Try to fetch wallet (may not exist for some users)
+		wallet, err := uc.walletRepo.FindByUserID(ctx, user.ID)
+		if err == nil && wallet != nil {
+			uw.Wallet = wallet
+		}
+
+		usersWithWallets = append(usersWithWallets, uw)
+	}
+
+	return usersWithWallets, totalCount, nil
+}
+
 // UpdateUserName updates a user's first and last name
 func (uc *UserUseCase) UpdateUserName(ctx context.Context, userID uuid.UUID, req domain.UpdateUserNameRequest) (*domain.User, error) {
 	// Find the user first

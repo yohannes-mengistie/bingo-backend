@@ -36,11 +36,17 @@ type UpdateUserNameRequest struct {
 
 // DashboardStats represents the admin dashboard statistics
 type DashboardStats struct {
-	PendingDeposits    int                `json:"pending_deposits"`
-	PendingWithdrawals int                `json:"pending_withdrawals"`
-	TotalUsers         int                `json:"total_users"`
-	TotalTransactions  int                `json:"total_transactions"`
-	TotalBalance       float64            `json:"total_balance"`
-	GamesByType        map[GameType]int   `json:"games_by_type"`
-	TotalHouseCut      float64            `json:"total_house_cut"`
+	PendingDeposits    int              `json:"pending_deposits"`
+	PendingWithdrawals int              `json:"pending_withdrawals"`
+	TotalUsers         int              `json:"total_users"`
+	TotalTransactions  int              `json:"total_transactions"`
+	TotalBalance       float64          `json:"total_balance"`
+	GamesByType        map[GameType]int `json:"games_by_type"`
+	TotalHouseCut      float64          `json:"total_house_cut"`
+}
+
+// UserWithWallet represents a user with their wallet information
+type UserWithWallet struct {
+	*User
+	Wallet *Wallet `json:"wallet,omitempty"`
 }

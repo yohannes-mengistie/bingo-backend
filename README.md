@@ -1312,7 +1312,7 @@ Authorization: Bearer <your_jwt_token>
 
 ### GET /api/v1/admin/users
 
-Get all users with pagination.
+Get all users with their wallets and pagination.
 
 **Query Parameters:**
 
@@ -1330,17 +1330,32 @@ Get all users with pagination.
       "first_name": "John",
       "last_name": "Doe",
       "phone_number": "1234567890",
-      "referal_code": "ABC123",
+      "referal_code": "ABC123XY",
       "role": "user",
       "created_at": "2024-01-01T00:00:00Z",
-      "updated_at": "2024-01-01T00:00:00Z"
+      "updated_at": "2024-01-01T00:00:00Z",
+      "wallet": {
+        "user_id": "550e8400-e29b-41d4-a716-446655440000",
+        "balance": 75.00,
+        "demo_balance": 0.00,
+        "updated_at": "2024-01-01T00:00:00Z"
+      }
     }
   ],
-  "count": 1,
+  "count": 1250,
   "limit": 50,
   "offset": 0
 }
 ```
+
+**Response Fields:**
+
+- `users`: Array of user objects, each containing:
+  - All user fields (id, telegram_id, first_name, last_name, phone_number, referal_code, role, created_at, updated_at)
+  - `wallet`: Wallet information (may be null if wallet doesn't exist)
+- `count`: Total number of users in the system (not just the current page)
+- `limit`: Number of users returned in this response
+- `offset`: Number of users skipped
 
 **Note:** Passwords are never included in the response for security.
 

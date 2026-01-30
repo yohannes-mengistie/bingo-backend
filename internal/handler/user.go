@@ -133,7 +133,7 @@ func (h *UserHandler) FindByReferralCode(c *gin.Context) {
 func (h *UserHandler) GetAllUsers(c *gin.Context) {
 	limit, offset := getPaginationParams(c)
 
-	users, err := h.userUseCase.GetAllUsers(c.Request.Context(), limit, offset)
+	usersWithWallets, totalCount, err := h.userUseCase.GetAllUsersWithWallets(c.Request.Context(), limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "Failed to fetch users",
@@ -142,8 +142,8 @@ func (h *UserHandler) GetAllUsers(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"users": users,
-		"count": len(users),
+		"users": usersWithWallets,
+		"count": totalCount,
 		"limit": limit,
 		"offset": offset,
 	})
