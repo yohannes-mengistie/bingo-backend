@@ -15,6 +15,7 @@ type WalletUseCase struct {
 	walletRepo         domain.WalletRepository
 	transactionRepo    domain.TransactionRepository
 	userRepo           domain.UserRepository
+	gameRepo           domain.GameRepository
 	transactionService *postgres.TransactionService
 	db                 *sql.DB
 }
@@ -24,6 +25,7 @@ func NewWalletUseCase(
 	walletRepo domain.WalletRepository,
 	transactionRepo domain.TransactionRepository,
 	userRepo domain.UserRepository,
+	gameRepo domain.GameRepository,
 	db *sql.DB,
 ) *WalletUseCase {
 	transactionService := postgres.NewTransactionService(db, walletRepo, transactionRepo)
@@ -31,6 +33,7 @@ func NewWalletUseCase(
 		walletRepo:         walletRepo,
 		transactionRepo:    transactionRepo,
 		userRepo:           userRepo,
+		gameRepo:           gameRepo,
 		transactionService: transactionService,
 		db:                 db,
 	}
@@ -267,4 +270,62 @@ func (uc *WalletUseCase) GetTransferTransactions(ctx context.Context, limit, off
 // GetAllTransactions returns all transactions with optional filters for admin
 func (uc *WalletUseCase) GetAllTransactions(ctx context.Context, limit, offset int) ([]*domain.Transaction, error) {
 	return uc.transactionRepo.FindAll(ctx, limit, offset)
+}
+
+// GetDashboardStats returns dashboard statistics for admin
+func (uc *WalletUseCase) GetDashboardStats(ctx context.Context) (*domain.DashboardStats, error) {
+	stats := &domain.DashboardStats{
+		GamesByType: make(map[domain.GameType]int),
+	}
+
+	// Get pending deposits count
+	pendingDeposits, err := uc.transactionRepo.CountByStatusAndType(ctx, domain.TransactionStatusPending, domain.TransactionTypeDeposit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count pending deposits: %w", err)
+	}
+	stats.PendingDeposits = pendingDeposits
+
+	// Get pending withdrawals count
+	pendingWithdrawals, err := uc.transactionRepo.CountByStatusAndType(ctx, domain.TransactionStatusPending, domain.TransactionTypeWithdraw)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count pending withdrawals: %w", err)
+	}
+	stats.PendingWithdrawals = pendingWithdrawals
+
+	// Get total users count
+	totalUsers, err := uc.userRepo.CountAll(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count users: %w", err)
+	}
+	stats.TotalUsers = totalUsers
+
+	// Get total transactions count
+	totalTransactions, err := uc.transactionRepo.CountAll(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count transactions: %w", err)
+	}
+	stats.TotalTransactions = totalTransactions
+
+	// Get total balance
+	totalBalance, err := uc.walletRepo.GetTotalBalance(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get total balance: %w", err)
+	}
+	stats.TotalBalance = totalBalance
+
+	// Get games by type
+	gamesByType, err := uc.gameRepo.CountGamesByType(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count games by type: %w", err)
+	}
+	stats.GamesByType = gamesByType
+
+	// Get total house cut
+	totalHouseCut, err := uc.gameRepo.GetTotalHouseCut(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get total house cut: %w", err)
+	}
+	stats.TotalHouseCut = totalHouseCut
+
+	return stats, nil
 }

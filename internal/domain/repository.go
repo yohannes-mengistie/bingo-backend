@@ -17,6 +17,7 @@ type UserRepository interface {
 	FindByID(ctx context.Context, id uuid.UUID) (*User, error)
 	FindAll(ctx context.Context, limit, offset int) ([]*User, error)
 	Update(ctx context.Context, user *User) error
+	CountAll(ctx context.Context) (int, error)
 }
 
 // WalletRepository defines the interface for wallet data operations
@@ -26,6 +27,7 @@ type WalletRepository interface {
 	UpdateBalance(ctx context.Context, tx *sql.Tx, userID uuid.UUID, amount float64) error
 	LockForUpdate(ctx context.Context, tx *sql.Tx, userID uuid.UUID) (*Wallet, error)
 	Update(ctx context.Context, wallet *Wallet) error
+	GetTotalBalance(ctx context.Context) (float64, error)
 }
 
 // TransactionRepository defines the interface for transaction data operations
@@ -40,6 +42,8 @@ type TransactionRepository interface {
 	FindByTypes(ctx context.Context, transactionTypes []TransactionType, limit, offset int) ([]*Transaction, error)
 	FindAll(ctx context.Context, limit, offset int) ([]*Transaction, error)
 	UpdateStatus(ctx context.Context, tx *sql.Tx, id uuid.UUID, status TransactionStatus) error
+	CountByStatusAndType(ctx context.Context, status TransactionStatus, transactionType TransactionType) (int, error)
+	CountAll(ctx context.Context) (int, error)
 }
 
 // GameHistoryEntry represents a game with user's participation details
@@ -66,4 +70,6 @@ type GameRepository interface {
 	GetTakenCards(ctx context.Context, gameID uuid.UUID) ([]int, error)
 	SaveDrawnNumber(ctx context.Context, gameID uuid.UUID, letter string, number int) error
 	FindGamesByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*GameHistoryEntry, error)
+	CountGamesByType(ctx context.Context) (map[GameType]int, error)
+	GetTotalHouseCut(ctx context.Context) (float64, error)
 }

@@ -173,3 +173,16 @@ func (r *walletRepository) Update(ctx context.Context, wallet *domain.Wallet) er
 
 	return nil
 }
+
+// GetTotalBalance calculates the sum of all wallet balances
+func (r *walletRepository) GetTotalBalance(ctx context.Context) (float64, error) {
+	query := `SELECT COALESCE(SUM(balance), 0) FROM wallets`
+
+	var totalBalance float64
+	err := r.db.QueryRowContext(ctx, query).Scan(&totalBalance)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get total balance: %w", err)
+	}
+
+	return totalBalance, nil
+}

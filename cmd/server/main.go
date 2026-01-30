@@ -69,7 +69,7 @@ func main() {
 
 	// Initialize use cases
 	userUseCase := usecase.NewUserUseCase(userRepo, walletRepo, db)
-	walletUseCase := usecase.NewWalletUseCase(walletRepo, transactionRepo, userRepo, db)
+	walletUseCase := usecase.NewWalletUseCase(walletRepo, transactionRepo, userRepo, gameRepo, db)
 	authUseCase := usecase.NewAuthUseCase(userRepo, jwtService)
 	gameUseCase := usecase.NewGameUseCase(gameRepo, walletRepo, transactionRepo, userRepo, db, gameStateService)
 
@@ -233,6 +233,12 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 		{
 			// User management
 			admin.GET("/users", userHandler.GetAllUsers)
+
+			// Dashboard stats
+			stats := admin.Group("/stats")
+			{
+				stats.GET("/dashboard", walletHandler.GetDashboardStats)
+			}
 
 			// Transaction queries
 			transactions := admin.Group("/transactions")

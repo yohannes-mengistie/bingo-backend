@@ -1592,6 +1592,59 @@ Get all transfer transactions (both `transfer_in` and `transfer_out`).
 }
 ```
 
+## Admin Dashboard Endpoints
+
+### GET /api/v1/admin/stats/dashboard
+
+Get dashboard statistics for the admin panel. Returns aggregated statistics about users, transactions, games, and balances.
+
+**Authentication:** Required (Admin only)
+
+**Response:**
+
+```json
+{
+  "pending_deposits": 5,
+  "pending_withdrawals": 3,
+  "total_users": 1250,
+  "total_transactions": 5000,
+  "total_balance": 125000.50,
+  "games_by_type": {
+    "G1": 250,
+    "G2": 180,
+    "G3": 150,
+    "G4": 120,
+    "G5": 100,
+    "G6": 80,
+    "G7": 50
+  },
+  "total_house_cut": 15000.75
+}
+```
+
+**Response Fields:**
+
+- `pending_deposits`: Number of pending deposit transactions
+- `pending_withdrawals`: Number of pending withdrawal transactions
+- `total_users`: Total number of users in the system
+- `total_transactions`: Total number of transactions (all types and statuses)
+- `total_balance`: Sum of all wallet balances across all users
+- `games_by_type`: Count of games grouped by game type (G1-G7)
+- `total_house_cut`: Total house cut collected from finished games (calculated from prize pools)
+
+**Error Responses:**
+
+- `401`: Unauthorized (missing or invalid token)
+- `403`: Forbidden (user is not an admin)
+- `500`: Failed to fetch dashboard stats
+
+**Example:**
+
+```bash
+curl -X GET http://localhost:8080/api/v1/admin/stats/dashboard \
+  -H "Authorization: Bearer <admin_token>"
+```
+
 ## Admin Transaction Action Endpoints
 
 ### POST /api/v1/admin/transactions/:id/approve-deposit

@@ -33,3 +33,14 @@ type UpdateUserNameRequest struct {
 	FirstName string  `json:"first_name" binding:"required"`
 	LastName  *string `json:"last_name,omitempty"`
 }
+
+// DashboardStats represents the admin dashboard statistics
+type DashboardStats struct {
+	PendingDeposits    int                `json:"pending_deposits"`
+	PendingWithdrawals int                `json:"pending_withdrawals"`
+	TotalUsers         int                `json:"total_users"`
+	TotalTransactions  int                `json:"total_transactions"`
+	TotalBalance       float64            `json:"total_balance"`
+	GamesByType        map[GameType]int   `json:"games_by_type"`
+	TotalHouseCut      float64            `json:"total_house_cut"`
+}

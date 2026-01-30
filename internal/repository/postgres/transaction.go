@@ -385,3 +385,33 @@ func (r *transactionRepository) UpdateStatus(ctx context.Context, tx *sql.Tx, id
 
 	return nil
 }
+
+// CountByStatusAndType counts transactions by status and type
+func (r *transactionRepository) CountByStatusAndType(ctx context.Context, status domain.TransactionStatus, transactionType domain.TransactionType) (int, error) {
+	query := `
+		SELECT COUNT(*)
+		FROM transactions
+		WHERE status = $1 AND type = $2
+	`
+
+	var count int
+	err := r.db.QueryRowContext(ctx, query, status, transactionType).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count transactions: %w", err)
+	}
+
+	return count, nil
+}
+
+// CountAll counts all transactions
+func (r *transactionRepository) CountAll(ctx context.Context) (int, error) {
+	query := `SELECT COUNT(*) FROM transactions`
+
+	var count int
+	err := r.db.QueryRowContext(ctx, query).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count transactions: %w", err)
+	}
+
+	return count, nil
+}

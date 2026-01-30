@@ -494,3 +494,51 @@ func (r *gameRepository) FindGamesByUserID(ctx context.Context, userID uuid.UUID
 
 	return entries, nil
 }
+
+// CountGamesByType counts games by type
+func (r *gameRepository) CountGamesByType(ctx context.Context) (map[domain.GameType]int, error) {
+	query := `
+		SELECT game_type, COUNT(*) as count
+		FROM games
+		GROUP BY game_type
+	`
+
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count games by type: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[domain.GameType]int)
+	for rows.Next() {
+		var gameType domain.GameType
+		var count int
+		if err := rows.Scan(&gameType, &count); err != nil {
+			return nil, fmt.Errorf("failed to scan game count: %w", err)
+		}
+		result[gameType] = count
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating game counts: %w", err)
+	}
+
+	return result, nil
+}
+
+// GetTotalHouseCut calculates the total house cut from all games
+func (r *gameRepository) GetTotalHouseCut(ctx context.Context) (float64, error) {
+	query := `
+		SELECT COALESCE(SUM(prize_pool * house_cut / (1 - house_cut)), 0) as total_house_cut
+		FROM games
+		WHERE state IN ('FINISHED', 'CLOSED')
+	`
+
+	var totalHouseCut float64
+	err := r.db.QueryRowContext(ctx, query).Scan(&totalHouseCut)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get total house cut: %w", err)
+	}
+
+	return totalHouseCut, nil
+}

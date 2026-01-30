@@ -595,3 +595,16 @@ func parseInt(s string) int {
 	fmt.Sscanf(s, "%d", &result)
 	return result
 }
+
+// GetDashboardStats handles GET /admin/stats/dashboard
+func (h *WalletHandler) GetDashboardStats(c *gin.Context) {
+	stats, err := h.walletUseCase.GetDashboardStats(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to fetch dashboard stats",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, stats)
+}
