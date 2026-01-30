@@ -138,11 +138,13 @@ func (uc *GameUseCase) JoinGame(ctx context.Context, gameID uuid.UUID, req domai
 	}
 
 	// Create transaction record
+	gameBetRef := "GAME_BET"
 	transaction := &domain.Transaction{
-		UserID: req.UserID,
-		Type:   domain.TransactionTypeWithdraw, // Bet is treated as withdrawal
-		Amount: game.BetAmount,
-		Status: domain.TransactionStatusCompleted, // Bet is immediately deducted
+		UserID:    req.UserID,
+		Type:      domain.TransactionTypeWithdraw, // Bet is treated as withdrawal
+		Amount:    game.BetAmount,
+		Status:    domain.TransactionStatusCompleted, // Bet is immediately deducted
+		Reference: &gameBetRef,                       // Mark as game bet to exclude from withdrawal history
 	}
 
 	if err := uc.transactionRepo.Create(ctx, tx, transaction); err != nil {
@@ -248,11 +250,13 @@ func (uc *GameUseCase) LeaveGame(ctx context.Context, gameID uuid.UUID, req doma
 		}
 
 		// Create refund transaction
+		gameRefundRef := "GAME_REFUND"
 		transaction := &domain.Transaction{
-			UserID: req.UserID,
-			Type:   domain.TransactionTypeDeposit, // Refund is treated as deposit
-			Amount: game.BetAmount,
-			Status: domain.TransactionStatusCompleted,
+			UserID:    req.UserID,
+			Type:      domain.TransactionTypeDeposit, // Refund is treated as deposit
+			Amount:    game.BetAmount,
+			Status:    domain.TransactionStatusCompleted,
+			Reference: &gameRefundRef, // Mark as game refund to exclude from deposit history
 		}
 
 		if err := uc.transactionRepo.Create(ctx, tx, transaction); err != nil {
@@ -526,11 +530,13 @@ func (uc *GameUseCase) ClaimBingo(ctx context.Context, gameID uuid.UUID, req dom
 		}
 
 		// Create transaction
+		gamePrizeRef := "GAME_PRIZE"
 		transaction := &domain.Transaction{
-			UserID: req.UserID,
-			Type:   domain.TransactionTypeDeposit,
-			Amount: game.PrizePool,
-			Status: domain.TransactionStatusCompleted,
+			UserID:    req.UserID,
+			Type:      domain.TransactionTypeDeposit,
+			Amount:    game.PrizePool,
+			Status:    domain.TransactionStatusCompleted,
+			Reference: &gamePrizeRef, // Mark as game prize to exclude from deposit history
 		}
 
 		if err := uc.transactionRepo.Create(ctx, tx, transaction); err != nil {
@@ -592,10 +598,20 @@ func (uc *GameUseCase) ClaimBingo(ctx context.Context, gameID uuid.UUID, req dom
 		if activePlayers == 0 {
 			// All players eliminated - cancel game and refund
 			game.State = domain.GameStateCancelled
+			gameRefundRef := "GAME_REFUND"
 			for _, p := range players {
 				_, err := uc.walletRepo.LockForUpdate(ctx, tx, p.UserID)
 				if err == nil {
 					uc.walletRepo.UpdateBalance(ctx, tx, p.UserID, game.BetAmount)
+					// Create refund transaction
+					refundTx := &domain.Transaction{
+						UserID:    p.UserID,
+						Type:      domain.TransactionTypeDeposit,
+						Amount:    game.BetAmount,
+						Status:    domain.TransactionStatusCompleted,
+						Reference: &gameRefundRef, // Mark as game refund
+					}
+					uc.transactionRepo.Create(ctx, tx, refundTx)
 				}
 			}
 		}
