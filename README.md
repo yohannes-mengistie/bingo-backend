@@ -1861,32 +1861,67 @@ All wallet operations use database transactions with row-level locking (`FOR UPD
 
 ## Creating Admin Users
 
-To create an admin user:
+There are two ways to create an admin user:
 
-1. **Register a user** via `/api/v1/user/register` or directly in the database
+### Option A: Convert an Existing User to Admin
+
+1. **Hash a password** using the helper script:
+   ```bash
+   go run scripts/create_admin.go your_password_here
+   ```
+   This will output a hashed password.
+
+2. **Update the user** in the database:
+   ```bash
+   psql "postgresql://postgres:XRQDwPdAWIbQqOvTInaTcpKDbwuvnkri@shuttle.proxy.rlwy.net:54624/railway" -c "UPDATE users SET role = 'admin', password = 'YOUR_HASHED_PASSWORD_HERE' WHERE telegram_id = YOUR_TELEGRAM_ID;"
+   ```
+   Replace:
+   - `YOUR_HASHED_PASSWORD_HERE` with the hash from step 1
+   - `YOUR_TELEGRAM_ID` with the user's Telegram ID
+
+### Option B: Create a New User and Make Them Admin
+
+1. **Register a user** via API:
+   ```bash
+   curl -X POST http://localhost:8080/api/v1/user/register \
+     -H "Content-Type: application/json" \
+     -d '{
+       "telegram_id": 123456789,
+       "first_name": "Admin",
+       "last_name": "User",
+       "phone": "+1234567890"
+     }'
+   ```
+
 2. **Hash a password** using the helper script:
    ```bash
-   go run scripts/create_admin.go your_password
-   ```
-3. **Update the user** in the database:
-   ```sql
-   UPDATE users 
-   SET role = 'admin', 
-       password = '$2a$10$hashed_password_here' 
-   WHERE telegram_id = 123456789;
+   go run scripts/create_admin.go your_password_here
    ```
 
-**Example:**
+3. **Update the user to admin** (same as Option A, step 2)
+
+### Quick Example
 
 ```bash
 # 1. Hash password
-go run scripts/create_admin.go myadminpassword
-# Output: $2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy
+go run scripts/create_admin.go mySecurePassword123
+# Output: $2a$10$l2ns2tObNnMy.whUTzi21e7u1xuJH0nEFitkI/eqUSO0Bmul/bEji
 
-# 2. Update user in database
-export DOCKER_HOST=unix:///run/docker.sock
-docker exec bingo-postgres psql -U postgres -d bingo -c \
-  "UPDATE users SET role = 'admin', password = '\$2a\$10\$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy' WHERE telegram_id = 123456789;"
+# 2. Update user (replace 123456789 with actual telegram_id)
+psql "postgresql://postgres:XRQDwPdAWIbQqOvTInaTcpKDbwuvnkri@shuttle.proxy.rlwy.net:54624/railway" -c "UPDATE users SET role = 'admin', password = '\$2a\$10\$l2ns2tObNnMy.whUTzi21e7u1xuJH0nEFitkI/eqUSO0Bmul/bEji' WHERE telegram_id = 123456789;"
+```
+
+**Note:** When using `psql`, escape the `$` signs in the password hash by using `\$`.
+
+### Verify Admin Account
+
+After creating the admin, you can log in via:
+```bash
+POST /api/v1/auth/login
+{
+  "telegram_id": 123456789,
+  "password": "your_password_here"
+}
 ```
 
 ## Performance Optimizations
