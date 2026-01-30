@@ -69,3 +69,100 @@ const (
 	BingoNumberMinO = 61
 	BingoNumberMaxO = 75
 )
+
+// Card Position Constants
+
+// CardTotalPositions is the total number of positions on a bingo card (5x5 = 25)
+const CardTotalPositions = CardGridSize * CardGridSize
+
+// CardCenterValue is the value that should be in the center cell (free space)
+const CardCenterValue = 0
+
+// CardCenterRow is the row index of the center cell (0-indexed)
+const CardCenterRow = 2
+
+// CardCenterCol is the column index of the center cell (0-indexed)
+const CardCenterCol = 2
+
+// NumbersPerLetter is the maximum number of numbers per bingo letter (15)
+const NumbersPerLetter = 15
+
+// Game Type Bet Amount Constants
+
+// BetAmountG1 is the bet amount for game type G1
+const BetAmountG1 = 5.0
+
+// BetAmountG2 is the bet amount for game type G2
+const BetAmountG2 = 7.0
+
+// BetAmountG3 is the bet amount for game type G3
+const BetAmountG3 = 10.0
+
+// BetAmountG4 is the bet amount for game type G4
+const BetAmountG4 = 20.0
+
+// BetAmountG5 is the bet amount for game type G5
+const BetAmountG5 = 50.0
+
+// BetAmountG6 is the bet amount for game type G6
+const BetAmountG6 = 100.0
+
+// BetAmountG7 is the bet amount for game type G7
+const BetAmountG7 = 200.0
+
+// WebSocket Event Name Constants
+
+// WebSocketEventPlayerJoined is the event name when a player joins a game
+const WebSocketEventPlayerJoined = "PLAYER_JOINED"
+
+// WebSocketEventPlayerLeft is the event name when a player leaves a game
+const WebSocketEventPlayerLeft = "PLAYER_LEFT"
+
+// WebSocketEventGameStatus is the event name for game status updates
+const WebSocketEventGameStatus = "GAME_STATUS"
+
+// WebSocketEventCountdown is the event name for countdown updates
+const WebSocketEventCountdown = "COUNTDOWN"
+
+// WebSocketEventNumberDrawn is the event name when a number is drawn
+const WebSocketEventNumberDrawn = "NUMBER_DRAWN"
+
+// WebSocketEventWinner is the event name when a winner is declared
+const WebSocketEventWinner = "WINNER"
+
+// WebSocketEventPlayerEliminated is the event name when a player is eliminated
+const WebSocketEventPlayerEliminated = "PLAYER_ELIMINATED"
+
+// WebSocketEventNewGameAvailable is the event name when a new game becomes available
+const WebSocketEventNewGameAvailable = "NEW_GAME_AVAILABLE"
+
+// WebSocketEventInitialState is the event name for the initial game state
+const WebSocketEventInitialState = "INITIAL_STATE"
+
+// Game Query Constants
+
+// MaxAvailableGamesLimit is the maximum number of available games to return in a query
+const MaxAvailableGamesLimit = 50
+
+// Drawing Constants
+
+// DrawInterval is the interval between drawing numbers
+const DrawInterval = 1 * time.Second
+
+// WebSocket Handler Constants
+
+// WebSocketInitialStateTimeout is the timeout for fetching initial state
+const WebSocketInitialStateTimeout = 5 * time.Second
+
+// User Constants
+
+// DefaultUserBalance is the default balance for new users
+const DefaultUserBalance = 5.0
+
+// MaxReferralCodeGenerationAttempts is the maximum number of attempts to generate a unique referral code
+const MaxReferralCodeGenerationAttempts = 10
+
+// Transaction History Constants
+
+// DefaultTransactionHistoryLimit is the default limit for transaction history queries
+const DefaultTransactionHistoryLimit = 10

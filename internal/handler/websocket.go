@@ -353,7 +353,7 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 // sendInitialState sends the initial game state to the client
 // Returns an error if the message cannot be sent
 func (h *WebSocketHandler) sendInitialState(conn *websocket.Conn, gameID uuid.UUID) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), domain.WebSocketInitialStateTimeout)
 	defer cancel()
 
 	// Try Redis first, fallback to database
@@ -373,7 +373,7 @@ func (h *WebSocketHandler) sendInitialState(conn *websocket.Conn, gameID uuid.UU
 		log.Printf("Warning: Could not get game state for %s: %v", gameID, err)
 		// Send minimal state
 		initialState := map[string]interface{}{
-			"event": "INITIAL_STATE",
+			"event": domain.WebSocketEventInitialState,
 			"data": map[string]interface{}{
 				"game":         nil,
 				"drawnNumbers": []interface{}{},
@@ -431,7 +431,7 @@ func (h *WebSocketHandler) sendInitialState(conn *websocket.Conn, gameID uuid.UU
 	}
 
 	initialState := map[string]interface{}{
-		"event": "INITIAL_STATE",
+		"event": domain.WebSocketEventInitialState,
 		"data": map[string]interface{}{
 			"game":         game,
 			"drawnNumbers": drawnNumbers,

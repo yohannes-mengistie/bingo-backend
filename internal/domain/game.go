@@ -23,19 +23,19 @@ const (
 func (gt GameType) GetBetAmount() float64 {
 	switch gt {
 	case GameTypeG1:
-		return 5
+		return BetAmountG1
 	case GameTypeG2:
-		return 7
+		return BetAmountG2
 	case GameTypeG3:
-		return 10
+		return BetAmountG3
 	case GameTypeG4:
-		return 20
+		return BetAmountG4
 	case GameTypeG5:
-		return 50
+		return BetAmountG5
 	case GameTypeG6:
-		return 100
+		return BetAmountG6
 	case GameTypeG7:
-		return 200
+		return BetAmountG7
 	default:
 		return 0
 	}

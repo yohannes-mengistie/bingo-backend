@@ -1,5 +1,7 @@
 package bingo
 
+import "github.com/bingo/backend/internal/domain"
+
 // BingoCard represents a 5x5 bingo card
 type BingoCard struct {
 	ID      int       `json:"id"`
@@ -18,10 +20,10 @@ func init() {
 }
 
 // GenerateCard returns a fixed bingo card for the given card ID
-// Card ID must be between 1 and 100
+// Card ID must be between MinCardID and MaxCardID
 // Each card ID always returns the same card (deterministic)
 func GenerateCard(cardID int) *BingoCard {
-	if cardID < 1 || cardID > 100 {
+	if cardID < domain.MinCardID || cardID > domain.MaxCardID {
 		return nil
 	}
 
@@ -37,19 +39,19 @@ func GenerateCard(cardID int) *BingoCard {
 	}
 }
 
-// GenerateAllCards returns all 100 fixed bingo cards
+// GenerateAllCards returns all fixed bingo cards
 func GenerateAllCards() []*BingoCard {
-	cards := make([]*BingoCard, 100)
-	for i := 1; i <= 100; i++ {
-		cards[i-1] = GenerateCard(i)
+	cards := make([]*BingoCard, domain.TotalCards)
+	for i := domain.MinCardID; i <= domain.MaxCardID; i++ {
+		cards[i-domain.MinCardID] = GenerateCard(i)
 	}
 	return cards
 }
 
-// generateFixedCards creates all 100 fixed bingo cards from hardcoded data
+// generateFixedCards creates all fixed bingo cards from hardcoded data
 // Each card has unique numbers but the same card ID always has the same numbers
 func generateFixedCards() map[int]*BingoCard {
-	cards := make(map[int]*BingoCard, 100)
+	cards := make(map[int]*BingoCard, domain.TotalCards)
 
 	// Hardcoded card data - each card has 5 columns: B, I, N, G, O
 	cardData := [100][5][5]int{
@@ -256,10 +258,10 @@ func generateFixedCards() map[int]*BingoCard {
 	}
 
 	// Parse card data into BingoCard structures
-	for cardID := 1; cardID <= 100; cardID++ {
+	for cardID := domain.MinCardID; cardID <= domain.MaxCardID; cardID++ {
 		card := &BingoCard{
 			ID:      cardID,
-			Numbers: cardData[cardID-1],
+			Numbers: cardData[cardID-domain.MinCardID],
 		}
 
 		// Validate card follows bingo rules
@@ -277,22 +279,22 @@ func generateFixedCards() map[int]*BingoCard {
 // validateCard checks if a card follows bingo rules
 func validateCard(card *BingoCard) bool {
 	ranges := [5]struct{ min, max int }{
-		{1, 15},  // B
-		{16, 30}, // I
-		{31, 45}, // N
-		{46, 60}, // G
-		{61, 75}, // O
+		{domain.BingoNumberMinB, domain.BingoNumberMaxB}, // B
+		{domain.BingoNumberMinI, domain.BingoNumberMaxI}, // I
+		{domain.BingoNumberMinN, domain.BingoNumberMaxN}, // N
+		{domain.BingoNumberMinG, domain.BingoNumberMaxG}, // G
+		{domain.BingoNumberMinO, domain.BingoNumberMaxO}, // O
 	}
 
 	// Check each column
-	for col := 0; col < 5; col++ {
+	for col := 0; col < domain.CardGridSize; col++ {
 		used := make(map[int]bool)
-		for row := 0; row < 5; row++ {
+		for row := 0; row < domain.CardGridSize; row++ {
 			num := card.Numbers[row][col]
 
-			// Center cell should be 0
-			if col == 2 && row == 2 {
-				if num != 0 {
+			// Center cell should be CardCenterValue
+			if col == domain.CardCenterCol && row == domain.CardCenterRow {
+				if num != domain.CardCenterValue {
 					return false
 				}
 				continue
@@ -317,15 +319,15 @@ func validateCard(card *BingoCard) bool {
 // fixCard fixes any bingo rule violations in a card
 func fixCard(card *BingoCard) {
 	ranges := [5]struct{ min, max int }{
-		{1, 15},  // B
-		{16, 30}, // I
-		{31, 45}, // N
-		{46, 60}, // G
-		{61, 75}, // O
+		{domain.BingoNumberMinB, domain.BingoNumberMaxB}, // B
+		{domain.BingoNumberMinI, domain.BingoNumberMaxI}, // I
+		{domain.BingoNumberMinN, domain.BingoNumberMaxN}, // N
+		{domain.BingoNumberMinG, domain.BingoNumberMaxG}, // G
+		{domain.BingoNumberMinO, domain.BingoNumberMaxO}, // O
 	}
 
 	// Fix each column
-	for col := 0; col < 5; col++ {
+	for col := 0; col < domain.CardGridSize; col++ {
 		used := make(map[int]bool)
 		available := make([]int, 0)
 
@@ -334,10 +336,10 @@ func fixCard(card *BingoCard) {
 			available = append(available, n)
 		}
 
-		for row := 0; row < 5; row++ {
-			// Center cell should be 0
-			if col == 2 && row == 2 {
-				card.Numbers[row][col] = 0
+		for row := 0; row < domain.CardGridSize; row++ {
+			// Center cell should be CardCenterValue
+			if col == domain.CardCenterCol && row == domain.CardCenterRow {
+				card.Numbers[row][col] = domain.CardCenterValue
 				continue
 			}
 

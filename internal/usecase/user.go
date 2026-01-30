@@ -45,7 +45,7 @@ func (uc *UserUseCase) CreateUser(ctx context.Context, req domain.CreateUserRequ
 
 	// Generate unique referral code
 	var referralCode string
-	maxAttempts := 10
+	maxAttempts := domain.MaxReferralCodeGenerationAttempts
 	for i := 0; i < maxAttempts; i++ {
 		code, err := referral.GenerateReferralCode()
 		if err != nil {
@@ -88,7 +88,7 @@ func (uc *UserUseCase) CreateUser(ctx context.Context, req domain.CreateUserRequ
 	// Create wallet with default balance
 	wallet := &domain.Wallet{
 		UserID:      user.ID,
-		Balance:     5.0, // Default balance
+		Balance:     domain.DefaultUserBalance,
 		DemoBalance: 0.0,
 	}
 

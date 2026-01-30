@@ -43,7 +43,7 @@ func NewGameUseCase(
 
 // GetAvailableGames gets available games (WAITING or COUNTDOWN state)
 func (uc *GameUseCase) GetAvailableGames(ctx context.Context, gameType *domain.GameType) ([]*domain.Game, error) {
-	games, err := uc.gameRepo.FindAvailable(ctx, gameType, 50)
+	games, err := uc.gameRepo.FindAvailable(ctx, gameType, domain.MaxAvailableGamesLimit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find available games: %w", err)
 	}
@@ -186,7 +186,7 @@ func (uc *GameUseCase) JoinGame(ctx context.Context, gameID uuid.UUID, req domai
 	}
 
 	// Publish event
-	uc.redisService.PublishEvent(ctx, gameID, "PLAYER_JOINED", map[string]interface{}{
+	uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventPlayerJoined, map[string]interface{}{
 		"user_id": req.UserID.String(),
 		"card_id": req.CardID,
 	})
@@ -291,15 +291,15 @@ func (uc *GameUseCase) LeaveGame(ctx context.Context, gameID uuid.UUID, req doma
 	revertedFromCountdown := game.State == domain.GameStateWaiting && game.CountdownEnds == nil
 	if revertedFromCountdown {
 		uc.redisService.ClearCountdown(ctx, gameID)
-		uc.redisService.PublishEvent(ctx, gameID, "GAME_STATUS", map[string]interface{}{
-			"status": "WAITING",
+		uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventGameStatus, map[string]interface{}{
+			"status": string(domain.GameStateWaiting),
 		})
 	}
 
 	uc.redisService.SaveGameState(ctx, game)
 
 	// Publish event
-	uc.redisService.PublishEvent(ctx, gameID, "PLAYER_LEFT", map[string]interface{}{
+	uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventPlayerLeft, map[string]interface{}{
 		"user_id": req.UserID.String(),
 	})
 
@@ -326,8 +326,8 @@ func (uc *GameUseCase) startCountdown(ctx context.Context, gameID uuid.UUID) {
 	uc.redisService.SaveGameState(ctx, game)
 
 	// Publish countdown start
-	uc.redisService.PublishEvent(ctx, gameID, "GAME_STATUS", map[string]interface{}{
-		"status":      "COUNTDOWN",
+	uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventGameStatus, map[string]interface{}{
+		"status":      string(domain.GameStateCountdown),
 		"secondsLeft": int(domain.CountdownDuration.Seconds()),
 	})
 
@@ -355,7 +355,7 @@ func (uc *GameUseCase) startCountdown(ctx context.Context, gameID uuid.UUID) {
 		}
 
 		// Publish countdown update
-		uc.redisService.PublishEvent(ctx, gameID, "COUNTDOWN", map[string]interface{}{
+		uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventCountdown, map[string]interface{}{
 			"secondsLeft": i - 1,
 		})
 	}
@@ -381,8 +381,8 @@ func (uc *GameUseCase) startDrawing(ctx context.Context, gameID uuid.UUID) {
 
 	uc.redisService.SaveGameState(ctx, game)
 
-	uc.redisService.PublishEvent(ctx, gameID, "GAME_STATUS", map[string]interface{}{
-		"status": "DRAWING",
+	uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventGameStatus, map[string]interface{}{
+		"status": string(domain.GameStateDrawing),
 	})
 
 	// Start drawing numbers periodically
@@ -391,7 +391,7 @@ func (uc *GameUseCase) startDrawing(ctx context.Context, gameID uuid.UUID) {
 
 // drawNumbers draws numbers periodically
 func (uc *GameUseCase) drawNumbers(ctx context.Context, gameID uuid.UUID) {
-	ticker := time.NewTicker(1 * time.Second) // Draw every 1 seconds
+	ticker := time.NewTicker(domain.DrawInterval)
 	defer ticker.Stop()
 
 	for {
@@ -428,7 +428,7 @@ func (uc *GameUseCase) drawNumbers(ctx context.Context, gameID uuid.UUID) {
 		uc.gameRepo.SaveDrawnNumber(ctx, gameID, letter, number)
 
 		// Publish event
-		uc.redisService.PublishEvent(ctx, gameID, "NUMBER_DRAWN", map[string]interface{}{
+		uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventNumberDrawn, map[string]interface{}{
 			"letter": letter,
 			"number": number,
 		})
@@ -479,21 +479,21 @@ func (uc *GameUseCase) ClaimBingo(ctx context.Context, gameID uuid.UUID, req dom
 	// Convert marked positions (0-24) to actual card numbers
 	markedNumbers := make([]int, 0, len(req.MarkedNumbers))
 	for _, pos := range req.MarkedNumbers {
-		if pos < 0 || pos >= 25 {
-			return false, fmt.Errorf("invalid position: %d (must be 0-24)", pos)
+		if pos < 0 || pos >= domain.CardTotalPositions {
+			return false, fmt.Errorf("invalid position: %d (must be 0-%d)", pos, domain.CardTotalPositions-1)
 		}
 
-		// Convert position to row/col: position = row * 5 + col
-		row := pos / 5
-		col := pos % 5
+		// Convert position to row/col: position = row * CardGridSize + col
+		row := pos / domain.CardGridSize
+		col := pos % domain.CardGridSize
 		cardNumber := card.Numbers[row][col]
 
 		// Verify this number was actually drawn
-		if cardNumber != 0 && !drawnSet[cardNumber] {
+		if cardNumber != domain.CardCenterValue && !drawnSet[cardNumber] {
 			return false, fmt.Errorf("number %d at position %d was not drawn", cardNumber, pos)
 		}
 
-		// Add to marked numbers (include 0 for center cell)
+		// Add to marked numbers (include CardCenterValue for center cell)
 		markedNumbers = append(markedNumbers, cardNumber)
 	}
 
@@ -550,14 +550,14 @@ func (uc *GameUseCase) ClaimBingo(ctx context.Context, gameID uuid.UUID, req dom
 		uc.redisService.SaveGameState(ctx, game)
 
 		// Publish winner event
-		uc.redisService.PublishEvent(ctx, gameID, "WINNER", map[string]interface{}{
+		uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventWinner, map[string]interface{}{
 			"userId": req.UserID.String(),
 			"prize":  game.PrizePool,
 		})
 
 		// Publish game finished status
-		uc.redisService.PublishEvent(ctx, gameID, "GAME_STATUS", map[string]interface{}{
-			"status": "FINISHED",
+		uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventGameStatus, map[string]interface{}{
+			"status": string(domain.GameStateFinished),
 		})
 
 		// Create a new game of the same type and notify clients
@@ -566,7 +566,7 @@ func (uc *GameUseCase) ClaimBingo(ctx context.Context, gameID uuid.UUID, req dom
 			if err == nil && newGame != nil {
 				// Publish new game available event to the same channel
 				// Clients can reconnect to this new game
-				uc.redisService.PublishEvent(context.Background(), gameID, "NEW_GAME_AVAILABLE", map[string]interface{}{
+				uc.redisService.PublishEvent(context.Background(), gameID, domain.WebSocketEventNewGameAvailable, map[string]interface{}{
 					"gameId":   newGame.ID.String(),
 					"gameType": string(newGame.GameType),
 				})
@@ -613,21 +613,21 @@ func (uc *GameUseCase) ClaimBingo(ctx context.Context, gameID uuid.UUID, req dom
 		uc.redisService.SaveGameState(ctx, game)
 
 		// Publish elimination event
-		uc.redisService.PublishEvent(ctx, gameID, "PLAYER_ELIMINATED", map[string]interface{}{
+		uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventPlayerEliminated, map[string]interface{}{
 			"userId": req.UserID.String(),
 		})
 
 		// If game was cancelled, publish status and create new game
 		if game.State == domain.GameStateCancelled {
-			uc.redisService.PublishEvent(ctx, gameID, "GAME_STATUS", map[string]interface{}{
-				"status": "CANCELLED",
+			uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventGameStatus, map[string]interface{}{
+				"status": string(domain.GameStateCancelled),
 			})
 
 			// Create a new game of the same type and notify clients
 			go func() {
 				newGame, err := uc.CreateOrGetGame(context.Background(), game.GameType)
 				if err == nil && newGame != nil {
-					uc.redisService.PublishEvent(context.Background(), gameID, "NEW_GAME_AVAILABLE", map[string]interface{}{
+					uc.redisService.PublishEvent(context.Background(), gameID, domain.WebSocketEventNewGameAvailable, map[string]interface{}{
 						"gameId":   newGame.ID.String(),
 						"gameType": string(newGame.GameType),
 					})

@@ -3,6 +3,8 @@ package bingo
 import (
 	"crypto/rand"
 	"math/big"
+
+	"github.com/bingo/backend/internal/domain"
 )
 
 // DrawNumber draws a random number for a given letter
@@ -11,16 +13,16 @@ func DrawNumber(letter string, drawnNumbers []int) (int, error) {
 	var min, max int
 
 	switch letter {
-	case "B":
-		min, max = 1, 15
-	case "I":
-		min, max = 16, 30
-	case "N":
-		min, max = 31, 45
-	case "G":
-		min, max = 46, 60
-	case "O":
-		min, max = 61, 75
+	case string(domain.BingoLetterB):
+		min, max = domain.BingoNumberMinB, domain.BingoNumberMaxB
+	case string(domain.BingoLetterI):
+		min, max = domain.BingoNumberMinI, domain.BingoNumberMaxI
+	case string(domain.BingoLetterN):
+		min, max = domain.BingoNumberMinN, domain.BingoNumberMaxN
+	case string(domain.BingoLetterG):
+		min, max = domain.BingoNumberMinG, domain.BingoNumberMaxG
+	case string(domain.BingoLetterO):
+		min, max = domain.BingoNumberMinO, domain.BingoNumberMaxO
 	default:
 		return 0, nil
 	}
@@ -55,7 +57,13 @@ func DrawNumber(letter string, drawnNumbers []int) (int, error) {
 // DrawNextNumber draws the next number in BINGO order
 // B -> I -> N -> G -> O, repeating until all numbers are drawn
 func DrawNextNumber(drawnNumbers []int) (string, int, error) {
-	letters := []string{"B", "I", "N", "G", "O"}
+	letters := []string{
+		string(domain.BingoLetterB),
+		string(domain.BingoLetterI),
+		string(domain.BingoLetterN),
+		string(domain.BingoLetterG),
+		string(domain.BingoLetterO),
+	}
 
 	// Count drawn numbers per letter
 	drawnCount := make(map[string]int)
@@ -68,7 +76,7 @@ func DrawNextNumber(drawnNumbers []int) (string, int, error) {
 
 	// Find the letter with the least drawn numbers (round-robin)
 	var nextLetter string
-	minDrawn := 15 // Max possible per letter
+	minDrawn := domain.NumbersPerLetter // Max possible per letter
 
 	for _, letter := range letters {
 		count := drawnCount[letter]

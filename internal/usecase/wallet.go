@@ -164,22 +164,22 @@ func (uc *WalletUseCase) CancelTransaction(ctx context.Context, transactionID uu
 	return uc.transactionService.CancelTransaction(ctx, transactionID)
 }
 
-// GetDepositHistory returns the top 10 deposit transactions for a user
+// GetDepositHistory returns the top deposit transactions for a user
 func (uc *WalletUseCase) GetDepositHistory(ctx context.Context, userID uuid.UUID) ([]*domain.Transaction, error) {
-	return uc.transactionRepo.FindByUserIDAndType(ctx, userID, domain.TransactionTypeDeposit, 10)
+	return uc.transactionRepo.FindByUserIDAndType(ctx, userID, domain.TransactionTypeDeposit, domain.DefaultTransactionHistoryLimit)
 }
 
-// GetWithdrawalHistory returns the top 10 withdrawal transactions for a user
+// GetWithdrawalHistory returns the top withdrawal transactions for a user
 func (uc *WalletUseCase) GetWithdrawalHistory(ctx context.Context, userID uuid.UUID) ([]*domain.Transaction, error) {
-	return uc.transactionRepo.FindByUserIDAndType(ctx, userID, domain.TransactionTypeWithdraw, 10)
+	return uc.transactionRepo.FindByUserIDAndType(ctx, userID, domain.TransactionTypeWithdraw, domain.DefaultTransactionHistoryLimit)
 }
 
-// GetTransferHistory returns the top 10 transfer transactions (both in and out) for a user
+// GetTransferHistory returns the top transfer transactions (both in and out) for a user
 func (uc *WalletUseCase) GetTransferHistory(ctx context.Context, userID uuid.UUID) ([]*domain.Transaction, error) {
 	return uc.transactionRepo.FindByUserIDAndTypes(ctx, userID, []domain.TransactionType{
 		domain.TransactionTypeTransferIn,
 		domain.TransactionTypeTransferOut,
-	}, 10)
+	}, domain.DefaultTransactionHistoryLimit)
 }
 
 // Admin transaction query methods
