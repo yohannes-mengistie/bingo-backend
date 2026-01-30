@@ -240,13 +240,18 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 	}
 	log.Printf("[WebSocket] ✓ Initial state sent. Starting message loop for game %s", gameIDStr)
 
-	// Channel for messages from Redis
-	redisMessages := make(chan *redis.Message, 10)
+	// Channel for messages from Redis (increased buffer to prevent blocking)
+	redisMessages := make(chan *redis.Message, 100)
+	
+	// Channel to signal Redis receiver error
+	redisError := make(chan error, 1)
 
 	// Goroutine to receive Redis messages
 	go func() {
+		defer close(redisError)
 		if pubsub == nil {
 			log.Printf("[WebSocket] ERROR: PubSub is nil, cannot receive messages for game %s", gameIDStr)
+			redisError <- fmt.Errorf("pubsub is nil")
 			return
 		}
 		log.Printf("[WebSocket] Starting Redis message receiver for game %s", gameIDStr)
@@ -257,15 +262,24 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 					log.Printf("[WebSocket] Redis subscription context canceled for game %s", gameIDStr)
 				} else {
 					log.Printf("[WebSocket] Redis receive error for game %s: %v", gameIDStr, err)
+					// Signal error so WebSocket can be closed
+					select {
+					case redisError <- err:
+					default:
+					}
 				}
 				return
 			}
 			log.Printf("[WebSocket] Received Redis message for game %s: %s", gameIDStr, msg.Payload)
 			select {
 			case redisMessages <- msg:
+				// Message sent successfully
 			case <-ctx.Done():
 				log.Printf("[WebSocket] Context done, stopping Redis receiver for game %s", gameIDStr)
 				return
+			default:
+				// Channel is full - log warning but don't block
+				log.Printf("[WebSocket] WARNING: Redis message channel full for game %s, dropping message", gameIDStr)
 			}
 		}
 	}()
@@ -329,6 +343,11 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 				return
 			}
 			log.Printf("[WebSocket] ✓ Forwarded Redis message to client for game %s", gameIDStr)
+
+		case err := <-redisError:
+			// Redis subscription error - close connection so client can reconnect
+			log.Printf("[WebSocket] Redis subscription error for game %s: %v. Closing connection.", gameIDStr, err)
+			return
 
 		case <-ticker.C:
 			// Send ping

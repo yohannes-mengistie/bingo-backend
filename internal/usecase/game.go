@@ -422,10 +422,11 @@ func (uc *GameUseCase) drawNumbers(ctx context.Context, gameID uuid.UUID) {
 		}
 
 		// Save drawn number
+		drawnAt := time.Now()
 		drawnNumber := domain.DrawnNumber{
 			Letter:  domain.BingoLetter(letter),
 			Number:  number,
-			DrawnAt: time.Now(),
+			DrawnAt: drawnAt,
 		}
 
 		uc.redisService.AddDrawnNumber(ctx, gameID, drawnNumber)
@@ -433,8 +434,9 @@ func (uc *GameUseCase) drawNumbers(ctx context.Context, gameID uuid.UUID) {
 
 		// Publish event
 		uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventNumberDrawn, map[string]interface{}{
-			"letter": letter,
-			"number": number,
+			"letter":   letter,
+			"number":   number,
+			"drawn_at": drawnAt.Format(time.RFC3339),
 		})
 	}
 }
