@@ -369,7 +369,7 @@ func fixCard(card *BingoCard) {
 // - Main diagonal (top-left to bottom-right)
 // - Anti-diagonal (top-right to bottom-left)
 func ValidateBingo(card *BingoCard, markedNumbers []int) bool {
-	if len(markedNumbers) < 5 {
+	if len(markedNumbers) < 4 {
 		return false
 	}
 
