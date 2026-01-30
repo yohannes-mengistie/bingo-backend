@@ -7,7 +7,7 @@ import "time"
 // MinPlayers is the minimum number of players required to start a game
 const MinPlayers = 2
 
-// HouseCut is the percentage of each bet that goes to the house (5%)
+// HouseCut is the percentage of each bet that goes to the house (20%)
 const HouseCut = 0.2
 
 // CountdownDuration is the duration of the countdown before a game starts

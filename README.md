@@ -642,7 +642,7 @@ Each game follows this lifecycle:
 **WAITING** → **COUNTDOWN** → **DRAWING** → **FINISHED** → **CLOSED**
 
 - **WAITING**: Game is open, users can join (requires minimum 2 players)
-- **COUNTDOWN**: 60-second countdown starts when 2nd player joins, no new players can join
+- **COUNTDOWN**: 60-second countdown starts when 2nd player joins, users can still join during countdown
 - **DRAWING**: Numbers are being drawn, players can claim bingo
 - **FINISHED**: Winner confirmed, prize distributed
 - **CLOSED**: Game archived, Redis state cleared
@@ -651,9 +651,9 @@ Each game follows this lifecycle:
 **State Transitions:**
 - When 2nd player joins: **WAITING** → **COUNTDOWN** (60-second countdown starts)
 - If players drop below 2 during **COUNTDOWN**: **COUNTDOWN** → **WAITING** (game reverts, countdown stops, remaining players stay in game)
-- When countdown ends: **COUNTDOWN** → **DRAWING** (numbers start being drawn)
-- When winner claims bingo: **DRAWING** → **FINISHED** (prize distributed)
-- If all players eliminated: **DRAWING** → **CANCELLED** (all players refunded)
+- When countdown ends: **COUNTDOWN** → **DRAWING** (numbers start being drawn every 1 second)
+- When winner claims bingo: **DRAWING** → **FINISHED** (prize distributed, new game created automatically)
+- If all players eliminated: **DRAWING** → **CANCELLED** (all players refunded, new game created automatically)
 
 ### Bingo Rules
 
@@ -664,8 +664,10 @@ Each game follows this lifecycle:
   - N: 31–45 (center cell is free)
   - G: 46–60
   - O: 61–75
-- **Cards**: 100 unique cards (ID 1–100), server-generated
+- **Cards**: 100 unique cards (ID 1–100), server-generated deterministically
+- **Card Selection**: Multiple players can select the same card ID in the same game
 - **Winning**: Any row, column, or diagonal (5 numbers)
+- **House Cut**: 20% of each bet goes to the house, 80% goes to the prize pool
 
 ### GET /api/v1/games
 
@@ -688,7 +690,7 @@ Get available games (WAITING or COUNTDOWN state).
       "min_players": 2,
       "player_count": 1,
       "prize_pool": 0.00,
-      "house_cut": 0.05,
+      "house_cut": 0.2,
       "winner_id": null,
       "countdown_ends": null,
       "started_at": null,
@@ -728,8 +730,8 @@ Get the current game state (used for initial connection snapshot).
     "state": "DRAWING",
     "bet_amount": 5.00,
     "player_count": 3,
-    "prize_pool": 14.25,
-    "house_cut": 0.05,
+    "prize_pool": 12.00,
+    "house_cut": 0.2,
     "winner_id": null,
     "countdown_ends": null,
     "started_at": "2024-01-01T00:05:00Z",
@@ -793,14 +795,14 @@ Join a game. The bet amount is **immediately deducted** from the user's wallet.
 
 **Error Responses:**
 
-- `400`: Invalid card ID, game not accepting players, user already in game, card already taken, insufficient balance
+- `400`: Invalid card ID, game not accepting players, user already in game, insufficient balance
 - `404`: Game not found
 
 **Rules:**
 
-- ✅ Valid only in WAITING state
+- ✅ Valid only in WAITING or COUNTDOWN state
 - ✅ Card ID must be between 1 and 100
-- ✅ Card can only be chosen once per game
+- ✅ Multiple players can select the same card (no unique constraint)
 - ✅ Bet is deducted immediately
 - ✅ If 2nd player joins, countdown starts automatically
 
@@ -848,6 +850,38 @@ Leave a game. Refund is issued if game is in WAITING or COUNTDOWN state.
 - This allows games to continue naturally without cancellation
 - Prize pool decreases when players leave (their bet is refunded)
 
+### GET /api/v1/cards/:cardId
+
+Get bingo card data for a specific card ID.
+
+**Path Parameters:**
+
+- `cardId` (int, required): The card ID (1-100)
+
+**Response:**
+
+```json
+{
+  "card": {
+    "id": 1,
+    "numbers": [
+      [15, 5, 3, 1, 12],
+      [28, 30, 16, 20, 18],
+      [31, 45, 0, 33, 43],
+      [58, 46, 48, 50, 60],
+      [61, 73, 65, 75, 63]
+    ]
+  }
+}
+```
+
+**Error Responses:**
+
+- `400`: Invalid card ID (must be between 1 and 100)
+- `500`: Server error
+
+**Note:** The center cell (row 3, column 3) is always 0 (free space).
+
 ### POST /api/v1/games/:gameId/bingo
 
 Claim bingo. The backend validates the claim against drawn numbers.
@@ -861,9 +895,16 @@ Claim bingo. The backend validates the claim against drawn numbers.
 ```json
 {
   "user_id": "550e8400-e29b-41d4-a716-446655440000",
-  "marked_numbers": [7, 22, 35, 48, 65]
+  "marked_numbers": [0, 1, 2, 3, 4]
 }
 ```
+
+**Note:** `marked_numbers` is an array of card positions (0-24), not the actual numbers. Positions are numbered left-to-right, top-to-bottom:
+- Row 1: positions 0-4
+- Row 2: positions 5-9
+- Row 3: positions 10-14 (position 12 is the center free space)
+- Row 4: positions 15-19
+- Row 5: positions 20-24
 
 **Response (Valid Bingo - Winner):**
 
@@ -893,28 +934,33 @@ Claim bingo. The backend validates the claim against drawn numbers.
 - ✅ Server validates card against drawn numbers
 - ✅ Valid bingo: Any row, column, or diagonal (5 numbers)
 - ✅ Invalid claim: Player is eliminated
-- ✅ Winner receives: `(bet × number_of_players) - house_cut`
+- ✅ Winner receives: `(bet × number_of_players) × (1 - house_cut)` where house_cut is 20% (0.2)
 - ✅ All balance changes are atomic
 
-### WebSocket: ws:///api/v1/ws/game/:gameId
+### WebSocket: ws:///api/v1/ws/game
 
 > **📖 For detailed WebSocket documentation, see [WEBSOCKET_API.md](./WEBSOCKET_API.md)**
 
-Connect to real-time game updates via WebSocket.
+Connect to real-time game updates via WebSocket. **No authentication required** - WebSocket is public/read-only for viewing.
 
-**Path Parameters:**
+**Connection Options:**
 
-- `gameId` (UUID, required): The game ID
-
-**Query Parameters:**
-
-- `user_id` (UUID, required): The user ID (must be a player in the game)
-
-**Connection:**
-
+**Option 1: Connect by Game Type (Recommended)**
 ```javascript
-const ws = new WebSocket('ws://localhost:8080/api/v1/ws/game/{gameId}?user_id={userId}');
+// Automatically finds or creates an available game of the specified type
+const ws = new WebSocket('ws://localhost:8080/api/v1/ws/game?type=G5');
 ```
+
+**Option 2: Connect by Game ID**
+```javascript
+const ws = new WebSocket('ws://localhost:8080/api/v1/ws/game/{gameId}');
+```
+
+**Query Parameters (for Option 1):**
+- `type` (string, required): Game type (G1, G2, G3, G4, G5, G6, G7)
+
+**Path Parameters (for Option 2):**
+- `gameId` (UUID, required): The game ID
 
 **WebSocket Events:**
 
@@ -956,29 +1002,7 @@ All events follow this format:
 }
 ```
 
-3. **PLAYER_COUNT** - Player count updates
-
-```json
-{
-  "event": "PLAYER_COUNT",
-  "data": {
-    "count": 4
-  }
-}
-```
-
-4. **CARDS_TAKEN** - Card selection updates
-
-```json
-{
-  "event": "CARDS_TAKEN",
-  "data": {
-    "takenCards": [2, 5, 19, 33]
-  }
-}
-```
-
-5. **COUNTDOWN** - Countdown updates (every second)
+3. **COUNTDOWN** - Countdown updates (every second)
 
 ```json
 {
@@ -989,7 +1013,7 @@ All events follow this format:
 }
 ```
 
-6. **NUMBER_DRAWN** - New number drawn
+4. **NUMBER_DRAWN** - New number drawn
 
 ```json
 {
@@ -1001,7 +1025,7 @@ All events follow this format:
 }
 ```
 
-7. **PLAYER_JOINED** - Player joined the game
+5. **PLAYER_JOINED** - Player joined the game
 
 ```json
 {
@@ -1013,7 +1037,7 @@ All events follow this format:
 }
 ```
 
-8. **PLAYER_LEFT** - Player left the game
+6. **PLAYER_LEFT** - Player left the game
 
 ```json
 {
@@ -1024,7 +1048,7 @@ All events follow this format:
 }
 ```
 
-9. **PLAYER_ELIMINATED** - Player eliminated (invalid bingo claim)
+7. **PLAYER_ELIMINATED** - Player eliminated (invalid bingo claim)
 
 ```json
 {
@@ -1035,37 +1059,43 @@ All events follow this format:
 }
 ```
 
-10. **WINNER** - Game finished, winner announced
+8. **WINNER** - Game finished, winner announced
 
 ```json
 {
   "event": "WINNER",
   "data": {
     "userId": "550e8400-e29b-41d4-a716-446655440000",
-    "prize": 950.00
+    "prize": 960.00
   }
 }
 ```
 
-11. **GAME_CANCELLED** - Game cancelled (insufficient players)
+9. **NEW_GAME_AVAILABLE** - New game created after current game finishes
 
 ```json
 {
-  "event": "GAME_CANCELLED",
-  "data": {}
+  "event": "NEW_GAME_AVAILABLE",
+  "data": {
+    "gameId": "880e8400-e29b-41d4-a716-446655440000",
+    "gameType": "G5"
+  }
 }
 ```
 
+**Note:** When a game finishes (WINNER) or is cancelled, a new game of the same type is automatically created and this event is published.
+
 **Error Responses:**
 
-- `400`: Invalid game ID or user ID
-- `403`: User is not in this game
+- `400`: Invalid game ID or game type
+- `500`: Server error
 
 **Note:**
 
-- WebSocket connection is read-only for game state
+- WebSocket connection is **public and read-only** - no authentication required
 - All game logic is server-authoritative
 - Events are published via Redis pub/sub for scalability
+- Anyone can connect to watch games in real-time
 
 ## Admin Endpoints
 
