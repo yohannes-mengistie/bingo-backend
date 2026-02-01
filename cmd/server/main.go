@@ -195,6 +195,7 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			games.GET("", gameHandler.GetGames)
 			games.GET("/user/:user_id/history", gameHandler.GetGameHistory)
 			games.GET("/:gameId/state", gameHandler.GetGameState)
+			games.GET("/:gameId/players/:userId", gameHandler.GetPlayerInGame)
 			games.POST("/:gameId/join", gameHandler.JoinGame)
 			games.POST("/:gameId/leave", gameHandler.LeaveGame)
 			games.POST("/:gameId/bingo", gameHandler.ClaimBingo)

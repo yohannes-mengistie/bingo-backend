@@ -218,6 +218,47 @@ func (h *GameHandler) GetGameState(c *gin.Context) {
 	})
 }
 
+// GetPlayerInGame handles GET /games/:gameId/players/:userId
+// Returns the player data if the user is in the game, or 404 if not found
+func (h *GameHandler) GetPlayerInGame(c *gin.Context) {
+	gameIDStr := c.Param("gameId")
+	gameID, err := uuid.Parse(gameIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid game ID",
+		})
+		return
+	}
+
+	userIDStr := c.Param("userId")
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid user ID",
+		})
+		return
+	}
+
+	player, err := h.gameUseCase.GetPlayerInGame(c.Request.Context(), gameID, userID)
+	if err != nil {
+		if err.Error() == "player not found" {
+			c.JSON(http.StatusNotFound, gin.H{
+				"player": nil,
+			})
+			return
+		}
+
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"player": player,
+	})
+}
+
 // GetCardData handles GET /cards/:cardId
 // Returns the bingo card data (5x5 grid) for a given card ID
 func (h *GameHandler) GetCardData(c *gin.Context) {
@@ -264,7 +305,7 @@ func (h *GameHandler) GetGameHistory(c *gin.Context) {
 
 	// Parse query parameters for pagination
 	limit := 10 // default limit
-	offset := 0  // default offset
+	offset := 0 // default offset
 
 	if limitStr := c.Query("limit"); limitStr != "" {
 		if parsedLimit := parseInt(limitStr); parsedLimit > 0 {
