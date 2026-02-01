@@ -235,41 +235,71 @@ func (r *gameRepository) Update(ctx context.Context, game *domain.Game) error {
 }
 
 // AddPlayer adds a player to a game
+// If player previously left (left_at is set), updates the existing record instead of inserting
 func (r *gameRepository) AddPlayer(ctx context.Context, tx *sql.Tx, player *domain.GamePlayer) error {
-	query := `
-		INSERT INTO game_players (id, game_id, user_id, card_id, is_eliminated, joined_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`
-
 	player.JoinedAt = time.Now()
 
+	// First, try to update if player record exists with left_at set (rejoining)
+	updateQuery := `
+		UPDATE game_players
+		SET card_id = $1, is_eliminated = $2, joined_at = $3, left_at = NULL
+		WHERE game_id = $4 AND user_id = $5 AND left_at IS NOT NULL
+	`
+
 	var err error
+	var result sql.Result
 	if tx != nil {
-		_, err = tx.ExecContext(ctx, query, player.ID, player.GameID, player.UserID, player.CardID, player.IsEliminated, player.JoinedAt)
+		result, err = tx.ExecContext(ctx, updateQuery, player.CardID, player.IsEliminated, player.JoinedAt, player.GameID, player.UserID)
 	} else {
-		_, err = r.db.ExecContext(ctx, query, player.ID, player.GameID, player.UserID, player.CardID, player.IsEliminated, player.JoinedAt)
+		result, err = r.db.ExecContext(ctx, updateQuery, player.CardID, player.IsEliminated, player.JoinedAt, player.GameID, player.UserID)
 	}
 
 	if err != nil {
-		return fmt.Errorf("failed to add player: %w", err)
+		return fmt.Errorf("failed to update player: %w", err)
+	}
+
+	// Check if update affected any rows (player was rejoining)
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	// If update didn't affect any rows, insert new record
+	if rowsAffected == 0 {
+		insertQuery := `
+			INSERT INTO game_players (id, game_id, user_id, card_id, is_eliminated, joined_at)
+			VALUES ($1, $2, $3, $4, $5, $6)
+		`
+
+		if tx != nil {
+			_, err = tx.ExecContext(ctx, insertQuery, player.ID, player.GameID, player.UserID, player.CardID, player.IsEliminated, player.JoinedAt)
+		} else {
+			_, err = r.db.ExecContext(ctx, insertQuery, player.ID, player.GameID, player.UserID, player.CardID, player.IsEliminated, player.JoinedAt)
+		}
+
+		if err != nil {
+			return fmt.Errorf("failed to add player: %w", err)
+		}
 	}
 
 	return nil
 }
 
 // RemovePlayer removes a player from a game
-// Deletes the record to allow the player to rejoin later
+// Sets left_at timestamp to mark the player as having left (soft delete)
 func (r *gameRepository) RemovePlayer(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID) error {
 	query := `
-		DELETE FROM game_players
-		WHERE game_id = $1 AND user_id = $2
+		UPDATE game_players
+		SET left_at = $3
+		WHERE game_id = $1 AND user_id = $2 AND left_at IS NULL
 	`
 
+	leftAt := time.Now()
 	var err error
 	if tx != nil {
-		_, err = tx.ExecContext(ctx, query, gameID, userID)
+		_, err = tx.ExecContext(ctx, query, gameID, userID, leftAt)
 	} else {
-		_, err = r.db.ExecContext(ctx, query, gameID, userID)
+		_, err = r.db.ExecContext(ctx, query, gameID, userID, leftAt)
 	}
 
 	if err != nil {
