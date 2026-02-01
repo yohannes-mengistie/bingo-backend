@@ -131,6 +131,15 @@ func (s *GameStateService) AddTakenCard(ctx context.Context, gameID uuid.UUID, c
 	return s.client.SAdd(ctx, key, cardID).Err()
 }
 
+// RemoveTakenCard removes a taken card ID from Redis set
+func (s *GameStateService) RemoveTakenCard(ctx context.Context, gameID uuid.UUID, cardID int) error {
+	if s.client == nil {
+		return fmt.Errorf("Redis client is not configured")
+	}
+	key := GameTakenCardsKey(gameID.String())
+	return s.client.SRem(ctx, key, cardID).Err()
+}
+
 // GetTakenCards gets all taken card IDs
 func (s *GameStateService) GetTakenCards(ctx context.Context, gameID uuid.UUID) ([]int, error) {
 	if s.client == nil {

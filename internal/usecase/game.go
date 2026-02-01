@@ -204,11 +204,12 @@ func (uc *GameUseCase) LeaveGame(ctx context.Context, gameID uuid.UUID, req doma
 		return fmt.Errorf("game not found: %w", err)
 	}
 
-	// Check if user is in the game
-	_, err = uc.gameRepo.FindPlayer(ctx, gameID, req.UserID)
+	// Check if user is in the game and get player info (including card ID)
+	player, err := uc.gameRepo.FindPlayer(ctx, gameID, req.UserID)
 	if err != nil {
 		return errors.New("user is not in this game")
 	}
+	cardID := player.CardID
 
 	// Start transaction
 	tx, err := uc.db.BeginTx(ctx, nil)
@@ -288,8 +289,26 @@ func (uc *GameUseCase) LeaveGame(ctx context.Context, gameID uuid.UUID, req doma
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	// Update Redis
+	// Update Redis - remove player
 	uc.redisService.RemovePlayer(ctx, gameID, req.UserID)
+
+	// Check if any other active players are using this card
+	// Only remove card from taken cards if no other players have it
+	// (GetPlayers already filters by left_at IS NULL, so leaving player won't be in the list)
+	players, err := uc.gameRepo.GetPlayers(ctx, gameID)
+	if err == nil {
+		otherPlayersHaveCard := false
+		for _, p := range players {
+			if p.CardID == cardID {
+				otherPlayersHaveCard = true
+				break
+			}
+		}
+		// Only remove card if no other active players are using it
+		if !otherPlayersHaveCard {
+			uc.redisService.RemoveTakenCard(ctx, gameID, cardID)
+		}
+	}
 
 	// If game reverted to WAITING from COUNTDOWN, clear countdown state and notify
 	revertedFromCountdown := game.State == domain.GameStateWaiting && game.CountdownEnds == nil
