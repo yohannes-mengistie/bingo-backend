@@ -495,11 +495,12 @@ func (r *gameRepository) FindGamesByUserID(ctx context.Context, userID uuid.UUID
 	return entries, nil
 }
 
-// CountGamesByType counts games by type
+// CountGamesByType counts games by type (only completed games: FINISHED or CLOSED)
 func (r *gameRepository) CountGamesByType(ctx context.Context) (map[domain.GameType]int, error) {
 	query := `
 		SELECT game_type, COUNT(*) as count
 		FROM games
+		WHERE state IN ('FINISHED', 'CLOSED')
 		GROUP BY game_type
 	`
 
