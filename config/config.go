@@ -2,7 +2,10 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -65,12 +68,7 @@ func Load() (*Config, error) {
 			DBName:   getEnv("DB_NAME", getEnv("PGDATABASE", "bingo")),
 			SSLMode:  getEnv("DB_SSLMODE", getEnv("PGSSLMODE", "disable")),
 		},
-		Redis: RedisConfig{
-			Host:     getEnv("REDIS_HOST", "localhost"),
-			Port:     getEnv("REDIS_PORT", "6379"),
-			Password: getEnv("REDIS_PASSWORD", ""),
-			DB:       0,
-		},
+		Redis: parseRedisConfig(),
 		JWT: JWTConfig{
 			SecretKey:       getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
 			ExpirationHours: 24,
@@ -98,4 +96,53 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// parseRedisConfig parses Redis configuration from REDIS_URL or individual environment variables
+func parseRedisConfig() RedisConfig {
+	redisURL := getEnv("REDIS_URL", "")
+
+	// If REDIS_URL is provided, parse it
+	if redisURL != "" {
+		parsedURL, err := url.Parse(redisURL)
+		if err == nil {
+			config := RedisConfig{
+				Host:     parsedURL.Hostname(),
+				Port:     parsedURL.Port(),
+				Password: "",
+				DB:       0,
+			}
+
+			// Get password from UserInfo
+			if parsedURL.User != nil {
+				password, ok := parsedURL.User.Password()
+				if ok {
+					config.Password = password
+				}
+			}
+
+			// Get database number from path (e.g., /0, /1, etc.)
+			if parsedURL.Path != "" {
+				dbStr := strings.TrimPrefix(parsedURL.Path, "/")
+				if dbNum, err := strconv.Atoi(dbStr); err == nil {
+					config.DB = dbNum
+				}
+			}
+
+			// Default port if not specified
+			if config.Port == "" {
+				config.Port = "6379"
+			}
+
+			return config
+		}
+	}
+
+	// Fall back to individual environment variables
+	return RedisConfig{
+		Host:     getEnv("REDIS_HOST", "localhost"),
+		Port:     getEnv("REDIS_PORT", "6379"),
+		Password: getEnv("REDIS_PASSWORD", ""),
+		DB:       0,
+	}
 }
