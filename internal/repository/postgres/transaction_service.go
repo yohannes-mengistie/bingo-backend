@@ -295,6 +295,12 @@ func (s *TransactionService) ProcessWithdrawal(ctx context.Context, userID uuid.
 		return nil, fmt.Errorf("insufficient balance")
 	}
 
+	// Check if remaining balance would be less than 10
+	remainingBalance := wallet.Balance - amount
+	if remainingBalance < 10 {
+		return nil, fmt.Errorf("withdrawal not allowed: remaining balance must be at least 10")
+	}
+
 	// Subtract balance immediately
 	if err := s.walletRepo.UpdateBalance(ctx, tx, userID, -amount); err != nil {
 		return nil, fmt.Errorf("failed to update balance: %w", err)
