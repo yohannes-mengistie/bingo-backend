@@ -69,7 +69,9 @@ func (h *WalletHandler) Withdraw(c *gin.Context) {
 	transaction, err := h.walletUseCase.Withdraw(c.Request.Context(), req)
 	if err != nil {
 		statusCode := http.StatusInternalServerError
-		if err.Error() == "amount must be greater than 0" {
+		if err.Error() == "amount must be greater than 0" ||
+			err.Error() == "account_type must be either CBE or Telebirr" ||
+			err.Error() == "account_number is required" {
 			statusCode = http.StatusBadRequest
 		} else if err.Error() == "user not found" || err.Error() == "wallet not found" {
 			statusCode = http.StatusNotFound

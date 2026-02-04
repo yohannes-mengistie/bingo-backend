@@ -78,6 +78,16 @@ func (uc *WalletUseCase) Withdraw(ctx context.Context, req domain.WithdrawReques
 		return nil, errors.New("amount must be greater than 0")
 	}
 
+	// Validate account type
+	if req.AccountType != domain.PaymentMethodCBE && req.AccountType != domain.PaymentMethodTelebirr {
+		return nil, errors.New("account_type must be either CBE or Telebirr")
+	}
+
+	// Validate account number is not empty
+	if req.AccountNumber == "" {
+		return nil, errors.New("account_number is required")
+	}
+
 	// Verify user exists
 	_, err := uc.userRepo.FindByID(ctx, req.UserID)
 	if err != nil {
@@ -85,7 +95,7 @@ func (uc *WalletUseCase) Withdraw(ctx context.Context, req domain.WithdrawReques
 	}
 
 	// Process withdrawal (database operations in repository)
-	return uc.transactionService.ProcessWithdrawal(ctx, req.UserID, req.Amount)
+	return uc.transactionService.ProcessWithdrawal(ctx, req.UserID, req.Amount, req.AccountNumber, req.AccountType)
 }
 
 // Transfer transfers money from one user to another (atomic operation)

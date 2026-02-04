@@ -276,7 +276,7 @@ func (s *TransactionService) CancelTransaction(ctx context.Context, transactionI
 }
 
 // ProcessWithdrawal processes a withdrawal request (subtracts balance and creates transaction)
-func (s *TransactionService) ProcessWithdrawal(ctx context.Context, userID uuid.UUID, amount float64) (*domain.Transaction, error) {
+func (s *TransactionService) ProcessWithdrawal(ctx context.Context, userID uuid.UUID, amount float64, accountNumber string, accountType domain.PaymentMethod) (*domain.Transaction, error) {
 	// Start database transaction
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -326,10 +326,12 @@ func (s *TransactionService) ProcessWithdrawal(ctx context.Context, userID uuid.
 
 	// Create transaction with pending status
 	transaction := &domain.Transaction{
-		UserID: userID,
-		Type:   domain.TransactionTypeWithdraw,
-		Amount: amount,
-		Status: domain.TransactionStatusPending,
+		UserID:          userID,
+		Type:            domain.TransactionTypeWithdraw,
+		Amount:          amount,
+		Status:          domain.TransactionStatusPending,
+		TransactionType: &accountType,
+		TransactionID:   &accountNumber,
 	}
 
 	if err := s.transactionRepo.Create(ctx, tx, transaction); err != nil {

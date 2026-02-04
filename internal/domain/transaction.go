@@ -57,8 +57,10 @@ type DepositRequest struct {
 
 // WithdrawRequest represents the data needed to create a withdrawal
 type WithdrawRequest struct {
-	UserID uuid.UUID `json:"user_id" binding:"required"`
-	Amount float64   `json:"amount" binding:"required,gt=0"`
+	UserID        uuid.UUID     `json:"user_id" binding:"required"`
+	Amount        float64       `json:"amount" binding:"required,gt=0"`
+	AccountNumber string        `json:"account_number" binding:"required"`
+	AccountType   PaymentMethod `json:"account_type" binding:"required"`
 }
 
 // TransferRequest represents the data needed to create a transfer
