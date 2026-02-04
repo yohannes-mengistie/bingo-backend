@@ -167,23 +167,35 @@ func (uc *WalletUseCase) CancelTransaction(ctx context.Context, transactionID uu
 	return uc.transactionService.CancelTransaction(ctx, transactionID)
 }
 
-// GetDepositHistory returns the top deposit transactions for a user
-func (uc *WalletUseCase) GetDepositHistory(ctx context.Context, userID uuid.UUID) ([]*domain.Transaction, error) {
-	return uc.transactionRepo.FindByUserIDAndType(ctx, userID, domain.TransactionTypeDeposit, domain.DefaultTransactionHistoryLimit)
+// GetDepositHistory returns deposit transactions for a user
+// If limit is 0 or negative, uses default limit of 10
+func (uc *WalletUseCase) GetDepositHistory(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.Transaction, error) {
+	if limit <= 0 {
+		limit = domain.DefaultTransactionHistoryLimit
+	}
+	return uc.transactionRepo.FindByUserIDAndType(ctx, userID, domain.TransactionTypeDeposit, limit)
 }
 
-// GetWithdrawalHistory returns the top withdrawal transactions for a user
-func (uc *WalletUseCase) GetWithdrawalHistory(ctx context.Context, userID uuid.UUID) ([]*domain.Transaction, error) {
-	return uc.transactionRepo.FindByUserIDAndType(ctx, userID, domain.TransactionTypeWithdraw, domain.DefaultTransactionHistoryLimit)
+// GetWithdrawalHistory returns withdrawal transactions for a user
+// If limit is 0 or negative, uses default limit of 10
+func (uc *WalletUseCase) GetWithdrawalHistory(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.Transaction, error) {
+	if limit <= 0 {
+		limit = domain.DefaultTransactionHistoryLimit
+	}
+	return uc.transactionRepo.FindByUserIDAndType(ctx, userID, domain.TransactionTypeWithdraw, limit)
 }
 
-// GetTransferHistory returns the top transfer transactions (both in and out) for a user
+// GetTransferHistory returns transfer transactions (both in and out) for a user
 // Includes user information for the other party in the transfer
-func (uc *WalletUseCase) GetTransferHistory(ctx context.Context, userID uuid.UUID) ([]*domain.TransferHistoryEntry, error) {
+// If limit is 0 or negative, uses default limit of 10
+func (uc *WalletUseCase) GetTransferHistory(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.TransferHistoryEntry, error) {
+	if limit <= 0 {
+		limit = domain.DefaultTransactionHistoryLimit
+	}
 	transactions, err := uc.transactionRepo.FindByUserIDAndTypes(ctx, userID, []domain.TransactionType{
 		domain.TransactionTypeTransferIn,
 		domain.TransactionTypeTransferOut,
-	}, domain.DefaultTransactionHistoryLimit)
+	}, limit)
 	if err != nil {
 		return nil, err
 	}

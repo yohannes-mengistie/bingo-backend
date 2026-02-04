@@ -181,6 +181,7 @@ func (h *WalletHandler) GetWalletByTelegramID(c *gin.Context) {
 }
 
 // GetDepositHistory handles the GET /wallet/:user_id/deposits endpoint
+// Query parameter: ?all=true to get all deposits (default: 10)
 func (h *WalletHandler) GetDepositHistory(c *gin.Context) {
 	userIDStr := c.Param("user_id")
 	userID, err := uuid.Parse(userIDStr)
@@ -191,7 +192,13 @@ func (h *WalletHandler) GetDepositHistory(c *gin.Context) {
 		return
 	}
 
-	transactions, err := h.walletUseCase.GetDepositHistory(c.Request.Context(), userID)
+	// Check if all parameter is provided
+	limit := 10 // default limit
+	if c.Query("all") == "true" {
+		limit = 10000 // large limit to fetch all
+	}
+
+	transactions, err := h.walletUseCase.GetDepositHistory(c.Request.Context(), userID, limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "Failed to fetch deposit history",
@@ -206,6 +213,7 @@ func (h *WalletHandler) GetDepositHistory(c *gin.Context) {
 }
 
 // GetWithdrawalHistory handles the GET /wallet/:user_id/withdrawals endpoint
+// Query parameter: ?all=true to get all withdrawals (default: 10)
 func (h *WalletHandler) GetWithdrawalHistory(c *gin.Context) {
 	userIDStr := c.Param("user_id")
 	userID, err := uuid.Parse(userIDStr)
@@ -216,7 +224,13 @@ func (h *WalletHandler) GetWithdrawalHistory(c *gin.Context) {
 		return
 	}
 
-	transactions, err := h.walletUseCase.GetWithdrawalHistory(c.Request.Context(), userID)
+	// Check if all parameter is provided
+	limit := 10 // default limit
+	if c.Query("all") == "true" {
+		limit = 10000 // large limit to fetch all
+	}
+
+	transactions, err := h.walletUseCase.GetWithdrawalHistory(c.Request.Context(), userID, limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "Failed to fetch withdrawal history",
@@ -231,6 +245,7 @@ func (h *WalletHandler) GetWithdrawalHistory(c *gin.Context) {
 }
 
 // GetTransferHistory handles the GET /wallet/:user_id/transfers endpoint
+// Query parameter: ?all=true to get all transfers (default: 10)
 func (h *WalletHandler) GetTransferHistory(c *gin.Context) {
 	userIDStr := c.Param("user_id")
 	userID, err := uuid.Parse(userIDStr)
@@ -241,7 +256,13 @@ func (h *WalletHandler) GetTransferHistory(c *gin.Context) {
 		return
 	}
 
-	transactions, err := h.walletUseCase.GetTransferHistory(c.Request.Context(), userID)
+	// Check if all parameter is provided
+	limit := 10 // default limit
+	if c.Query("all") == "true" {
+		limit = 10000 // large limit to fetch all
+	}
+
+	transactions, err := h.walletUseCase.GetTransferHistory(c.Request.Context(), userID, limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "Failed to fetch transfer history",
