@@ -73,7 +73,9 @@ func (h *WalletHandler) Withdraw(c *gin.Context) {
 			statusCode = http.StatusBadRequest
 		} else if err.Error() == "user not found" || err.Error() == "wallet not found" {
 			statusCode = http.StatusNotFound
-		} else if err.Error() == "insufficient balance" || err.Error() == "withdrawal not allowed: remaining balance must be at least 10" {
+		} else if err.Error() == "insufficient balance" ||
+			err.Error() == "withdrawal not allowed: remaining balance must be at least 10" ||
+			err.Error() == "withdrawal not allowed: user must have at least one completed deposit" {
 			statusCode = http.StatusBadRequest
 		}
 

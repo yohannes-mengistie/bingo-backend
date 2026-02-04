@@ -290,6 +290,24 @@ func (s *TransactionService) ProcessWithdrawal(ctx context.Context, userID uuid.
 		return nil, fmt.Errorf("wallet not found: %w", err)
 	}
 
+	// Check if user has at least one completed deposit
+	var depositCount int
+	checkDepositQuery := `
+		SELECT COUNT(*) 
+		FROM transactions 
+		WHERE user_id = $1 
+		  AND type = $2 
+		  AND status = $3
+	`
+	err = tx.QueryRowContext(ctx, checkDepositQuery, userID, domain.TransactionTypeDeposit, domain.TransactionStatusCompleted).Scan(&depositCount)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check deposit history: %w", err)
+	}
+
+	if depositCount == 0 {
+		return nil, fmt.Errorf("withdrawal not allowed: user must have at least one completed deposit")
+	}
+
 	// Check balance
 	if wallet.Balance < amount {
 		return nil, fmt.Errorf("insufficient balance")
