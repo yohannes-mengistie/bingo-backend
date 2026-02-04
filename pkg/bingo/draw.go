@@ -54,8 +54,8 @@ func DrawNumber(letter string, drawnNumbers []int) (int, error) {
 	return available[randIdx.Int64()], nil
 }
 
-// DrawNextNumber draws the next number in BINGO order
-// B -> I -> N -> G -> O, repeating until all numbers are drawn
+// DrawNextNumber draws the next number randomly from any available letter
+// Randomly selects a letter that still has available numbers
 func DrawNextNumber(drawnNumbers []int) (string, int, error) {
 	letters := []string{
 		string(domain.BingoLetterB),
@@ -65,26 +65,55 @@ func DrawNextNumber(drawnNumbers []int) (string, int, error) {
 		string(domain.BingoLetterO),
 	}
 
-	// Count drawn numbers per letter
-	drawnCount := make(map[string]int)
+	// Find all letters that still have available numbers
+	availableLetters := make([]string, 0)
+	drawnSet := make(map[int]bool)
 	for _, num := range drawnNumbers {
-		letter := GetLetterForNumber(num)
-		if letter != "" {
-			drawnCount[letter]++
-		}
+		drawnSet[num] = true
 	}
-
-	// Find the letter with the least drawn numbers (round-robin)
-	var nextLetter string
-	minDrawn := domain.NumbersPerLetter // Max possible per letter
 
 	for _, letter := range letters {
-		count := drawnCount[letter]
-		if count < minDrawn {
-			minDrawn = count
-			nextLetter = letter
+		var min, max int
+		switch letter {
+		case string(domain.BingoLetterB):
+			min, max = domain.BingoNumberMinB, domain.BingoNumberMaxB
+		case string(domain.BingoLetterI):
+			min, max = domain.BingoNumberMinI, domain.BingoNumberMaxI
+		case string(domain.BingoLetterN):
+			min, max = domain.BingoNumberMinN, domain.BingoNumberMaxN
+		case string(domain.BingoLetterG):
+			min, max = domain.BingoNumberMinG, domain.BingoNumberMaxG
+		case string(domain.BingoLetterO):
+			min, max = domain.BingoNumberMinO, domain.BingoNumberMaxO
+		}
+
+		// Check if this letter has any available numbers
+		hasAvailable := false
+		for num := min; num <= max; num++ {
+			if !drawnSet[num] {
+				hasAvailable = true
+				break
+			}
+		}
+
+		if hasAvailable {
+			availableLetters = append(availableLetters, letter)
 		}
 	}
+
+	// If no letters have available numbers, all numbers are drawn
+	if len(availableLetters) == 0 {
+		return "", 0, nil
+	}
+
+	// Randomly select a letter from available letters
+	rangeSize := big.NewInt(int64(len(availableLetters)))
+	randIdx, err := rand.Int(rand.Reader, rangeSize)
+	if err != nil {
+		return "", 0, err
+	}
+
+	nextLetter := availableLetters[randIdx.Int64()]
 
 	// Draw number for the selected letter
 	number, err := DrawNumber(nextLetter, drawnNumbers)
