@@ -242,7 +242,7 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 
 	// Channel for messages from Redis (increased buffer to prevent blocking)
 	redisMessages := make(chan *redis.Message, 100)
-	
+
 	// Channel to signal Redis receiver error
 	redisError := make(chan error, 1)
 
@@ -296,7 +296,13 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 
 	// Separate goroutine to read client messages (handles pong responses)
 	go func() {
-		defer close(readDone)
+		defer func() {
+			// Recover from any panic (e.g., "repeated read on failed websocket connection")
+			if r := recover(); r != nil {
+				log.Printf("[WebSocket] Recovered from panic in read goroutine for game %s: %v", gameIDStr, r)
+			}
+			close(readDone)
+		}()
 		for {
 			// Set a reasonable read deadline
 			conn.SetReadDeadline(time.Now().Add(domain.WebSocketReadDeadline))
@@ -318,12 +324,15 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 					return
 				}
 				// Check if it's a "use of closed network connection" error (connection already closed)
-				if err.Error() == "use of closed network connection" ||
-					err.Error() == "repeated read on failed websocket connection" {
-					log.Printf("[WebSocket] Connection already closed for game %s", gameIDStr)
+				errStr := err.Error()
+				if errStr == "use of closed network connection" ||
+					errStr == "repeated read on failed websocket connection" ||
+					errStr == "websocket: close 1006 (abnormal closure): unexpected EOF" {
+					log.Printf("[WebSocket] Connection already closed for game %s: %v", gameIDStr, err)
 					return
 				}
 				// Other errors - log and return (connection likely failed)
+				// Don't continue reading after any error to avoid panic
 				log.Printf("[WebSocket] Read error in read goroutine for game %s: %v", gameIDStr, err)
 				return
 			}
