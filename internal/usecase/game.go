@@ -576,10 +576,24 @@ func (uc *GameUseCase) ClaimBingo(ctx context.Context, gameID uuid.UUID, req dom
 		// Update Redis
 		uc.redisService.SaveGameState(ctx, game)
 
-		// Publish winner event
+		// Fetch winner's user information for the event
+		winner, err := uc.userRepo.FindByID(ctx, req.UserID)
+		winnerName := "Unknown"
+		if err == nil && winner != nil {
+			if winner.LastName != nil && *winner.LastName != "" {
+				winnerName = fmt.Sprintf("%s %s", winner.FirstName, *winner.LastName)
+			} else {
+				winnerName = winner.FirstName
+			}
+		}
+
+		// Publish winner event with full details
 		uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventWinner, map[string]interface{}{
-			"userId": req.UserID.String(),
-			"prize":  game.PrizePool,
+			"user_id":        req.UserID.String(),
+			"winner_name":    winnerName,
+			"prize":          game.PrizePool,
+			"card_id":        player.CardID,
+			"marked_numbers": markedNumbers,
 		})
 
 		// Publish game finished status
