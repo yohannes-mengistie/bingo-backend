@@ -18,7 +18,7 @@ Welcome to Bingo! This guide will walk you through everything you need to know t
 ## 🎮 Game Overview
 
 ### What is Bingo?
-Bingo is a game of chance where players mark numbers on a 5×5 card as they are randomly drawn. The first player to complete a winning pattern (row, column, or diagonal) wins the prize pool!
+Bingo is a game of chance where players mark numbers on a 5×5 card as they are randomly drawn. The first player to complete a winning pattern (row, column, diagonal, or four corners) wins the prize pool!
 
 ### Game Types & Bet Amounts
 
@@ -154,6 +154,14 @@ You win by completing **any one** of these patterns:
          [X]        [X]
             [X]  [X]
                [X]
+   ```
+
+4. **Four Corners** (4 corner numbers)
+   ```
+   [X]                 [X]
+
+
+   [X]                 [X]
    ```
 
 ### How to Claim Bingo
@@ -303,6 +311,7 @@ Position:  0   1   2   3   4
 - ✅ Any row (5 horizontal)
 - ✅ Any column (5 vertical)
 - ✅ Any diagonal (5 diagonal)
+- ✅ Four corners
 - ✅ Center cell is FREE (always marked)
 
 ### Position Reference
@@ -335,4 +344,3 @@ If you have questions or encounter issues:
 Now you're ready to play! Join a game, select your card, and may the best player win! 🍀
 
 **Happy Bingo!** 🎯
-

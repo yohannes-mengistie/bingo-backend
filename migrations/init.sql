@@ -36,7 +36,7 @@ CREATE TABLE transactions (
     amount DECIMAL(10, 2) NOT NULL CHECK (amount > 0),
     status VARCHAR(20) NOT NULL CHECK (status IN ('pending', 'completed', 'failed', 'cancelled')),
     transaction_type VARCHAR(20) CHECK (transaction_type IN ('CBE', 'Telebirr')),
-    transaction_id VARCHAR(255),
+    transaction_id TEXT,
     reference VARCHAR(255),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -127,4 +127,3 @@ $$ language 'plpgsql';
 
 CREATE TRIGGER update_games_updated_at BEFORE UPDATE ON games
     FOR EACH ROW EXECUTE FUNCTION update_games_updated_at_column();
-

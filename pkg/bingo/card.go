@@ -368,6 +368,7 @@ func fixCard(card *BingoCard) {
 // - Any column (5 numbers)
 // - Main diagonal (top-left to bottom-right)
 // - Anti-diagonal (top-right to bottom-left)
+// - Four corners (top-left, top-right, bottom-left, bottom-right)
 func ValidateBingo(card *BingoCard, markedNumbers []int) bool {
 	if len(markedNumbers) < 4 {
 		return false
@@ -430,6 +431,25 @@ func ValidateBingo(card *BingoCard, markedNumbers []int) bool {
 		}
 	}
 	if count == 5 {
+		return true
+	}
+
+	// Check four corners
+	corners := [][2]int{
+		{0, 0}, // top-left
+		{0, 4}, // top-right
+		{4, 0}, // bottom-left
+		{4, 4}, // bottom-right
+	}
+
+	count = 0
+	for _, pos := range corners {
+		num := card.Numbers[pos[0]][pos[1]]
+		if num == 0 || marked[num] {
+			count++
+		}
+	}
+	if count == 4 {
 		return true
 	}
 

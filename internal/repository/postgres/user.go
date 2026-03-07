@@ -301,6 +301,30 @@ func (r *userRepository) FindAll(ctx context.Context, limit, offset int) ([]*dom
 	return users, nil
 }
 
+// SetAdminCredentialsByTelegramID promotes a user to admin and stores password hash.
+func (r *userRepository) SetAdminCredentialsByTelegramID(ctx context.Context, telegramID int64, hashedPassword string) error {
+	query := `
+		UPDATE users
+		SET role = 'admin', password = $2, updated_at = $3
+		WHERE telegram_id = $1
+	`
+
+	result, err := r.db.ExecContext(ctx, query, telegramID, hashedPassword, time.Now())
+	if err != nil {
+		return fmt.Errorf("failed to set admin credentials: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("user not found")
+	}
+
+	return nil
+}
+
 // Update updates an existing user
 func (r *userRepository) Update(ctx context.Context, user *domain.User) error {
 	query := `

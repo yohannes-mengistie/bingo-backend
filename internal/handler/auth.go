@@ -47,3 +47,33 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+// CreateAdmin handles the POST /auth/create-admin endpoint
+func (h *AuthHandler) CreateAdmin(c *gin.Context) {
+	var req domain.CreateAdminRequest
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid request data",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	user, err := h.authUseCase.CreateAdmin(c.Request.Context(), req)
+	if err != nil {
+		statusCode := http.StatusInternalServerError
+		if err.Error() == "user not found" {
+			statusCode = http.StatusNotFound
+		}
+
+		c.JSON(statusCode, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "Admin user created successfully",
+		"user":    user,
+	})
+}

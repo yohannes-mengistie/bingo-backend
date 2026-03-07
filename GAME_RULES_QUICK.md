@@ -25,7 +25,7 @@
 - Center cell is **FREE** (always marked)
 
 ### 5️⃣ Claim BINGO When Ready
-- Complete any **row, column, or diagonal** (5 numbers)
+- Complete any **row, column, diagonal, or four corners**
 - Claim immediately with your marked positions (0-24)
 - ✅ **Valid = WIN!** Prize added to wallet
 - ❌ **Invalid = ELIMINATED** (no refund)
@@ -43,6 +43,10 @@ Diagonal: [X]              [X]
             [X]          [X]
                [X]    [X]
                   [X]
+Corners:  [X]              [X]
+
+
+          [X]              [X]
 ```
 
 ## 💰 Prize Calculation
@@ -86,4 +90,3 @@ Example: G5 (50 bet) with 10 players
 5. Check your positions before claiming
 
 **Good luck!** 🍀
-

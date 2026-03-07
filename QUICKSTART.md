@@ -10,35 +10,20 @@
 
 This is the easiest way to get started:
 
-### 1. Start Database Services
+### 1. Start All Services
 
 ```bash
 make docker-up
-# Or: docker-compose up -d
+# Or: docker compose up --build -d
 ```
 
 This will start:
+- API on port 8080
 - PostgreSQL on port 5432
 - Redis on port 6379
 - Database will be automatically initialized with the schema
 
-### 2. Install Dependencies
-
-```bash
-make deps
-# Or: go mod download
-```
-
-### 3. Run the Server
-
-```bash
-make run
-# Or: go run cmd/server/main.go
-```
-
-The server will start on `http://localhost:8080`
-
-### 4. Test the API
+### 2. Test the API
 
 ```bash
 # Health check
@@ -55,11 +40,11 @@ curl -X POST http://localhost:8080/api/v1/user/register \
   }'
 ```
 
-### 5. Stop Services (when done)
+### 3. Stop Services (when done)
 
 ```bash
 make docker-down
-# Or: docker-compose down
+# Or: docker compose down
 ```
 
 ## Option 2: Local PostgreSQL and Redis
@@ -160,4 +145,3 @@ make migrate-reset
 - Read the full [README.md](README.md) for API documentation
 - Check available endpoints in the API Endpoints section
 - Test wallet operations (deposit, withdraw, transfer)
-

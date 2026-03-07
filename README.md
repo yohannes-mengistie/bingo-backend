@@ -32,14 +32,8 @@ backend/
 **Fastest way to get started (using Docker):**
 
 ```bash
-# 1. Start PostgreSQL and Redis
+# 1. Start API + PostgreSQL + Redis
 make docker-up
-
-# 2. Install Go dependencies
-make deps
-
-# 3. Run the server
-make run
 ```
 
 Server will be available at `http://localhost:8080`
@@ -64,19 +58,7 @@ For detailed instructions, see [QUICKSTART.md](QUICKSTART.md)
 make docker-up
 ```
 
-2. Install dependencies:
-
-```bash
-make deps
-```
-
-3. Run the server:
-
-```bash
-make run
-```
-
-The database will be automatically initialized on first start.
+This starts the API, PostgreSQL, and Redis together. The database is automatically initialized on first start.
 
 #### Option 2: Local Installation
 
@@ -760,7 +742,7 @@ Each game follows this lifecycle:
   - O: 61–75
 - **Cards**: 100 unique cards (ID 1–100), server-generated deterministically
 - **Card Selection**: Multiple players can select the same card ID in the same game
-- **Winning**: Any row, column, or diagonal (5 numbers)
+- **Winning**: Any row, column, diagonal (5 numbers), or four corners
 - **House Cut**: 20% of each bet goes to the house, 80% goes to the prize pool
 
 ### GET /api/v1/games
@@ -1122,7 +1104,7 @@ Claim bingo. The backend validates the claim against drawn numbers.
 **Validation:**
 
 - ✅ Server validates card against drawn numbers
-- ✅ Valid bingo: Any row, column, or diagonal (5 numbers)
+- ✅ Valid bingo: Any row, column, diagonal (5 numbers), or four corners
 - ✅ Invalid claim: Player is eliminated
 - ✅ Winner receives: `(bet × number_of_players) × (1 - house_cut)` where house_cut is 20% (0.2)
 - ✅ All balance changes are atomic
@@ -1980,12 +1962,12 @@ make build
 
 ### Using Docker
 
-Start PostgreSQL and Redis:
+Start API, PostgreSQL, and Redis:
 
 ```bash
 make docker-up
 # Or:
-# docker-compose up -d
+# docker compose up --build -d
 ```
 
 The database will be automatically initialized with the schema on first start.

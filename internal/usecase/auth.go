@@ -11,7 +11,7 @@ import (
 )
 
 type AuthUseCase struct {
-	userRepo  domain.UserRepository
+	userRepo   domain.UserRepository
 	jwtService *jwt.Service
 }
 
@@ -61,3 +61,27 @@ func (uc *AuthUseCase) Login(ctx context.Context, req domain.LoginRequest) (*dom
 	}, nil
 }
 
+// CreateAdmin promotes an existing user to admin and sets admin password.
+func (uc *AuthUseCase) CreateAdmin(ctx context.Context, req domain.CreateAdminRequest) (*domain.User, error) {
+	_, err := uc.userRepo.FindByTelegramID(ctx, req.TelegramID)
+	if err != nil {
+		return nil, errors.New("user not found")
+	}
+
+	hashedPassword, err := auth.HashPassword(req.Password)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	if err := uc.userRepo.SetAdminCredentialsByTelegramID(ctx, req.TelegramID, hashedPassword); err != nil {
+		return nil, err
+	}
+
+	updatedUser, err := uc.userRepo.FindByTelegramID(ctx, req.TelegramID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch updated user: %w", err)
+	}
+
+	updatedUser.Password = nil
+	return updatedUser, nil
+}
