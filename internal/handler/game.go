@@ -276,7 +276,7 @@ func (h *GameHandler) GetCardData(c *gin.Context) {
 	card, err := h.gameUseCase.GetCardData(c.Request.Context(), cardID)
 	if err != nil {
 		statusCode := http.StatusBadRequest
-		if err.Error() != "card ID must be between 1 and 100" {
+		if err.Error() != fmt.Sprintf("card ID must be between %d and %d", domain.MinCardID, domain.MaxCardID) {
 			statusCode = http.StatusInternalServerError
 		}
 

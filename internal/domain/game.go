@@ -87,7 +87,7 @@ type GamePlayer struct {
 	ID        uuid.UUID  `json:"id" db:"id"`
 	GameID    uuid.UUID  `json:"game_id" db:"game_id"`
 	UserID    uuid.UUID  `json:"user_id" db:"user_id"`
-	CardID    int        `json:"card_id" db:"card_id"` // 1-100
+	CardID    int        `json:"card_id" db:"card_id"` // 1-200
 	IsEliminated bool    `json:"is_eliminated" db:"is_eliminated"`
 	JoinedAt  time.Time  `json:"joined_at" db:"joined_at"`
 	LeftAt    *time.Time `json:"left_at,omitempty" db:"left_at"`
@@ -95,7 +95,7 @@ type GamePlayer struct {
 
 // BingoCard represents a 5x5 bingo card
 type BingoCard struct {
-	ID     int       `json:"id"`     // 1-100
+	ID     int       `json:"id"`     // 1-200
 	Numbers [5][5]int `json:"numbers"` // 5x5 grid
 }
 
@@ -109,7 +109,7 @@ type DrawnNumber struct {
 // JoinGameRequest represents the request to join a game
 type JoinGameRequest struct {
 	UserID uuid.UUID `json:"user_id" binding:"required"`
-	CardID int       `json:"card_id" binding:"required,min=1,max=100"` // min=MinCardID, max=MaxCardID (see constants.go)
+	CardID int       `json:"card_id" binding:"required,min=1,max=200"` // min=MinCardID, max=MaxCardID (see constants.go)
 }
 
 // LeaveGameRequest represents the request to leave a game
@@ -127,4 +127,3 @@ type ClaimBingoRequest struct {
 type GetGamesRequest struct {
 	GameType *GameType `form:"type"` // Optional filter by game type
 }
-

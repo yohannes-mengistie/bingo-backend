@@ -22,10 +22,10 @@ const CountdownTickerInterval = 1 * time.Second
 const MinCardID = 1
 
 // MaxCardID is the maximum valid card ID
-const MaxCardID = 100
+const MaxCardID = 200
 
 // TotalCards is the total number of available bingo cards
-const TotalCards = 100
+const TotalCards = 200
 
 // CardGridSize is the size of the bingo card grid (5x5)
 const CardGridSize = 5
