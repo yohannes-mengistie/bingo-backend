@@ -16,6 +16,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       JWT_SECRET: change-this-in-production
+      SECRET_CODE: ${SECRET_CODE}
     ports:
       - "8080:8080"
     depends_on:

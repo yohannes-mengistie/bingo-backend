@@ -15,6 +15,7 @@ type Config struct {
 	Database DatabaseConfig
 	Redis    RedisConfig
 	JWT      JWTConfig
+	Admin    AdminConfig
 }
 
 type ServerConfig struct {
@@ -46,6 +47,10 @@ type JWTConfig struct {
 	ExpirationHours int
 }
 
+type AdminConfig struct {
+	SecretCode string
+}
+
 // Load loads configuration from environment variables
 func Load() (*Config, error) {
 	// Load .env file if it exists (optional)
@@ -72,6 +77,9 @@ func Load() (*Config, error) {
 		JWT: JWTConfig{
 			SecretKey:       getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
 			ExpirationHours: 24,
+		},
+		Admin: AdminConfig{
+			SecretCode: getEnv("SECRET_CODE", ""),
 		},
 	}
 

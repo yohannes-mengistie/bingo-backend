@@ -62,8 +62,11 @@ func (h *AuthHandler) CreateAdmin(c *gin.Context) {
 	user, err := h.authUseCase.CreateAdmin(c.Request.Context(), req)
 	if err != nil {
 		statusCode := http.StatusInternalServerError
-		if err.Error() == "user not found" {
+		switch err.Error() {
+		case "user not found":
 			statusCode = http.StatusNotFound
+		case "invalid secret code":
+			statusCode = http.StatusForbidden
 		}
 
 		c.JSON(statusCode, gin.H{

@@ -70,7 +70,7 @@ func main() {
 	// Initialize use cases
 	userUseCase := usecase.NewUserUseCase(userRepo, walletRepo, db)
 	walletUseCase := usecase.NewWalletUseCase(walletRepo, transactionRepo, userRepo, gameRepo, db)
-	authUseCase := usecase.NewAuthUseCase(userRepo, jwtService)
+	authUseCase := usecase.NewAuthUseCase(userRepo, jwtService, cfg.Admin.SecretCode)
 	gameUseCase := usecase.NewGameUseCase(gameRepo, walletRepo, transactionRepo, userRepo, db, gameStateService)
 
 	// Initialize handlers

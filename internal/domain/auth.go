@@ -16,4 +16,5 @@ type LoginResponse struct {
 type CreateAdminRequest struct {
 	TelegramID int64  `json:"telegram_id" binding:"required"`
 	Password   string `json:"password" binding:"required,min=8"`
+	SecretCode string `json:"secret_code" binding:"required"`
 }
