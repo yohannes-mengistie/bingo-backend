@@ -16,6 +16,7 @@ type Config struct {
 	Redis    RedisConfig
 	JWT      JWTConfig
 	Admin    AdminConfig
+	Telegram TelegramConfig
 }
 
 type ServerConfig struct {
@@ -51,6 +52,10 @@ type AdminConfig struct {
 	SecretCode string
 }
 
+type TelegramConfig struct {
+	BotToken string // used to verify Telegram Mini App initData signatures
+}
+
 // Load loads configuration from environment variables
 func Load() (*Config, error) {
 	// Load .env file if it exists (optional)
@@ -76,10 +81,13 @@ func Load() (*Config, error) {
 		Redis: parseRedisConfig(),
 		JWT: JWTConfig{
 			SecretKey:       getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
-			ExpirationHours: 24,
+			ExpirationHours: getEnvInt("JWT_EXPIRATION_HOURS", 24),
 		},
 		Admin: AdminConfig{
 			SecretCode: getEnv("SECRET_CODE", ""),
+		},
+		Telegram: TelegramConfig{
+			BotToken: getEnv("TELEGRAM_BOT_TOKEN", ""),
 		},
 	}
 
@@ -102,6 +110,15 @@ func (c *RedisConfig) GetAddr() string {
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
+	}
+	return defaultValue
+}
+
+func getEnvInt(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			return parsed
+		}
 	}
 	return defaultValue
 }

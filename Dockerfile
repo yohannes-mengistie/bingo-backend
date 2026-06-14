@@ -1,23 +1,26 @@
+# ---- Build stage ----
 FROM golang:1.21-alpine AS builder
 
-RUN apk add --no-cache git
+WORKDIR /app
 
-WORKDIR /src
-
+# Cache dependencies
 COPY go.mod go.sum ./
 RUN go mod download
 
+# Build the server binary (static, no CGO)
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux go build -o server ./cmd/server
 
-FROM alpine:3.20
-
-RUN apk --no-cache add ca-certificates tzdata && \
-    addgroup -S app && adduser -S -G app app
+# ---- Run stage ----
+FROM alpine:3.19
 
 WORKDIR /app
-COPY --from=builder /out/server /app/server
 
-USER app
-EXPOSE 8080
-ENTRYPOINT ["./server"]
+# CA certs for outbound TLS (e.g. managed Postgres/Redis with SSL)
+RUN apk add --no-cache ca-certificates
+
+COPY --from=builder /app/server .
+
+EXPOSE 8000
+
+CMD ["./server"]

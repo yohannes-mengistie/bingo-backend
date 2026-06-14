@@ -63,6 +63,9 @@ type GameRepository interface {
 	FindByID(ctx context.Context, id uuid.UUID) (*Game, error)
 	FindAvailable(ctx context.Context, gameType *GameType, limit int) ([]*Game, error)
 	Update(ctx context.Context, game *Game) error
+	// ClaimWinner atomically marks the game FINISHED with the winner, but only if
+	// it is still DRAWING. Returns true only for the single claim that succeeds.
+	ClaimWinner(ctx context.Context, tx *sql.Tx, gameID, winnerID uuid.UUID) (bool, error)
 	AddPlayer(ctx context.Context, tx *sql.Tx, player *GamePlayer) error
 	RemovePlayer(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID) error
 	FindPlayer(ctx context.Context, gameID, userID uuid.UUID) (*GamePlayer, error)

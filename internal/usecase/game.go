@@ -111,8 +111,17 @@ func (uc *GameUseCase) JoinGame(ctx context.Context, gameID uuid.UUID, req domai
 		return nil, errors.New("user is already in this game")
 	}
 
-	// Note: Multiple players can now select the same card
-	// The unique constraint on (game_id, card_id) has been removed
+	// Enforce one card per player per game: reject if another active player
+	// already holds this card. (The DB also has a UNIQUE(game_id, card_id)
+	// constraint as a hard safety net against the rare check-then-insert race.)
+	takenCards, err := uc.gameRepo.GetTakenCards(ctx, gameID)
+	if err == nil {
+		for _, taken := range takenCards {
+			if taken == req.CardID {
+				return nil, errors.New("card is already taken")
+			}
+		}
+	}
 
 	// Start transaction
 	tx, err := uc.db.BeginTx(ctx, nil)
@@ -533,14 +542,26 @@ func (uc *GameUseCase) ClaimBingo(ctx context.Context, gameID uuid.UUID, req dom
 	defer tx.Rollback()
 
 	if isValid {
-		// Winner!
+		// Atomic single-winner guard: claim the win only if the game is still in
+		// DRAWING state. If two valid claims race, only the first conditional
+		// UPDATE affects a row; the second is rejected here — so there can never
+		// be two winners or a double payout of the prize pool.
+		claimed, err := uc.gameRepo.ClaimWinner(ctx, tx, gameID, req.UserID)
+		if err != nil {
+			return false, fmt.Errorf("failed to claim win: %w", err)
+		}
+		if !claimed {
+			return false, errors.New("game already has a winner")
+		}
+
+		// Reflect the claimed state in memory for the events/Redis updates below.
 		game.State = domain.GameStateFinished
 		game.WinnerID = &req.UserID
 		now := time.Now()
 		game.FinishedAt = &now
 
 		// Distribute prize
-		_, err := uc.walletRepo.LockForUpdate(ctx, tx, req.UserID)
+		_, err = uc.walletRepo.LockForUpdate(ctx, tx, req.UserID)
 		if err != nil {
 			return false, fmt.Errorf("wallet not found: %w", err)
 		}
@@ -564,11 +585,7 @@ func (uc *GameUseCase) ClaimBingo(ctx context.Context, gameID uuid.UUID, req dom
 			return false, fmt.Errorf("failed to create transaction: %w", err)
 		}
 
-		if err := uc.gameRepo.Update(ctx, game); err != nil {
-			return false, fmt.Errorf("failed to update game: %w", err)
-		}
-
-		// Commit transaction
+		// Commit transaction (ClaimWinner already persisted the FINISHED state)
 		if err := tx.Commit(); err != nil {
 			return false, fmt.Errorf("failed to commit transaction: %w", err)
 		}

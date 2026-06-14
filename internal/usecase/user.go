@@ -105,6 +105,16 @@ func (uc *UserUseCase) CreateUser(ctx context.Context, req domain.CreateUserRequ
 	return user, wallet, nil
 }
 
+// GetUserByID returns a user by their ID (password stripped)
+func (uc *UserUseCase) GetUserByID(ctx context.Context, userID uuid.UUID) (*domain.User, error) {
+	user, err := uc.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	user.Password = nil
+	return user, nil
+}
+
 // FindUserByTelegramID finds a user by their Telegram ID
 func (uc *UserUseCase) FindUserByTelegramID(ctx context.Context, telegramID int64) (*domain.User, error) {
 	user, err := uc.userRepo.FindByTelegramID(ctx, telegramID)

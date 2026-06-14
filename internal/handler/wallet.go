@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/bingo/backend/internal/domain"
+	"github.com/bingo/backend/internal/middleware"
 	"github.com/bingo/backend/internal/usecase"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -21,8 +22,14 @@ func NewWalletHandler(walletUseCase *usecase.WalletUseCase) *WalletHandler {
 	}
 }
 
-// Deposit handles the POST /wallet/deposit endpoint
+// Deposit handles the POST /wallet/deposit endpoint (authenticated)
 func (h *WalletHandler) Deposit(c *gin.Context) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
+
 	var req domain.DepositRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -32,6 +39,7 @@ func (h *WalletHandler) Deposit(c *gin.Context) {
 		})
 		return
 	}
+	req.UserID = userID
 
 	transaction, err := h.walletUseCase.Deposit(c.Request.Context(), req)
 	if err != nil {
@@ -54,8 +62,14 @@ func (h *WalletHandler) Deposit(c *gin.Context) {
 	})
 }
 
-// Withdraw handles the POST /wallet/withdraw endpoint
+// Withdraw handles the POST /wallet/withdraw endpoint (authenticated)
 func (h *WalletHandler) Withdraw(c *gin.Context) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
+
 	var req domain.WithdrawRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -65,6 +79,7 @@ func (h *WalletHandler) Withdraw(c *gin.Context) {
 		})
 		return
 	}
+	req.UserID = userID
 
 	transaction, err := h.walletUseCase.Withdraw(c.Request.Context(), req)
 	if err != nil {
@@ -93,8 +108,15 @@ func (h *WalletHandler) Withdraw(c *gin.Context) {
 	})
 }
 
-// Transfer handles the POST /wallet/transfer endpoint
+// Transfer handles the POST /wallet/transfer endpoint (authenticated).
+// The sender is always the authenticated user; only the receiver comes from the body.
 func (h *WalletHandler) Transfer(c *gin.Context) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
+
 	var req domain.TransferRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -104,6 +126,7 @@ func (h *WalletHandler) Transfer(c *gin.Context) {
 		})
 		return
 	}
+	req.SenderID = userID
 
 	senderTx, receiverTx, err := h.walletUseCase.Transfer(c.Request.Context(), req)
 	if err != nil {
@@ -130,6 +153,82 @@ func (h *WalletHandler) Transfer(c *gin.Context) {
 		"sender_tx":   senderTx,
 		"receiver_tx": receiverTx,
 	})
+}
+
+// historyLimit returns the limit for a history query (?all=true returns everything).
+func historyLimit(c *gin.Context) int {
+	if c.Query("all") == "true" {
+		return 10000
+	}
+	return 10
+}
+
+// GetMyWallet handles GET /me/wallet — the authenticated user's wallet.
+func (h *WalletHandler) GetMyWallet(c *gin.Context) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
+
+	wallet, err := h.walletUseCase.GetWallet(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Wallet not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"wallet": wallet})
+}
+
+// GetMyDeposits handles GET /me/wallet/deposits.
+func (h *WalletHandler) GetMyDeposits(c *gin.Context) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
+
+	transactions, err := h.walletUseCase.GetDepositHistory(c.Request.Context(), userID, historyLimit(c))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch deposit history"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"deposits": transactions, "count": len(transactions)})
+}
+
+// GetMyWithdrawals handles GET /me/wallet/withdrawals.
+func (h *WalletHandler) GetMyWithdrawals(c *gin.Context) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
+
+	transactions, err := h.walletUseCase.GetWithdrawalHistory(c.Request.Context(), userID, historyLimit(c))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch withdrawal history"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"withdrawals": transactions, "count": len(transactions)})
+}
+
+// GetMyTransfers handles GET /me/wallet/transfers.
+func (h *WalletHandler) GetMyTransfers(c *gin.Context) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
+
+	transactions, err := h.walletUseCase.GetTransferHistory(c.Request.Context(), userID, historyLimit(c))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch transfer history"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"transfers": transactions, "count": len(transactions)})
 }
 
 // GetWallet handles the GET /wallet/:user_id endpoint

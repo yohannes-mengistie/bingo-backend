@@ -47,25 +47,28 @@ type Transaction struct {
 	CreatedAt       time.Time         `json:"created_at" db:"created_at"`
 }
 
-// DepositRequest represents the data needed to create a deposit
+// DepositRequest represents the data needed to create a deposit.
+// UserID is populated from the authenticated JWT, not the request body.
 type DepositRequest struct {
-	UserID          uuid.UUID     `json:"user_id" binding:"required"`
+	UserID          uuid.UUID     `json:"-"`
 	Amount          float64       `json:"amount" binding:"required,gt=0"`
 	TransactionType PaymentMethod `json:"transaction_type" binding:"required"`
 	TransactionID   string        `json:"transaction_id" binding:"required"`
 }
 
-// WithdrawRequest represents the data needed to create a withdrawal
+// WithdrawRequest represents the data needed to create a withdrawal.
+// UserID is populated from the authenticated JWT, not the request body.
 type WithdrawRequest struct {
-	UserID        uuid.UUID     `json:"user_id" binding:"required"`
+	UserID        uuid.UUID     `json:"-"`
 	Amount        float64       `json:"amount" binding:"required,gt=0"`
 	AccountNumber string        `json:"account_number" binding:"required"`
 	AccountType   PaymentMethod `json:"account_type" binding:"required"`
 }
 
-// TransferRequest represents the data needed to create a transfer
+// TransferRequest represents the data needed to create a transfer.
+// SenderID is populated from the authenticated JWT, not the request body.
 type TransferRequest struct {
-	SenderID   uuid.UUID `json:"sender_id" binding:"required"`
+	SenderID   uuid.UUID `json:"-"`
 	ReceiverID uuid.UUID `json:"receiver_id" binding:"required"`
 	Amount     float64   `json:"amount" binding:"required,gt=0"`
 }

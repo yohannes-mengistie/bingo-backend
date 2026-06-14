@@ -47,6 +47,30 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+// TelegramLogin handles POST /auth/telegram
+// Accepts a Telegram Mini App initData string, verifies it, and returns a JWT.
+func (h *AuthHandler) TelegramLogin(c *gin.Context) {
+	var req domain.TelegramAuthRequest
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid request data",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	response, err := h.authUseCase.TelegramLogin(c.Request.Context(), req.InitData)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
 // CreateAdmin handles the POST /auth/create-admin endpoint
 func (h *AuthHandler) CreateAdmin(c *gin.Context) {
 	var req domain.CreateAdminRequest

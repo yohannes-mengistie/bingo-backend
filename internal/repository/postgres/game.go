@@ -234,6 +234,38 @@ func (r *gameRepository) Update(ctx context.Context, game *domain.Game) error {
 	return nil
 }
 
+// ClaimWinner atomically marks the game FINISHED with the given winner, but only
+// if it is still in DRAWING state. The WHERE clause makes this a single-winner
+// guard: with concurrent claims, exactly one UPDATE affects a row (returns true);
+// the others affect zero rows (return false), so no double winner or double payout.
+func (r *gameRepository) ClaimWinner(ctx context.Context, tx *sql.Tx, gameID, winnerID uuid.UUID) (bool, error) {
+	query := `
+		UPDATE games
+		SET state = 'FINISHED', winner_id = $2, finished_at = $3, updated_at = $3
+		WHERE id = $1 AND state = 'DRAWING'
+	`
+
+	now := time.Now()
+
+	var result sql.Result
+	var err error
+	if tx != nil {
+		result, err = tx.ExecContext(ctx, query, gameID, winnerID, now)
+	} else {
+		result, err = r.db.ExecContext(ctx, query, gameID, winnerID, now)
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to claim winner: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	return rowsAffected == 1, nil
+}
+
 // AddPlayer adds a player to a game
 // If player previously left (left_at is set), updates the existing record instead of inserting
 func (r *gameRepository) AddPlayer(ctx context.Context, tx *sql.Tx, player *domain.GamePlayer) error {

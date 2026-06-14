@@ -12,6 +12,11 @@ type LoginResponse struct {
 	User  *User  `json:"user"`
 }
 
+// TelegramAuthRequest carries the signed initData string from a Telegram Mini App.
+type TelegramAuthRequest struct {
+	InitData string `json:"init_data" binding:"required"`
+}
+
 // CreateAdminRequest promotes an existing user to admin and sets a password.
 type CreateAdminRequest struct {
 	TelegramID int64  `json:"telegram_id" binding:"required"`

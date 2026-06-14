@@ -4,26 +4,59 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/bingo/backend/internal/domain"
 	"github.com/bingo/backend/pkg/auth"
 	"github.com/bingo/backend/pkg/jwt"
 	"github.com/bingo/backend/pkg/referral"
+	"github.com/bingo/backend/pkg/telegram"
 )
+
+// telegramInitDataMaxAge is how long a Telegram initData payload stays valid.
+const telegramInitDataMaxAge = 24 * time.Hour
 
 type AuthUseCase struct {
 	userRepo        domain.UserRepository
 	jwtService      *jwt.Service
 	adminSecretCode string
+	botToken        string
 }
 
 // NewAuthUseCase creates a new auth use case
-func NewAuthUseCase(userRepo domain.UserRepository, jwtService *jwt.Service, adminSecretCode string) *AuthUseCase {
+func NewAuthUseCase(userRepo domain.UserRepository, jwtService *jwt.Service, adminSecretCode, botToken string) *AuthUseCase {
 	return &AuthUseCase{
 		userRepo:        userRepo,
 		jwtService:      jwtService,
 		adminSecretCode: adminSecretCode,
+		botToken:        botToken,
 	}
+}
+
+// TelegramLogin authenticates a Telegram Mini App user from signed initData and
+// returns a JWT. The user must already be registered (via the bot) — this does
+// not create new users, since the phone number is only captured by the bot.
+func (uc *AuthUseCase) TelegramLogin(ctx context.Context, initData string) (*domain.LoginResponse, error) {
+	tgUser, err := telegram.Validate(initData, uc.botToken, telegramInitDataMaxAge)
+	if err != nil {
+		return nil, fmt.Errorf("telegram authentication failed: %w", err)
+	}
+
+	user, err := uc.userRepo.FindByTelegramID(ctx, tgUser.ID)
+	if err != nil {
+		return nil, errors.New("user not registered: please start the Telegram bot first")
+	}
+
+	token, err := uc.jwtService.GenerateToken(user.ID, user.Role)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate token: %w", err)
+	}
+
+	user.Password = nil
+	return &domain.LoginResponse{
+		Token: token,
+		User:  user,
+	}, nil
 }
 
 // Login authenticates an admin user and returns a JWT token

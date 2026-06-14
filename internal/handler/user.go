@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/bingo/backend/internal/domain"
+	"github.com/bingo/backend/internal/middleware"
 	"github.com/bingo/backend/internal/usecase"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -26,7 +27,7 @@ func (h *UserHandler) Register(c *gin.Context) {
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request data",
+			"error":   "Invalid request data",
 			"details": err.Error(),
 		})
 		return
@@ -48,8 +49,8 @@ func (h *UserHandler) Register(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "User and wallet created successfully",
-		"user":   user,
-		"wallet": wallet,
+		"user":    user,
+		"wallet":  wallet,
 	})
 }
 
@@ -128,6 +129,55 @@ func (h *UserHandler) FindByReferralCode(c *gin.Context) {
 	})
 }
 
+// GetMe handles GET /me — the authenticated user's profile.
+func (h *UserHandler) GetMe(c *gin.Context) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
+
+	user, err := h.userUseCase.GetUserByID(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"user": user})
+}
+
+// UpdateMyName handles PUT /me/name — update the authenticated user's name.
+func (h *UserHandler) UpdateMyName(c *gin.Context) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
+
+	var req domain.UpdateUserNameRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid request data",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	user, err := h.userUseCase.UpdateUserName(c.Request.Context(), userID, req)
+	if err != nil {
+		statusCode := http.StatusInternalServerError
+		if err.Error() == "user not found" {
+			statusCode = http.StatusNotFound
+		}
+		c.JSON(statusCode, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "User name updated successfully",
+		"user":    user,
+	})
+}
 
 // GetAllUsers handles the GET /admin/users endpoint
 func (h *UserHandler) GetAllUsers(c *gin.Context) {
@@ -142,9 +192,9 @@ func (h *UserHandler) GetAllUsers(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"users": usersWithWallets,
-		"count": totalCount,
-		"limit": limit,
+		"users":  usersWithWallets,
+		"count":  totalCount,
+		"limit":  limit,
 		"offset": offset,
 	})
 }
@@ -187,4 +237,3 @@ func (h *UserHandler) UpdateUserName(c *gin.Context) {
 		"user":    user,
 	})
 }
-

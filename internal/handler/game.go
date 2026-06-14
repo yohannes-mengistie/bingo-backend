@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/bingo/backend/internal/domain"
+	"github.com/bingo/backend/internal/middleware"
 	"github.com/bingo/backend/internal/usecase"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -76,6 +77,12 @@ func (h *GameHandler) JoinGame(c *gin.Context) {
 		return
 	}
 
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
+
 	var req domain.JoinGameRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -84,6 +91,7 @@ func (h *GameHandler) JoinGame(c *gin.Context) {
 		})
 		return
 	}
+	req.UserID = userID
 
 	player, err := h.gameUseCase.JoinGame(c.Request.Context(), gameID, req)
 	if err != nil {
@@ -117,14 +125,18 @@ func (h *GameHandler) LeaveGame(c *gin.Context) {
 		return
 	}
 
-	var req domain.LeaveGameRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Invalid request data",
-			"details": err.Error(),
-		})
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
 		return
 	}
+
+	var req domain.LeaveGameRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		// Leave has no required body fields; ignore empty-body bind errors.
+		req = domain.LeaveGameRequest{}
+	}
+	req.UserID = userID
 
 	if err := h.gameUseCase.LeaveGame(c.Request.Context(), gameID, req); err != nil {
 		statusCode := http.StatusInternalServerError
@@ -155,6 +167,12 @@ func (h *GameHandler) ClaimBingo(c *gin.Context) {
 		return
 	}
 
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
+
 	var req domain.ClaimBingoRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -163,6 +181,7 @@ func (h *GameHandler) ClaimBingo(c *gin.Context) {
 		})
 		return
 	}
+	req.UserID = userID
 
 	isWinner, err := h.gameUseCase.ClaimBingo(c.Request.Context(), gameID, req)
 	if err != nil {
@@ -171,6 +190,9 @@ func (h *GameHandler) ClaimBingo(c *gin.Context) {
 			err.Error() == "user is not in this game" ||
 			err.Error() == "player is already eliminated" {
 			statusCode = http.StatusBadRequest
+		} else if err.Error() == "game already has a winner" {
+			// Lost the race to another simultaneous valid claim.
+			statusCode = http.StatusConflict
 		}
 
 		c.JSON(statusCode, gin.H{
@@ -289,6 +311,69 @@ func (h *GameHandler) GetCardData(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"card": card,
 	})
+}
+
+// GetMyGameHistory handles GET /me/games — the authenticated user's game history.
+func (h *GameHandler) GetMyGameHistory(c *gin.Context) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
+
+	limit := 10
+	offset := 0
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if parsedLimit := parseInt(limitStr); parsedLimit > 0 {
+			limit = parsedLimit
+		}
+	}
+	if offsetStr := c.Query("offset"); offsetStr != "" {
+		if parsedOffset := parseInt(offsetStr); parsedOffset >= 0 {
+			offset = parsedOffset
+		}
+	}
+
+	history, err := h.gameUseCase.GetGameHistory(c.Request.Context(), userID, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch game history"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"games":  history,
+		"count":  len(history),
+		"limit":  limit,
+		"offset": offset,
+	})
+}
+
+// GetMyPlayerInGame handles GET /me/games/:gameId — whether the authenticated
+// user is in the given game (returns the player record or 404).
+func (h *GameHandler) GetMyPlayerInGame(c *gin.Context) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
+
+	gameID, err := uuid.Parse(c.Param("gameId"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid game ID"})
+		return
+	}
+
+	player, err := h.gameUseCase.GetPlayerInGame(c.Request.Context(), gameID, userID)
+	if err != nil {
+		if err.Error() == "player not found" {
+			c.JSON(http.StatusNotFound, gin.H{"player": nil})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"player": player})
 }
 
 // GetGameHistory handles GET /games/user/:user_id/history

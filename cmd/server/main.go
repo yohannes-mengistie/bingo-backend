@@ -70,7 +70,7 @@ func main() {
 	// Initialize use cases
 	userUseCase := usecase.NewUserUseCase(userRepo, walletRepo, db)
 	walletUseCase := usecase.NewWalletUseCase(walletRepo, transactionRepo, userRepo, gameRepo, db)
-	authUseCase := usecase.NewAuthUseCase(userRepo, jwtService, cfg.Admin.SecretCode)
+	authUseCase := usecase.NewAuthUseCase(userRepo, jwtService, cfg.Admin.SecretCode, cfg.Telegram.BotToken)
 	gameUseCase := usecase.NewGameUseCase(gameRepo, walletRepo, transactionRepo, userRepo, db, gameStateService)
 
 	// Initialize handlers
@@ -160,29 +160,26 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 	// API routes
 	api := router.Group("/api/v1")
 	{
-		// Public auth endpoint
+		// Public auth endpoints
 		auth := api.Group("/auth")
 		{
-			auth.POST("/login", authHandler.Login)
-			auth.POST("/create-admin", authHandler.CreateAdmin)
+			auth.POST("/login", authHandler.Login)              // admin login (telegram_id + password)
+			auth.POST("/create-admin", authHandler.CreateAdmin) // secret-code gated
+			auth.POST("/telegram", authHandler.TelegramLogin)   // website: verify Mini App initData -> JWT
 		}
 
-		// Public user endpoints (for bot access)
+		// Bot-facing user endpoints (server-to-server; called by the trusted Telegram bot)
 		user := api.Group("/user")
 		{
 			user.POST("/register", userHandler.Register)
 			user.GET("/telegram/:telegram_id", userHandler.FindByTelegramID)
 			user.GET("/phone", userHandler.FindByPhone)
 			user.GET("/referral/:referral_code", userHandler.FindByReferralCode)
-			user.PUT("/:user_id/name", userHandler.UpdateUserName)
 		}
 
-		// Public wallet endpoints (for bot access)
+		// Bot-facing wallet reads (server-to-server)
 		wallet := api.Group("/wallet")
 		{
-			wallet.POST("/deposit", walletHandler.Deposit)
-			wallet.POST("/withdraw", walletHandler.Withdraw)
-			wallet.POST("/transfer", walletHandler.Transfer)
 			wallet.GET("/telegram/:telegram_id", walletHandler.GetWalletByTelegramID)
 			wallet.GET("/:user_id", walletHandler.GetWallet)
 			wallet.GET("/:user_id/deposits", walletHandler.GetDepositHistory)
@@ -190,16 +187,38 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			wallet.GET("/:user_id/transfers", walletHandler.GetTransferHistory)
 		}
 
-		// Public game endpoints
+		// Public game reads (spectating / lobby — no auth needed)
 		games := api.Group("/games")
 		{
 			games.GET("", gameHandler.GetGames)
 			games.GET("/user/:user_id/history", gameHandler.GetGameHistory)
 			games.GET("/:gameId/state", gameHandler.GetGameState)
 			games.GET("/:gameId/players/:userId", gameHandler.GetPlayerInGame)
-			games.POST("/:gameId/join", gameHandler.JoinGame)
-			games.POST("/:gameId/leave", gameHandler.LeaveGame)
-			games.POST("/:gameId/bingo", gameHandler.ClaimBingo)
+		}
+
+		// Authenticated website endpoints (JWT required; user_id comes from the token)
+		authed := api.Group("")
+		authed.Use(middleware.AuthMiddleware(jwtService))
+		{
+			// Profile
+			authed.GET("/me", userHandler.GetMe)
+			authed.PUT("/me/name", userHandler.UpdateMyName)
+
+			// Wallet (self)
+			authed.GET("/me/wallet", walletHandler.GetMyWallet)
+			authed.GET("/me/wallet/deposits", walletHandler.GetMyDeposits)
+			authed.GET("/me/wallet/withdrawals", walletHandler.GetMyWithdrawals)
+			authed.GET("/me/wallet/transfers", walletHandler.GetMyTransfers)
+			authed.POST("/wallet/deposit", walletHandler.Deposit)
+			authed.POST("/wallet/withdraw", walletHandler.Withdraw)
+			authed.POST("/wallet/transfer", walletHandler.Transfer)
+
+			// Games (self)
+			authed.GET("/me/games", gameHandler.GetMyGameHistory)
+			authed.GET("/me/games/:gameId", gameHandler.GetMyPlayerInGame)
+			authed.POST("/games/:gameId/join", gameHandler.JoinGame)
+			authed.POST("/games/:gameId/leave", gameHandler.LeaveGame)
+			authed.POST("/games/:gameId/bingo", gameHandler.ClaimBingo)
 		}
 
 		// Public card endpoints

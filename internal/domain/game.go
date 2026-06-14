@@ -66,61 +66,64 @@ const (
 
 // Game represents a bingo game instance
 type Game struct {
-	ID            uuid.UUID `json:"id" db:"id"`
-	GameType      GameType  `json:"game_type" db:"game_type"`
-	State         GameState `json:"state" db:"state"`
-	BetAmount     float64   `json:"bet_amount" db:"bet_amount"`
-	MinPlayers    int       `json:"min_players" db:"min_players"`
-	PlayerCount   int       `json:"player_count" db:"player_count"`
-	PrizePool     float64   `json:"prize_pool" db:"prize_pool"`
-	HouseCut      float64   `json:"house_cut" db:"house_cut"`
+	ID            uuid.UUID  `json:"id" db:"id"`
+	GameType      GameType   `json:"game_type" db:"game_type"`
+	State         GameState  `json:"state" db:"state"`
+	BetAmount     float64    `json:"bet_amount" db:"bet_amount"`
+	MinPlayers    int        `json:"min_players" db:"min_players"`
+	PlayerCount   int        `json:"player_count" db:"player_count"`
+	PrizePool     float64    `json:"prize_pool" db:"prize_pool"`
+	HouseCut      float64    `json:"house_cut" db:"house_cut"`
 	WinnerID      *uuid.UUID `json:"winner_id,omitempty" db:"winner_id"`
 	CountdownEnds *time.Time `json:"countdown_ends,omitempty" db:"countdown_ends"`
 	StartedAt     *time.Time `json:"started_at,omitempty" db:"started_at"`
 	FinishedAt    *time.Time `json:"finished_at,omitempty" db:"finished_at"`
-	CreatedAt     time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at" db:"updated_at"`
+	CreatedAt     time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at" db:"updated_at"`
 }
 
 // GamePlayer represents a player in a game
 type GamePlayer struct {
-	ID        uuid.UUID  `json:"id" db:"id"`
-	GameID    uuid.UUID  `json:"game_id" db:"game_id"`
-	UserID    uuid.UUID  `json:"user_id" db:"user_id"`
-	CardID    int        `json:"card_id" db:"card_id"` // 1-200
-	IsEliminated bool    `json:"is_eliminated" db:"is_eliminated"`
-	JoinedAt  time.Time  `json:"joined_at" db:"joined_at"`
-	LeftAt    *time.Time `json:"left_at,omitempty" db:"left_at"`
+	ID           uuid.UUID  `json:"id" db:"id"`
+	GameID       uuid.UUID  `json:"game_id" db:"game_id"`
+	UserID       uuid.UUID  `json:"user_id" db:"user_id"`
+	CardID       int        `json:"card_id" db:"card_id"` // 1-200
+	IsEliminated bool       `json:"is_eliminated" db:"is_eliminated"`
+	JoinedAt     time.Time  `json:"joined_at" db:"joined_at"`
+	LeftAt       *time.Time `json:"left_at,omitempty" db:"left_at"`
 }
 
 // BingoCard represents a 5x5 bingo card
 type BingoCard struct {
-	ID     int       `json:"id"`     // 1-200
+	ID      int       `json:"id"`      // 1-200
 	Numbers [5][5]int `json:"numbers"` // 5x5 grid
 }
 
 // DrawnNumber represents a number drawn in the game
 type DrawnNumber struct {
-	Letter BingoLetter `json:"letter"`
-	Number int         `json:"number"`
-	DrawnAt time.Time  `json:"drawn_at"`
+	Letter  BingoLetter `json:"letter"`
+	Number  int         `json:"number"`
+	DrawnAt time.Time   `json:"drawn_at"`
 }
 
-// JoinGameRequest represents the request to join a game
+// JoinGameRequest represents the request to join a game.
+// UserID is populated from the authenticated JWT, not the request body.
 type JoinGameRequest struct {
-	UserID uuid.UUID `json:"user_id" binding:"required"`
+	UserID uuid.UUID `json:"-"`
 	CardID int       `json:"card_id" binding:"required,min=1,max=200"` // min=MinCardID, max=MaxCardID (see constants.go)
 }
 
-// LeaveGameRequest represents the request to leave a game
+// LeaveGameRequest represents the request to leave a game.
+// UserID is populated from the authenticated JWT, not the request body.
 type LeaveGameRequest struct {
-	UserID uuid.UUID `json:"user_id" binding:"required"`
+	UserID uuid.UUID `json:"-"`
 }
 
-// ClaimBingoRequest represents the request to claim bingo
+// ClaimBingoRequest represents the request to claim bingo.
+// UserID is populated from the authenticated JWT, not the request body.
 type ClaimBingoRequest struct {
-	UserID uuid.UUID `json:"user_id" binding:"required"`
-	MarkedNumbers []int `json:"marked_numbers" binding:"required"` // Array of marked number positions (0-24)
+	UserID        uuid.UUID `json:"-"`
+	MarkedNumbers []int     `json:"marked_numbers" binding:"required"` // Array of marked number positions (0-24)
 }
 
 // GetGamesRequest represents the request to get available games

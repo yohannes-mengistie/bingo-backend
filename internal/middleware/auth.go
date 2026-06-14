@@ -6,12 +6,24 @@ import (
 
 	"github.com/bingo/backend/pkg/jwt"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 const (
 	UserIDKey = "user_id"
 	RoleKey   = "role"
 )
+
+// GetUserID returns the authenticated user's ID from the Gin context.
+// It is only populated after AuthMiddleware has run.
+func GetUserID(c *gin.Context) (uuid.UUID, bool) {
+	v, exists := c.Get(UserIDKey)
+	if !exists {
+		return uuid.Nil, false
+	}
+	id, ok := v.(uuid.UUID)
+	return id, ok
+}
 
 // AuthMiddleware validates JWT token and extracts user information
 func AuthMiddleware(jwtService *jwt.Service) gin.HandlerFunc {
@@ -79,4 +91,3 @@ func AdminMiddleware() gin.HandlerFunc {
 		c.Next()
 	}
 }
-
