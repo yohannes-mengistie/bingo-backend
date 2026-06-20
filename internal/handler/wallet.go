@@ -732,3 +732,27 @@ func (h *WalletHandler) GetDashboardStats(c *gin.Context) {
 
 	c.JSON(http.StatusOK, stats)
 }
+
+// AdjustBalance handles POST /admin/users/:user_id/adjust-balance — manually
+// credit (positive amount) or debit (negative amount) a user's wallet.
+func (h *WalletHandler) AdjustBalance(c *gin.Context) {
+	userID, err := uuid.Parse(c.Param("user_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
+	var req domain.AdjustBalanceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request data", "details": err.Error()})
+		return
+	}
+
+	txn, err := h.walletUseCase.AdjustBalance(c.Request.Context(), userID, req.Amount, req.Reason)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Balance adjusted", "transaction": txn})
+}

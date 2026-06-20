@@ -262,6 +262,11 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 		{
 			// User management
 			admin.GET("/users", userHandler.GetAllUsers)
+			admin.GET("/users/:user_id", userHandler.GetUserDetail)
+			admin.POST("/users/:user_id/role", userHandler.SetUserRole)
+			admin.POST("/users/:user_id/ban", userHandler.BanUser)
+			admin.POST("/users/:user_id/unban", userHandler.UnbanUser)
+			admin.POST("/users/:user_id/adjust-balance", walletHandler.AdjustBalance)
 
 			// Dashboard stats
 			stats := admin.Group("/stats")

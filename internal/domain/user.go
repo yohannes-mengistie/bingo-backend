@@ -15,9 +15,22 @@ type User struct {
 	PhoneNumber string    `json:"phone_number" db:"phone_number"`
 	ReferalCode string    `json:"referal_code" db:"referal_code"`
 	Role        string    `json:"role" db:"role"`
+	Banned      bool      `json:"banned" db:"banned"`
 	Password    *string   `json:"-" db:"password"` // Never expose password in JSON
 	CreatedAt   time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
+}
+
+// SetRoleRequest is the admin request to change a user's role.
+type SetRoleRequest struct {
+	Role string `json:"role" binding:"required,oneof=user admin"`
+}
+
+// AdjustBalanceRequest is the admin request to credit (positive) or debit
+// (negative) a user's wallet. Reason is recorded for the audit trail.
+type AdjustBalanceRequest struct {
+	Amount float64 `json:"amount" binding:"required"`
+	Reason string  `json:"reason"`
 }
 
 // CreateUserRequest represents the data needed to create a new user

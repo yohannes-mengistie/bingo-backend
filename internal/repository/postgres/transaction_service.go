@@ -28,6 +28,66 @@ func NewTransactionService(
 	}
 }
 
+// AdjustBalance credits (amount > 0) or debits (amount < 0) a user's wallet as
+// a manual admin action, recording a completed transaction for the audit trail.
+// Debits are rejected if they would overdraw the wallet.
+func (s *TransactionService) AdjustBalance(ctx context.Context, userID uuid.UUID, amount float64, reason string) (*domain.Transaction, error) {
+	if amount == 0 {
+		return nil, fmt.Errorf("amount must be non-zero")
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	wallet, err := s.walletRepo.LockForUpdate(ctx, tx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("wallet not found: %w", err)
+	}
+
+	if amount < 0 && wallet.Balance+amount < 0 {
+		return nil, fmt.Errorf("insufficient balance: cannot debit %.2f from %.2f", -amount, wallet.Balance)
+	}
+
+	if err := s.walletRepo.UpdateBalance(ctx, tx, userID, amount); err != nil {
+		return nil, fmt.Errorf("failed to update balance: %w", err)
+	}
+
+	txType := domain.TransactionTypeDeposit
+	if amount < 0 {
+		txType = domain.TransactionTypeWithdraw
+	}
+	note := reason
+	if note == "" {
+		note = "admin balance adjustment"
+	}
+	record := &domain.Transaction{
+		UserID:    userID,
+		Type:      txType,
+		Amount:    absFloat(amount),
+		Status:    domain.TransactionStatusCompleted,
+		Reference: &note,
+	}
+	if err := s.transactionRepo.Create(ctx, tx, record); err != nil {
+		return nil, fmt.Errorf("failed to record adjustment: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return record, nil
+}
+
+func absFloat(f float64) float64 {
+	if f < 0 {
+		return -f
+	}
+	return f
+}
+
 // ApproveDeposit approves a deposit transaction and updates wallet balance
 func (s *TransactionService) ApproveDeposit(ctx context.Context, transactionID uuid.UUID) (*domain.Transaction, error) {
 	// Get transaction

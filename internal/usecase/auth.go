@@ -46,6 +46,9 @@ func (uc *AuthUseCase) TelegramLogin(ctx context.Context, initData string) (*dom
 	if err != nil {
 		return nil, errors.New("user not registered: please start the Telegram bot first")
 	}
+	if user.Banned {
+		return nil, errors.New("your account has been suspended")
+	}
 
 	token, err := uc.jwtService.GenerateToken(user.ID, user.Role)
 	if err != nil {
@@ -65,6 +68,10 @@ func (uc *AuthUseCase) Login(ctx context.Context, req domain.LoginRequest) (*dom
 	user, err := uc.userRepo.FindByTelegramID(ctx, req.TelegramID)
 	if err != nil {
 		return nil, errors.New("invalid credentials")
+	}
+
+	if user.Banned {
+		return nil, errors.New("your account has been suspended")
 	}
 
 	// Check if user has admin role

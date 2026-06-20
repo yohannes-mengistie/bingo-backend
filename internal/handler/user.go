@@ -237,3 +237,79 @@ func (h *UserHandler) UpdateUserName(c *gin.Context) {
 		"user":    user,
 	})
 }
+
+// GetUserDetail handles GET /admin/users/:user_id — user + wallet.
+func (h *UserHandler) GetUserDetail(c *gin.Context) {
+	userID, err := uuid.Parse(c.Param("user_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
+	detail, err := h.userUseCase.GetUserDetail(c.Request.Context(), userID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if err.Error() == "user not found" {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"user": detail})
+}
+
+// SetUserRole handles POST /admin/users/:user_id/role — promote/demote.
+func (h *UserHandler) SetUserRole(c *gin.Context) {
+	userID, err := uuid.Parse(c.Param("user_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
+	var req domain.SetRoleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request data", "details": err.Error()})
+		return
+	}
+
+	if err := h.userUseCase.SetUserRole(c.Request.Context(), userID, req.Role); err != nil {
+		status := http.StatusInternalServerError
+		if err.Error() == "user not found" {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "User role updated", "role": req.Role})
+}
+
+// BanUser handles POST /admin/users/:user_id/ban.
+func (h *UserHandler) BanUser(c *gin.Context) { h.setBanned(c, true) }
+
+// UnbanUser handles POST /admin/users/:user_id/unban.
+func (h *UserHandler) UnbanUser(c *gin.Context) { h.setBanned(c, false) }
+
+func (h *UserHandler) setBanned(c *gin.Context, banned bool) {
+	userID, err := uuid.Parse(c.Param("user_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
+	if err := h.userUseCase.SetUserBanned(c.Request.Context(), userID, banned); err != nil {
+		status := http.StatusInternalServerError
+		if err.Error() == "user not found" {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+
+	msg := "User banned"
+	if !banned {
+		msg = "User unbanned"
+	}
+	c.JSON(http.StatusOK, gin.H{"message": msg, "banned": banned})
+}

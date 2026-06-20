@@ -157,6 +157,11 @@ func (uc *WalletUseCase) ApproveDeposit(ctx context.Context, transactionID uuid.
 	return uc.transactionService.ApproveDeposit(ctx, transactionID)
 }
 
+// AdjustBalance manually credits or debits a user's wallet (admin action).
+func (uc *WalletUseCase) AdjustBalance(ctx context.Context, userID uuid.UUID, amount float64, reason string) (*domain.Transaction, error) {
+	return uc.transactionService.AdjustBalance(ctx, userID, amount, reason)
+}
+
 // RejectDeposit rejects a pending deposit transaction (no balance change)
 func (uc *WalletUseCase) RejectDeposit(ctx context.Context, transactionID uuid.UUID) (*domain.Transaction, error) {
 	return uc.transactionService.RejectDeposit(ctx, transactionID)
