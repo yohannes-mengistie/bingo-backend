@@ -81,3 +81,11 @@ services:
       # and filled in later once you create the bot in @BotFather)
       - key: TELEGRAM_BOT_TOKEN
         sync: false
+      # Shared secret echoed back by Telegram in the webhook header; must match
+      # the secret_token passed to setWebhook. Set in the dashboard.
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+      # URL the bot's "Play" button opens. Defaults in code to the Vercel app;
+      # override here if the frontend moves to another host.
+      - key: TELEGRAM_MINIAPP_URL
+        value: https://bingo-miniapp-gold.vercel.app
