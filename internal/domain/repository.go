@@ -47,6 +47,7 @@ type TransactionRepository interface {
 	FindAll(ctx context.Context, limit, offset int) ([]*Transaction, error)
 	UpdateStatus(ctx context.Context, tx *sql.Tx, id uuid.UUID, status TransactionStatus) error
 	CountByStatusAndType(ctx context.Context, status TransactionStatus, transactionType TransactionType) (int, error)
+	ExistsActiveDepositByTransactionID(ctx context.Context, transactionID string) (bool, error)
 	CountAll(ctx context.Context) (int, error)
 }
 

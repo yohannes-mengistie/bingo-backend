@@ -48,6 +48,8 @@ func (h *WalletHandler) Deposit(c *gin.Context) {
 			statusCode = http.StatusBadRequest
 		} else if err.Error() == "user not found" {
 			statusCode = http.StatusNotFound
+		} else if err.Error() == "this transaction reference was already used" {
+			statusCode = http.StatusConflict
 		}
 
 		c.JSON(statusCode, gin.H{

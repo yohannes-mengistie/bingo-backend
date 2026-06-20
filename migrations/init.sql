@@ -101,6 +101,11 @@ CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status);
 CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions(type);
 CREATE INDEX IF NOT EXISTS idx_transactions_created_at ON transactions(created_at);
 
+-- Anti-fraud: a payment reference can back only one active (pending/completed) deposit.
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_deposit_transaction_id
+ON transactions (transaction_id)
+WHERE type = 'deposit' AND status IN ('pending', 'completed') AND transaction_id IS NOT NULL;
+
 -- Create function to update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$

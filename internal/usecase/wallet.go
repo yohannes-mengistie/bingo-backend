@@ -5,11 +5,16 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/bingo/backend/internal/domain"
 	"github.com/bingo/backend/internal/repository/postgres"
 	"github.com/google/uuid"
 )
+
+// errDuplicateReference is returned when a player submits a deposit whose
+// payment reference (transaction_id) is already tied to an active deposit.
+var errDuplicateReference = errors.New("this transaction reference was already used")
 
 type WalletUseCase struct {
 	walletRepo         domain.WalletRepository
@@ -52,6 +57,16 @@ func (uc *WalletUseCase) Deposit(ctx context.Context, req domain.DepositRequest)
 		return nil, errors.New("user not found")
 	}
 
+	// Anti-fraud: block reuse of a payment reference. A transaction_id already
+	// tied to a pending or approved deposit cannot be submitted again.
+	dup, err := uc.transactionRepo.ExistsActiveDepositByTransactionID(ctx, req.TransactionID)
+	if err != nil {
+		return nil, err
+	}
+	if dup {
+		return nil, errDuplicateReference
+	}
+
 	// Create transaction with pending status
 	transactionType := req.TransactionType
 	transaction := &domain.Transaction{
@@ -63,8 +78,12 @@ func (uc *WalletUseCase) Deposit(ctx context.Context, req domain.DepositRequest)
 		TransactionID:   &req.TransactionID,
 	}
 
-	// Save transaction (no balance update)
+	// Save transaction (no balance update). The partial unique index catches a
+	// concurrent duplicate that slipped past the check above (race).
 	if err := uc.transactionRepo.Create(ctx, nil, transaction); err != nil {
+		if strings.Contains(err.Error(), "uniq_active_deposit_transaction_id") {
+			return nil, errDuplicateReference
+		}
 		return nil, fmt.Errorf("failed to create deposit transaction: %w", err)
 	}
 

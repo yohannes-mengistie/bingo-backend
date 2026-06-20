@@ -386,6 +386,26 @@ func (r *transactionRepository) UpdateStatus(ctx context.Context, tx *sql.Tx, id
 	return nil
 }
 
+// ExistsActiveDepositByTransactionID reports whether a non-rejected deposit
+// already exists with the given external payment reference. Used to block a
+// player reusing a receipt. Rejected/cancelled deposits are excluded so a
+// mistakenly-rejected reference can legitimately be resubmitted.
+func (r *transactionRepository) ExistsActiveDepositByTransactionID(ctx context.Context, transactionID string) (bool, error) {
+	query := `
+		SELECT EXISTS (
+			SELECT 1 FROM transactions
+			WHERE type = 'deposit'
+			  AND transaction_id = $1
+			  AND status IN ('pending', 'completed')
+		)
+	`
+	var exists bool
+	if err := r.db.QueryRowContext(ctx, query, transactionID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("failed to check duplicate transaction id: %w", err)
+	}
+	return exists, nil
+}
+
 // CountByStatusAndType counts transactions by status and type
 func (r *transactionRepository) CountByStatusAndType(ctx context.Context, status domain.TransactionStatus, transactionType domain.TransactionType) (int, error) {
 	query := `
