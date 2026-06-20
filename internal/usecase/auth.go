@@ -11,6 +11,7 @@ import (
 	"github.com/bingo/backend/pkg/jwt"
 	"github.com/bingo/backend/pkg/referral"
 	"github.com/bingo/backend/pkg/telegram"
+	"github.com/bingo/backend/pkg/utils"
 )
 
 // telegramInitDataMaxAge is how long a Telegram initData payload stays valid.
@@ -62,10 +63,19 @@ func (uc *AuthUseCase) TelegramLogin(ctx context.Context, initData string) (*dom
 	}, nil
 }
 
-// Login authenticates an admin user and returns a JWT token
+// Login authenticates an admin user and returns a JWT token. The user is
+// resolved by phone (preferred) or, for backward compatibility, telegram_id.
 func (uc *AuthUseCase) Login(ctx context.Context, req domain.LoginRequest) (*domain.LoginResponse, error) {
-	// Find user by telegram ID
-	user, err := uc.userRepo.FindByTelegramID(ctx, req.TelegramID)
+	var user *domain.User
+	var err error
+	switch {
+	case req.Phone != "":
+		user, err = uc.userRepo.FindByPhone(ctx, utils.CanonicalEthiopianPhone(req.Phone))
+	case req.TelegramID != 0:
+		user, err = uc.userRepo.FindByTelegramID(ctx, req.TelegramID)
+	default:
+		return nil, errors.New("phone or telegram_id is required")
+	}
 	if err != nil {
 		return nil, errors.New("invalid credentials")
 	}

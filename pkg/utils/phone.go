@@ -20,6 +20,26 @@ func NormalizePhoneNumber(phone string) string {
 
 var nonDigit = regexp.MustCompile(`\D`)
 
+// CanonicalEthiopianPhone converts any common Ethiopian phone format to the
+// canonical "251XXXXXXXXX" form used when users register via the bot, so
+// logins by phone match the stored value regardless of how it's typed:
+//
+//	0911223344  → 251911223344
+//	+251911223344 / 251911223344 → 251911223344
+//	911223344   → 251911223344
+func CanonicalEthiopianPhone(input string) string {
+	d := nonDigit.ReplaceAllString(input, "")
+	switch {
+	case strings.HasPrefix(d, "251"):
+		// already canonical
+	case strings.HasPrefix(d, "0"):
+		d = "251" + d[1:]
+	case len(d) == 9:
+		d = "251" + d
+	}
+	return d
+}
+
 // IsEthiopianMobile reports whether phone is a valid Ethiopian mobile number.
 // It accepts the common shapes Telegram and users provide:
 //

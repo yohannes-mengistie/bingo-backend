@@ -1,8 +1,10 @@
 package domain
 
-// LoginRequest represents the data needed for admin login
+// LoginRequest represents the data needed for admin login. Provide either
+// phone (preferred) or telegram_id; password is always required.
 type LoginRequest struct {
-	TelegramID int64  `json:"telegram_id" binding:"required"`
+	Phone      string `json:"phone"`
+	TelegramID int64  `json:"telegram_id"`
 	Password   string `json:"password" binding:"required"`
 }
 
