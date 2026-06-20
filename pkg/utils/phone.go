@@ -11,10 +11,37 @@ func NormalizePhoneNumber(phone string) string {
 	// Remove all non-digit characters
 	re := regexp.MustCompile(`\D`)
 	normalized := re.ReplaceAllString(phone, "")
-	
+
 	// Remove leading zeros if present
 	normalized = strings.TrimLeft(normalized, "0")
-	
+
 	return normalized
+}
+
+var nonDigit = regexp.MustCompile(`\D`)
+
+// IsEthiopianMobile reports whether phone is a valid Ethiopian mobile number.
+// It accepts the common shapes Telegram and users provide:
+//
+//	+251 9XXXXXXXX / 251 9XXXXXXXX  (international, 9 or 7 prefix)
+//	09XXXXXXXX     / 07XXXXXXXX     (local, with trunk 0)
+//	9XXXXXXXX      / 7XXXXXXXX      (national significant number)
+//
+// Ethiopian mobile subscriber numbers are 9 digits beginning with 9 (legacy)
+// or 7 (newer Safaricom range).
+func IsEthiopianMobile(phone string) bool {
+	d := nonDigit.ReplaceAllString(phone, "")
+
+	switch {
+	case strings.HasPrefix(d, "251"):
+		d = d[3:] // drop country code
+	case strings.HasPrefix(d, "0"):
+		d = d[1:] // drop trunk zero
+	}
+
+	if len(d) != 9 {
+		return false
+	}
+	return d[0] == '9' || d[0] == '7'
 }
 

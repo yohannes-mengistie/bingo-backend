@@ -19,6 +19,7 @@ import (
 	"github.com/bingo/backend/internal/usecase"
 	"github.com/bingo/backend/pkg/jwt"
 	redisPkg "github.com/bingo/backend/pkg/redis"
+	"github.com/bingo/backend/pkg/telegram"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
@@ -80,8 +81,12 @@ func main() {
 	gameHandler := handler.NewGameHandler(gameUseCase)
 	wsHandler := handler.NewWebSocketHandler(redisClient.GetClient(), gameStateService, gameUseCase)
 
+	// Telegram bot: registration gateway + Mini App launcher (webhook-driven).
+	telegramBot := telegram.NewBot(cfg.Telegram.BotToken)
+	telegramHandler := handler.NewTelegramHandler(userUseCase, telegramBot, cfg.Telegram.WebhookSecret, cfg.Telegram.MiniAppURL)
+
 	// Setup router
-	router := setupRouter(userHandler, walletHandler, authHandler, gameHandler, wsHandler, jwtService)
+	router := setupRouter(userHandler, walletHandler, authHandler, gameHandler, wsHandler, telegramHandler, jwtService)
 
 	// Create HTTP server
 	srv := &http.Server{
@@ -118,7 +123,7 @@ func main() {
 	log.Println("Server exited")
 }
 
-func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.WalletHandler, authHandler *handler.AuthHandler, gameHandler *handler.GameHandler, wsHandler *handler.WebSocketHandler, jwtService *jwt.Service) *gin.Engine {
+func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.WalletHandler, authHandler *handler.AuthHandler, gameHandler *handler.GameHandler, wsHandler *handler.WebSocketHandler, telegramHandler *handler.TelegramHandler, jwtService *jwt.Service) *gin.Engine {
 	// Set Gin to release mode in production
 	if os.Getenv("GIN_MODE") == "release" {
 		gin.SetMode(gin.ReleaseMode)
@@ -156,6 +161,9 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			"status": "ok",
 		})
 	})
+
+	// Telegram bot webhook (set via the Bot API setWebhook method).
+	router.POST("/telegram/webhook", telegramHandler.Webhook)
 
 	// API routes
 	api := router.Group("/api/v1")
