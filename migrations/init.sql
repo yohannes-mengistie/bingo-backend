@@ -15,6 +15,7 @@ CREATE TABLE users (
     phone_number VARCHAR(50) NOT NULL UNIQUE,
     referal_code VARCHAR(20) NOT NULL UNIQUE,
     role VARCHAR(20) NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
+    banned BOOLEAN NOT NULL DEFAULT false,
     password VARCHAR(255),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP

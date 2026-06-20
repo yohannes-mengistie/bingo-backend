@@ -133,7 +133,7 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 
 	// CORS middleware
 	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "https://bingo-frontend-production-7ee9.up.railway.app", "https://biruh-bingo-admin.vercel.app", "https://biruh-bingo-frontend.vercel.app", "https://winner.up.railway.app", "https://biruh-bingo-admin-production.up.railway.app", "https://biruh-bingo-frontend-production.up.railway.app", "https://bingo-miniapp-gold.vercel.app"},
+		AllowOrigins:     []string{"http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:5174", "https://bingo-frontend-production-7ee9.up.railway.app", "https://biruh-bingo-admin.vercel.app", "https://biruh-bingo-frontend.vercel.app", "https://winner.up.railway.app", "https://biruh-bingo-admin-production.up.railway.app", "https://biruh-bingo-frontend-production.up.railway.app", "https://bingo-miniapp-gold.vercel.app", "https://bingo-frontend-azure.vercel.app"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Length", "Content-Type", "Authorization", "Upgrade", "Connection", "Sec-WebSocket-Key", "Sec-WebSocket-Version", "Sec-WebSocket-Extensions", "Sec-WebSocket-Protocol"},
 		ExposeHeaders:    []string{"Content-Length", "Upgrade", "Connection", "Sec-WebSocket-Accept"},
@@ -262,6 +262,11 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 		{
 			// User management
 			admin.GET("/users", userHandler.GetAllUsers)
+			admin.GET("/users/:user_id", userHandler.GetUserDetail)
+			admin.POST("/users/:user_id/role", userHandler.SetUserRole)
+			admin.POST("/users/:user_id/ban", userHandler.BanUser)
+			admin.POST("/users/:user_id/unban", userHandler.UnbanUser)
+			admin.POST("/users/:user_id/adjust-balance", walletHandler.AdjustBalance)
 
 			// Dashboard stats
 			stats := admin.Group("/stats")

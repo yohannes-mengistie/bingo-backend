@@ -124,6 +124,32 @@ func (uc *UserUseCase) FindUserByTelegramID(ctx context.Context, telegramID int6
 	return user, nil
 }
 
+// GetUserDetail returns a user together with their wallet (for admin detail view).
+func (uc *UserUseCase) GetUserDetail(ctx context.Context, userID uuid.UUID) (*domain.UserWithWallet, error) {
+	user, err := uc.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	user.Password = nil
+
+	uw := &domain.UserWithWallet{User: user}
+	if wallet, err := uc.walletRepo.FindByUserID(ctx, userID); err == nil && wallet != nil {
+		uw.Wallet = wallet
+	}
+	return uw, nil
+}
+
+// SetUserRole changes a user's role (admin action). Role is validated by the
+// handler's request binding (oneof=user admin).
+func (uc *UserUseCase) SetUserRole(ctx context.Context, userID uuid.UUID, role string) error {
+	return uc.userRepo.UpdateRole(ctx, userID, role)
+}
+
+// SetUserBanned bans or unbans a user (admin action).
+func (uc *UserUseCase) SetUserBanned(ctx context.Context, userID uuid.UUID, banned bool) error {
+	return uc.userRepo.SetBanned(ctx, userID, banned)
+}
+
 // FindUserByPhone finds a user by their phone number (normalizes the phone first)
 func (uc *UserUseCase) FindUserByPhone(ctx context.Context, phone string) (*domain.User, error) {
 	normalizedPhone := utils.NormalizePhoneNumber(phone)

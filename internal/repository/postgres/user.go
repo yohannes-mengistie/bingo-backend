@@ -83,7 +83,7 @@ func (r *userRepository) Create(ctx context.Context, tx *sql.Tx, user *domain.Us
 // FindByTelegramID finds a user by their Telegram ID
 func (r *userRepository) FindByTelegramID(ctx context.Context, telegramID int64) (*domain.User, error) {
 	query := `
-		SELECT id, telegram_id, first_name, last_name, phone_number, referal_code, role, password, created_at, updated_at
+		SELECT id, telegram_id, first_name, last_name, phone_number, referal_code, role, banned, password, created_at, updated_at
 		FROM users
 		WHERE telegram_id = $1
 	`
@@ -100,6 +100,7 @@ func (r *userRepository) FindByTelegramID(ctx context.Context, telegramID int64)
 		&user.PhoneNumber,
 		&user.ReferalCode,
 		&user.Role,
+		&user.Banned,
 		&password,
 		&user.CreatedAt,
 		&user.UpdatedAt,
@@ -209,7 +210,7 @@ func (r *userRepository) FindByReferralCode(ctx context.Context, referralCode st
 // FindByID finds a user by their ID
 func (r *userRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain.User, error) {
 	query := `
-		SELECT id, telegram_id, first_name, last_name, phone_number, referal_code, role, password, created_at, updated_at
+		SELECT id, telegram_id, first_name, last_name, phone_number, referal_code, role, banned, password, created_at, updated_at
 		FROM users
 		WHERE id = $1
 	`
@@ -226,6 +227,7 @@ func (r *userRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Us
 		&user.PhoneNumber,
 		&user.ReferalCode,
 		&user.Role,
+		&user.Banned,
 		&password,
 		&user.CreatedAt,
 		&user.UpdatedAt,
@@ -251,7 +253,7 @@ func (r *userRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Us
 // FindAll finds all users with pagination
 func (r *userRepository) FindAll(ctx context.Context, limit, offset int) ([]*domain.User, error) {
 	query := `
-		SELECT id, telegram_id, first_name, last_name, phone_number, referal_code, role, password, created_at, updated_at
+		SELECT id, telegram_id, first_name, last_name, phone_number, referal_code, role, banned, password, created_at, updated_at
 		FROM users
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
@@ -277,6 +279,7 @@ func (r *userRepository) FindAll(ctx context.Context, limit, offset int) ([]*dom
 			&user.PhoneNumber,
 			&user.ReferalCode,
 			&user.Role,
+			&user.Banned,
 			&password,
 			&user.CreatedAt,
 			&user.UpdatedAt,
@@ -358,6 +361,36 @@ func (r *userRepository) Update(ctx context.Context, user *domain.User) error {
 		return fmt.Errorf("user not found")
 	}
 
+	return nil
+}
+
+// UpdateRole sets a user's role (e.g. promote to admin / demote to user).
+func (r *userRepository) UpdateRole(ctx context.Context, id uuid.UUID, role string) error {
+	result, err := r.db.ExecContext(ctx,
+		`UPDATE users SET role = $2, updated_at = $3 WHERE id = $1`,
+		id, role, time.Now())
+	if err != nil {
+		return fmt.Errorf("failed to update role: %w", err)
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
+}
+
+// SetBanned bans or unbans a user.
+func (r *userRepository) SetBanned(ctx context.Context, id uuid.UUID, banned bool) error {
+	result, err := r.db.ExecContext(ctx,
+		`UPDATE users SET banned = $2, updated_at = $3 WHERE id = $1`,
+		id, banned, time.Now())
+	if err != nil {
+		return fmt.Errorf("failed to update banned: %w", err)
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("user not found")
+	}
 	return nil
 }
 
