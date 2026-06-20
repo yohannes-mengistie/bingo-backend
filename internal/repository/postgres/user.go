@@ -379,6 +379,22 @@ func (r *userRepository) UpdateRole(ctx context.Context, id uuid.UUID, role stri
 	return nil
 }
 
+// SetAdminCredentialsByID promotes a user to admin and sets their password hash
+// (by user ID). Used by the admin dashboard's "make admin" action.
+func (r *userRepository) SetAdminCredentialsByID(ctx context.Context, id uuid.UUID, hashedPassword string) error {
+	result, err := r.db.ExecContext(ctx,
+		`UPDATE users SET role = 'admin', password = $2, updated_at = $3 WHERE id = $1`,
+		id, hashedPassword, time.Now())
+	if err != nil {
+		return fmt.Errorf("failed to set admin credentials: %w", err)
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
+}
+
 // SetBanned bans or unbans a user.
 func (r *userRepository) SetBanned(ctx context.Context, id uuid.UUID, banned bool) error {
 	result, err := r.db.ExecContext(ctx,

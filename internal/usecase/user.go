@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/bingo/backend/internal/domain"
+	"github.com/bingo/backend/pkg/auth"
 	"github.com/bingo/backend/pkg/referral"
 	"github.com/bingo/backend/pkg/utils"
 	"github.com/google/uuid"
@@ -148,6 +149,19 @@ func (uc *UserUseCase) SetUserRole(ctx context.Context, userID uuid.UUID, role s
 // SetUserBanned bans or unbans a user (admin action).
 func (uc *UserUseCase) SetUserBanned(ctx context.Context, userID uuid.UUID, banned bool) error {
 	return uc.userRepo.SetBanned(ctx, userID, banned)
+}
+
+// MakeAdmin promotes a user to admin and sets their dashboard password
+// (admin action). The password is hashed before storage.
+func (uc *UserUseCase) MakeAdmin(ctx context.Context, userID uuid.UUID, password string) error {
+	if len(password) < 8 {
+		return errors.New("password must be at least 8 characters")
+	}
+	hashed, err := auth.HashPassword(password)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+	return uc.userRepo.SetAdminCredentialsByID(ctx, userID, hashed)
 }
 
 // FindUserByPhone finds a user by their phone number (normalizes the phone first)

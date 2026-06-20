@@ -19,6 +19,7 @@ type UserRepository interface {
 	SetAdminCredentialsByTelegramID(ctx context.Context, telegramID int64, hashedPassword string) error
 	Update(ctx context.Context, user *User) error
 	UpdateRole(ctx context.Context, id uuid.UUID, role string) error
+	SetAdminCredentialsByID(ctx context.Context, id uuid.UUID, hashedPassword string) error
 	SetBanned(ctx context.Context, id uuid.UUID, banned bool) error
 	CountAll(ctx context.Context) (int, error)
 }

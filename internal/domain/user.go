@@ -26,6 +26,12 @@ type SetRoleRequest struct {
 	Role string `json:"role" binding:"required,oneof=user admin"`
 }
 
+// MakeAdminRequest is the admin request to promote a user to admin and set
+// their dashboard password in one step.
+type MakeAdminRequest struct {
+	Password string `json:"password" binding:"required,min=8"`
+}
+
 // AdjustBalanceRequest is the admin request to credit (positive) or debit
 // (negative) a user's wallet. Reason is recorded for the audit trail.
 type AdjustBalanceRequest struct {

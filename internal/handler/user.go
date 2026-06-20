@@ -285,6 +285,35 @@ func (h *UserHandler) SetUserRole(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "User role updated", "role": req.Role})
 }
 
+// MakeAdmin handles POST /admin/users/:user_id/make-admin — promote to admin
+// and set a dashboard password.
+func (h *UserHandler) MakeAdmin(c *gin.Context) {
+	userID, err := uuid.Parse(c.Param("user_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
+	var req domain.MakeAdminRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request data", "details": err.Error()})
+		return
+	}
+
+	if err := h.userUseCase.MakeAdmin(c.Request.Context(), userID, req.Password); err != nil {
+		status := http.StatusInternalServerError
+		if err.Error() == "user not found" {
+			status = http.StatusNotFound
+		} else if err.Error() == "password must be at least 8 characters" {
+			status = http.StatusBadRequest
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "User is now an admin with a password set"})
+}
+
 // BanUser handles POST /admin/users/:user_id/ban.
 func (h *UserHandler) BanUser(c *gin.Context) { h.setBanned(c, true) }
 
