@@ -415,16 +415,25 @@ func (s *TransactionService) ProcessTransfer(ctx context.Context, senderID, rece
 	}
 	defer tx.Rollback()
 
-	// Lock sender wallet
-	senderWallet, err := s.walletRepo.LockForUpdate(ctx, tx, senderID)
+	// Lock both wallets in a consistent order (by UUID) to avoid deadlocks when
+	// two reciprocal transfers (A->B and B->A) run concurrently.
+	firstID, secondID := senderID, receiverID
+	if receiverID.String() < senderID.String() {
+		firstID, secondID = receiverID, senderID
+	}
+	firstWallet, err := s.walletRepo.LockForUpdate(ctx, tx, firstID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("sender wallet not found: %w", err)
+		return nil, nil, fmt.Errorf("wallet not found: %w", err)
+	}
+	secondWallet, err := s.walletRepo.LockForUpdate(ctx, tx, secondID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("wallet not found: %w", err)
 	}
 
-	// Lock receiver wallet
-	_, err = s.walletRepo.LockForUpdate(ctx, tx, receiverID)
-	if err != nil {
-		return nil, nil, fmt.Errorf("receiver wallet not found: %w", err)
+	// Identify the sender's wallet for the balance check.
+	senderWallet := firstWallet
+	if firstID != senderID {
+		senderWallet = secondWallet
 	}
 
 	// Check sender balance
