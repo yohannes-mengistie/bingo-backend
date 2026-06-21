@@ -66,7 +66,19 @@ type GameRepository interface {
 	Create(ctx context.Context, game *Game) error
 	FindByID(ctx context.Context, id uuid.UUID) (*Game, error)
 	FindAvailable(ctx context.Context, gameType *GameType, limit int) ([]*Game, error)
+	// FindAll returns games filtered by optional state and type, newest first.
+	FindAll(ctx context.Context, state *GameState, gameType *GameType, limit, offset int) ([]*Game, error)
+	// CountAll counts games matching the optional state and type filters.
+	CountAll(ctx context.Context, state *GameState, gameType *GameType) (int, error)
 	Update(ctx context.Context, game *Game) error
+	// LockForUpdate locks a game row FOR UPDATE inside a transaction. Used to
+	// serialize force-cancel against winner claims and double-cancels.
+	LockForUpdate(ctx context.Context, tx *sql.Tx, id uuid.UUID) (*Game, error)
+	// UpdateTx updates a game row inside an existing transaction.
+	UpdateTx(ctx context.Context, tx *sql.Tx, game *Game) error
+	// GetActivePlayersTx returns players still in the game (left_at IS NULL),
+	// read inside an existing transaction.
+	GetActivePlayersTx(ctx context.Context, tx *sql.Tx, gameID uuid.UUID) ([]*GamePlayer, error)
 	// ClaimWinner atomically marks the game FINISHED with the winner, but only if
 	// it is still DRAWING. Returns true only for the single claim that succeeds.
 	ClaimWinner(ctx context.Context, tx *sql.Tx, gameID, winnerID uuid.UUID) (bool, error)

@@ -444,9 +444,30 @@ func (uc *GameUseCase) drawNumbers(ctx context.Context, gameID uuid.UUID) {
 
 		// Draw next number
 		letter, number, err := bingo.DrawNextNumber(numbers)
-		if err != nil || number == 0 {
-			// All numbers drawn or error
+		if err != nil {
+			// Transient draw error — try again on the next tick.
 			continue
+		}
+		if number == 0 {
+			// All 75 numbers have been drawn and nobody submitted a valid bingo
+			// claim. The game can never resolve on its own, so cancel it and
+			// refund every active player. Without this, the staked money would
+			// stay locked in a perpetual DRAWING game.
+			if _, _, _, cerr := uc.cancelGameAndRefund(ctx, gameID, "all numbers drawn, no winner"); cerr != nil {
+				fmt.Printf("Warning: failed to auto-cancel exhausted game %s: %v\n", gameID, cerr)
+				continue
+			}
+
+			// Spin up a fresh game of the same type for the lobby.
+			go func() {
+				if newGame, err := uc.CreateOrGetGame(context.Background(), game.GameType); err == nil && newGame != nil {
+					uc.redisService.PublishEvent(context.Background(), gameID, domain.WebSocketEventNewGameAvailable, map[string]interface{}{
+						"gameId":   newGame.ID.String(),
+						"gameType": string(newGame.GameType),
+					})
+				}
+			}()
+			return
 		}
 
 		// Save drawn number
@@ -744,6 +765,169 @@ func (uc *GameUseCase) GetCardData(ctx context.Context, cardID int) (*bingo.Bing
 	// Generate card (deterministic - same card_id always generates same card)
 	card := bingo.GenerateCard(cardID)
 	return card, nil
+}
+
+// ListGames returns games for the admin dashboard, filtered by optional state
+// and type, with pagination. Returns the games and the total matching count.
+func (uc *GameUseCase) ListGames(ctx context.Context, state *domain.GameState, gameType *domain.GameType, limit, offset int) ([]*domain.Game, int, error) {
+	if limit <= 0 {
+		limit = domain.MaxAvailableGamesLimit
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	games, err := uc.gameRepo.FindAll(ctx, state, gameType, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list games: %w", err)
+	}
+
+	total, err := uc.gameRepo.CountAll(ctx, state, gameType)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count games: %w", err)
+	}
+
+	return games, total, nil
+}
+
+// GetGameDetail returns a game and its active players enriched with user info,
+// for the admin dashboard.
+func (uc *GameUseCase) GetGameDetail(ctx context.Context, gameID uuid.UUID) (*domain.AdminGameDetail, error) {
+	game, err := uc.gameRepo.FindByID(ctx, gameID)
+	if err != nil {
+		return nil, fmt.Errorf("game not found: %w", err)
+	}
+
+	players, err := uc.gameRepo.GetPlayers(ctx, gameID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get players: %w", err)
+	}
+
+	detail := &domain.AdminGameDetail{
+		Game:    game,
+		Players: make([]*domain.AdminGamePlayer, 0, len(players)),
+	}
+
+	for _, p := range players {
+		entry := &domain.AdminGamePlayer{
+			UserID:       p.UserID,
+			CardID:       p.CardID,
+			IsEliminated: p.IsEliminated,
+			JoinedAt:     p.JoinedAt,
+		}
+		// Best-effort user enrichment; a missing user shouldn't break the view.
+		if user, err := uc.userRepo.FindByID(ctx, p.UserID); err == nil && user != nil {
+			entry.FirstName = user.FirstName
+			entry.LastName = user.LastName
+			entry.PhoneNumber = user.PhoneNumber
+			entry.TelegramID = user.TelegramID
+		}
+		detail.Players = append(detail.Players, entry)
+	}
+
+	return detail, nil
+}
+
+// CancelGame is the admin force-cancel: it cancels the game and refunds every
+// active player's stake. Only games that are not yet resolved can be cancelled.
+func (uc *GameUseCase) CancelGame(ctx context.Context, gameID uuid.UUID) (*domain.CancelGameResult, error) {
+	game, count, amount, err := uc.cancelGameAndRefund(ctx, gameID, "cancelled by admin")
+	if err != nil {
+		return nil, err
+	}
+	return &domain.CancelGameResult{
+		Game:           game,
+		RefundedCount:  count,
+		RefundedAmount: amount,
+	}, nil
+}
+
+// cancelGameAndRefund cancels a game and refunds every active player's stake in
+// a single transaction. It locks the game row first to serialize against winner
+// claims and concurrent cancels. Returns the updated game, the number of players
+// refunded, and the total amount refunded. Shared by the admin force-cancel and
+// the automatic "numbers exhausted, no winner" path in drawNumbers.
+func (uc *GameUseCase) cancelGameAndRefund(ctx context.Context, gameID uuid.UUID, reason string) (*domain.Game, int, float64, error) {
+	tx, err := uc.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Lock the game row. This blocks a concurrent winner claim's conditional
+	// UPDATE (WHERE state='DRAWING') until we commit, after which it affects
+	// zero rows — so we can never both refund and pay out a prize.
+	game, err := uc.gameRepo.LockForUpdate(ctx, tx, gameID)
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("game not found: %w", err)
+	}
+
+	// Only games that are still in play can be cancelled.
+	if game.State == domain.GameStateFinished ||
+		game.State == domain.GameStateCancelled ||
+		game.State == domain.GameStateClosed {
+		return nil, 0, 0, fmt.Errorf("game is already resolved (state: %s)", game.State)
+	}
+
+	players, err := uc.gameRepo.GetActivePlayersTx(ctx, tx, gameID)
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("failed to get active players: %w", err)
+	}
+
+	refundRef := "GAME_REFUND"
+	refundedCount := 0
+	var refundedAmount float64
+
+	for _, p := range players {
+		if _, err := uc.walletRepo.LockForUpdate(ctx, tx, p.UserID); err != nil {
+			return nil, 0, 0, fmt.Errorf("failed to lock wallet for refund: %w", err)
+		}
+		if err := uc.walletRepo.UpdateBalance(ctx, tx, p.UserID, game.BetAmount); err != nil {
+			return nil, 0, 0, fmt.Errorf("failed to refund stake: %w", err)
+		}
+
+		refundTx := &domain.Transaction{
+			UserID:    p.UserID,
+			Type:      domain.TransactionTypeDeposit, // Refund is treated as a deposit
+			Amount:    game.BetAmount,
+			Status:    domain.TransactionStatusCompleted,
+			Reference: &refundRef, // Mark as game refund to exclude from deposit history
+		}
+		if err := uc.transactionRepo.Create(ctx, tx, refundTx); err != nil {
+			return nil, 0, 0, fmt.Errorf("failed to record refund: %w", err)
+		}
+
+		// Mark the player as having left so they can't be refunded again.
+		if err := uc.gameRepo.RemovePlayer(ctx, tx, gameID, p.UserID); err != nil {
+			return nil, 0, 0, fmt.Errorf("failed to remove player: %w", err)
+		}
+
+		refundedCount++
+		refundedAmount += game.BetAmount
+	}
+
+	// Mark the game cancelled and zero out its live counters.
+	game.State = domain.GameStateCancelled
+	game.PlayerCount = 0
+	game.PrizePool = 0
+	if err := uc.gameRepo.UpdateTx(ctx, tx, game); err != nil {
+		return nil, 0, 0, fmt.Errorf("failed to cancel game: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, 0, 0, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	// Best-effort live-state sync + notification (outside the money transaction).
+	if uc.redisService != nil {
+		uc.redisService.SaveGameState(ctx, game)
+		uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventGameStatus, map[string]interface{}{
+			"status": string(domain.GameStateCancelled),
+			"reason": reason,
+		})
+	}
+
+	return game, refundedCount, refundedAmount, nil
 }
 
 // GetGameHistory returns the game history for a user

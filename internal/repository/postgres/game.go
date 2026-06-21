@@ -194,6 +194,223 @@ func (r *gameRepository) FindAvailable(ctx context.Context, gameType *domain.Gam
 	return games, nil
 }
 
+// scanGame scans a single game row from a *sql.Row-like Scan into a domain.Game,
+// handling the nullable columns. The column order must match the SELECT below.
+func scanGame(scan func(dest ...interface{}) error) (*domain.Game, error) {
+	game := &domain.Game{}
+	var winnerID sql.NullString
+	var countdownEnds sql.NullTime
+	var startedAt sql.NullTime
+	var finishedAt sql.NullTime
+
+	if err := scan(
+		&game.ID,
+		&game.GameType,
+		&game.State,
+		&game.BetAmount,
+		&game.MinPlayers,
+		&game.PlayerCount,
+		&game.PrizePool,
+		&game.HouseCut,
+		&winnerID,
+		&countdownEnds,
+		&startedAt,
+		&finishedAt,
+		&game.CreatedAt,
+		&game.UpdatedAt,
+	); err != nil {
+		return nil, err
+	}
+
+	if winnerID.Valid {
+		parsedID, err := uuid.Parse(winnerID.String)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse winner_id: %w", err)
+		}
+		game.WinnerID = &parsedID
+	}
+	if countdownEnds.Valid {
+		game.CountdownEnds = &countdownEnds.Time
+	}
+	if startedAt.Valid {
+		game.StartedAt = &startedAt.Time
+	}
+	if finishedAt.Valid {
+		game.FinishedAt = &finishedAt.Time
+	}
+
+	return game, nil
+}
+
+// FindAll returns games filtered by optional state and type, newest first.
+func (r *gameRepository) FindAll(ctx context.Context, state *domain.GameState, gameType *domain.GameType, limit, offset int) ([]*domain.Game, error) {
+	query := `
+		SELECT id, game_type, state, bet_amount, min_players, player_count, prize_pool, house_cut,
+		       winner_id, countdown_ends, started_at, finished_at, created_at, updated_at
+		FROM games
+		WHERE 1=1
+	`
+
+	args := []interface{}{}
+	argPos := 1
+
+	if state != nil {
+		query += fmt.Sprintf(" AND state = $%d", argPos)
+		args = append(args, *state)
+		argPos++
+	}
+	if gameType != nil {
+		query += fmt.Sprintf(" AND game_type = $%d", argPos)
+		args = append(args, *gameType)
+		argPos++
+	}
+
+	query += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", argPos, argPos+1)
+	args = append(args, limit, offset)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find games: %w", err)
+	}
+	defer rows.Close()
+
+	games := []*domain.Game{}
+	for rows.Next() {
+		game, err := scanGame(rows.Scan)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan game: %w", err)
+		}
+		games = append(games, game)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating games: %w", err)
+	}
+
+	return games, nil
+}
+
+// CountAll counts games matching the optional state and type filters.
+func (r *gameRepository) CountAll(ctx context.Context, state *domain.GameState, gameType *domain.GameType) (int, error) {
+	query := `SELECT COUNT(*) FROM games WHERE 1=1`
+
+	args := []interface{}{}
+	argPos := 1
+
+	if state != nil {
+		query += fmt.Sprintf(" AND state = $%d", argPos)
+		args = append(args, *state)
+		argPos++
+	}
+	if gameType != nil {
+		query += fmt.Sprintf(" AND game_type = $%d", argPos)
+		args = append(args, *gameType)
+		argPos++
+	}
+
+	var count int
+	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("failed to count games: %w", err)
+	}
+	return count, nil
+}
+
+// LockForUpdate locks a game row FOR UPDATE inside a transaction.
+func (r *gameRepository) LockForUpdate(ctx context.Context, tx *sql.Tx, id uuid.UUID) (*domain.Game, error) {
+	query := `
+		SELECT id, game_type, state, bet_amount, min_players, player_count, prize_pool, house_cut,
+		       winner_id, countdown_ends, started_at, finished_at, created_at, updated_at
+		FROM games
+		WHERE id = $1
+		FOR UPDATE
+	`
+
+	game, err := scanGame(tx.QueryRowContext(ctx, query, id).Scan)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("game not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to lock game: %w", err)
+	}
+	return game, nil
+}
+
+// UpdateTx updates a game row inside an existing transaction.
+func (r *gameRepository) UpdateTx(ctx context.Context, tx *sql.Tx, game *domain.Game) error {
+	query := `
+		UPDATE games
+		SET state = $2, player_count = $3, prize_pool = $4, house_cut = $5,
+		    winner_id = $6, countdown_ends = $7, started_at = $8, finished_at = $9, updated_at = $10
+		WHERE id = $1
+	`
+
+	game.UpdatedAt = time.Now()
+
+	result, err := tx.ExecContext(ctx, query,
+		game.ID,
+		game.State,
+		game.PlayerCount,
+		game.PrizePool,
+		game.HouseCut,
+		game.WinnerID,
+		game.CountdownEnds,
+		game.StartedAt,
+		game.FinishedAt,
+		game.UpdatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update game: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("game not found")
+	}
+	return nil
+}
+
+// GetActivePlayersTx returns players still in the game (left_at IS NULL), read
+// inside an existing transaction.
+func (r *gameRepository) GetActivePlayersTx(ctx context.Context, tx *sql.Tx, gameID uuid.UUID) ([]*domain.GamePlayer, error) {
+	query := `
+		SELECT id, game_id, user_id, card_id, is_eliminated, joined_at, left_at
+		FROM game_players
+		WHERE game_id = $1 AND left_at IS NULL
+	`
+
+	rows, err := tx.QueryContext(ctx, query, gameID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get active players: %w", err)
+	}
+	defer rows.Close()
+
+	players := []*domain.GamePlayer{}
+	for rows.Next() {
+		player := &domain.GamePlayer{}
+		if err := rows.Scan(
+			&player.ID,
+			&player.GameID,
+			&player.UserID,
+			&player.CardID,
+			&player.IsEliminated,
+			&player.JoinedAt,
+			&player.LeftAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan player: %w", err)
+		}
+		players = append(players, player)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating players: %w", err)
+	}
+
+	return players, nil
+}
+
 // Update updates a game
 func (r *gameRepository) Update(ctx context.Context, game *domain.Game) error {
 	query := `
