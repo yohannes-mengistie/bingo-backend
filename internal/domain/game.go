@@ -130,3 +130,35 @@ type ClaimBingoRequest struct {
 type GetGamesRequest struct {
 	GameType *GameType `form:"type"` // Optional filter by game type
 }
+
+// AdminGamePlayer is a player entry enriched with user info for the admin
+// game-detail view.
+type AdminGamePlayer struct {
+	UserID       uuid.UUID `json:"user_id"`
+	FirstName    string    `json:"first_name"`
+	LastName     *string   `json:"last_name,omitempty"`
+	PhoneNumber  string    `json:"phone_number"`
+	TelegramID   int64     `json:"telegram_id"`
+	CardID       int       `json:"card_id"`
+	IsEliminated bool      `json:"is_eliminated"`
+	JoinedAt     time.Time `json:"joined_at"`
+}
+
+// AdminGameDetail is a game plus its active players, for the admin dashboard.
+type AdminGameDetail struct {
+	Game    *Game              `json:"game"`
+	Players []*AdminGamePlayer `json:"players"`
+}
+
+// CancelGameResult summarizes the outcome of an admin force-cancel.
+type CancelGameResult struct {
+	Game           *Game   `json:"game"`
+	RefundedCount  int     `json:"refunded_count"`
+	RefundedAmount float64 `json:"refunded_amount"`
+}
+
+// AdminGameFilter holds optional filters for the admin game list.
+type AdminGameFilter struct {
+	State    *GameState `form:"state"`
+	GameType *GameType  `form:"type"`
+}

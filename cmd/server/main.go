@@ -275,6 +275,14 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 				stats.GET("/dashboard", walletHandler.GetDashboardStats)
 			}
 
+			// Game management
+			games := admin.Group("/games")
+			{
+				games.GET("", gameHandler.AdminListGames)              // list games (?state=&type=&limit=&offset=)
+				games.GET("/:gameId", gameHandler.AdminGetGame)        // game detail + players
+				games.POST("/:gameId/cancel", gameHandler.AdminCancelGame) // force-cancel + refund stakes
+			}
+
 			// Transaction queries
 			transactions := admin.Group("/transactions")
 			{

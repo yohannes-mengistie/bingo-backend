@@ -3,6 +3,7 @@ package handler
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/bingo/backend/internal/domain"
 	"github.com/bingo/backend/internal/middleware"
@@ -374,6 +375,94 @@ func (h *GameHandler) GetMyPlayerInGame(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"player": player})
+}
+
+// AdminListGames handles GET /admin/games
+// Lists games for the admin dashboard with optional ?state= and ?type= filters
+// and ?limit=/?offset= pagination.
+func (h *GameHandler) AdminListGames(c *gin.Context) {
+	var filter domain.AdminGameFilter
+	if err := c.ShouldBindQuery(&filter); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid query parameters",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	limit := domain.MaxAvailableGamesLimit
+	offset := 0
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if parsed := parseInt(limitStr); parsed > 0 {
+			limit = parsed
+		}
+	}
+	if offsetStr := c.Query("offset"); offsetStr != "" {
+		if parsed := parseInt(offsetStr); parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	games, total, err := h.gameUseCase.ListGames(c.Request.Context(), filter.State, filter.GameType, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"games":  games,
+		"total":  total,
+		"count":  len(games),
+		"limit":  limit,
+		"offset": offset,
+	})
+}
+
+// AdminGetGame handles GET /admin/games/:gameId
+// Returns a game plus its active players (with user info) for the admin view.
+func (h *GameHandler) AdminGetGame(c *gin.Context) {
+	gameID, err := uuid.Parse(c.Param("gameId"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid game ID"})
+		return
+	}
+
+	detail, err := h.gameUseCase.GetGameDetail(c.Request.Context(), gameID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, detail)
+}
+
+// AdminCancelGame handles POST /admin/games/:gameId/cancel
+// Force-cancels a game and refunds every active player's stake.
+func (h *GameHandler) AdminCancelGame(c *gin.Context) {
+	gameID, err := uuid.Parse(c.Param("gameId"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid game ID"})
+		return
+	}
+
+	result, err := h.gameUseCase.CancelGame(c.Request.Context(), gameID)
+	if err != nil {
+		statusCode := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "already resolved") {
+			statusCode = http.StatusBadRequest
+		} else if strings.Contains(err.Error(), "game not found") {
+			statusCode = http.StatusNotFound
+		}
+		c.JSON(statusCode, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":         "Game cancelled and stakes refunded",
+		"game":            result.Game,
+		"refunded_count":  result.RefundedCount,
+		"refunded_amount": result.RefundedAmount,
+	})
 }
 
 // GetGameHistory handles GET /games/user/:user_id/history
