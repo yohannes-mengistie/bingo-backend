@@ -100,15 +100,19 @@ func (uc *GameUseCase) JoinGame(ctx context.Context, gameID uuid.UUID, req domai
 		return nil, fmt.Errorf("game not found: %w", err)
 	}
 
-	// Check game state - allow joining in WAITING or COUNTDOWN
-	if game.State != domain.GameStateWaiting && game.State != domain.GameStateCountdown {
-		return nil, errors.New("game is not accepting new players")
-	}
-
-	// Check if user is already in the game
+	// Idempotent reconnect: if the user is already an active player in this
+	// game, return their existing record instead of an error. This lets a
+	// player who dropped off (closed the app / lost their WebSocket) tap their
+	// already-selected card and get back in — even after drawing has started.
+	// Their card cannot change, so we ignore req.CardID and return the truth.
 	existingPlayer, _ := uc.gameRepo.FindPlayer(ctx, gameID, req.UserID)
 	if existingPlayer != nil {
-		return nil, errors.New("user is already in this game")
+		return existingPlayer, nil
+	}
+
+	// Check game state - allow new players to join only in WAITING or COUNTDOWN
+	if game.State != domain.GameStateWaiting && game.State != domain.GameStateCountdown {
+		return nil, errors.New("game is not accepting new players")
 	}
 
 	// Enforce one card per player per game: reject if another active player
