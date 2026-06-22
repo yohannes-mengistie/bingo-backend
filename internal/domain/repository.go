@@ -92,4 +92,7 @@ type GameRepository interface {
 	FindGamesByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*GameHistoryEntry, error)
 	CountGamesByType(ctx context.Context) (map[GameType]int, error)
 	GetTotalHouseCut(ctx context.Context) (float64, error)
+	// FindRecentWinners returns the most recently finished games that had a
+	// winner, with the winner's display name and prize, for the lobby feed.
+	FindRecentWinners(ctx context.Context, limit int) ([]*RecentWinner, error)
 }

@@ -934,6 +934,18 @@ func (uc *GameUseCase) cancelGameAndRefund(ctx context.Context, gameID uuid.UUID
 	return game, refundedCount, refundedAmount, nil
 }
 
+// GetRecentWinners returns the most recent game winners for the public lobby feed.
+func (uc *GameUseCase) GetRecentWinners(ctx context.Context, limit int) ([]*domain.RecentWinner, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	winners, err := uc.gameRepo.FindRecentWinners(ctx, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get recent winners: %w", err)
+	}
+	return winners, nil
+}
+
 // GetGameHistory returns the game history for a user
 func (uc *GameUseCase) GetGameHistory(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*domain.GameHistoryEntry, error) {
 	if limit <= 0 {

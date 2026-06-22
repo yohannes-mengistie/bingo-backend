@@ -822,3 +822,43 @@ func (r *gameRepository) GetTotalHouseCut(ctx context.Context) (float64, error) 
 
 	return totalHouseCut, nil
 }
+
+// FindRecentWinners returns the most recently finished games that had a winner,
+// joined to the winner's name, newest first.
+func (r *gameRepository) FindRecentWinners(ctx context.Context, limit int) ([]*domain.RecentWinner, error) {
+	query := `
+		SELECT g.id, g.game_type, g.prize_pool, g.finished_at, u.first_name, u.last_name
+		FROM games g
+		JOIN users u ON u.id = g.winner_id
+		WHERE g.state = 'FINISHED' AND g.winner_id IS NOT NULL AND g.finished_at IS NOT NULL
+		ORDER BY g.finished_at DESC
+		LIMIT $1
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find recent winners: %w", err)
+	}
+	defer rows.Close()
+
+	winners := []*domain.RecentWinner{}
+	for rows.Next() {
+		var w domain.RecentWinner
+		var firstName string
+		var lastName sql.NullString
+		if err := rows.Scan(&w.GameID, &w.GameType, &w.Prize, &w.FinishedAt, &firstName, &lastName); err != nil {
+			return nil, fmt.Errorf("failed to scan recent winner: %w", err)
+		}
+		w.WinnerName = firstName
+		if lastName.Valid && lastName.String != "" {
+			w.WinnerName = firstName + " " + lastName.String
+		}
+		winners = append(winners, &w)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating recent winners: %w", err)
+	}
+
+	return winners, nil
+}
