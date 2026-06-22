@@ -67,6 +67,25 @@ func (h *GameHandler) GetGames(c *gin.Context) {
 	})
 }
 
+// GetRecentWinners handles GET /games/recent-winners?limit=
+// Public feed of recent game winners for the lobby (transparency / trust).
+func (h *GameHandler) GetRecentWinners(c *gin.Context) {
+	limit := 10
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if parsed := parseInt(limitStr); parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	winners, err := h.gameUseCase.GetRecentWinners(c.Request.Context(), limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"winners": winners})
+}
+
 // JoinGame handles POST /games/:gameId/join
 func (h *GameHandler) JoinGame(c *gin.Context) {
 	gameIDStr := c.Param("gameId")

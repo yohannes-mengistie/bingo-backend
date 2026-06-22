@@ -162,3 +162,13 @@ type AdminGameFilter struct {
 	State    *GameState `form:"state"`
 	GameType *GameType  `form:"type"`
 }
+
+// RecentWinner is a public, lightweight record of a finished game's winner,
+// for the lobby's recent-winners feed (transparency / trust).
+type RecentWinner struct {
+	GameID     uuid.UUID `json:"game_id"`
+	GameType   GameType  `json:"game_type"`
+	WinnerName string    `json:"winner_name"`
+	Prize      float64   `json:"prize"`
+	FinishedAt time.Time `json:"finished_at"`
+}

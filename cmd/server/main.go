@@ -199,6 +199,7 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 		games := api.Group("/games")
 		{
 			games.GET("", gameHandler.GetGames)
+			games.GET("/recent-winners", gameHandler.GetRecentWinners)
 			games.GET("/user/:user_id/history", gameHandler.GetGameHistory)
 			games.GET("/:gameId/state", gameHandler.GetGameState)
 			games.GET("/:gameId/players/:userId", gameHandler.GetPlayerInGame)
