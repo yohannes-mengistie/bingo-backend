@@ -483,37 +483,40 @@ func (r *gameRepository) ClaimWinner(ctx context.Context, tx *sql.Tx, gameID, wi
 	return rowsAffected == 1, nil
 }
 
-// AddPlayer adds a player to a game
-// If player previously left (left_at is set), updates the existing record instead of inserting
+// AddPlayer adds a card row for a player in a game.
+// Keyed on the card (which is UNIQUE per game): if a soft-deleted row already
+// exists for this (game, card) — e.g. someone left and the card is being
+// re-taken, possibly by a different user — that row is reactivated and
+// reassigned. Otherwise a new row is inserted. A player may hold several cards,
+// so this never touches the user's other card rows.
 func (r *gameRepository) AddPlayer(ctx context.Context, tx *sql.Tx, player *domain.GamePlayer) error {
 	player.JoinedAt = time.Now()
 
-	// First, try to update if player record exists with left_at set (rejoining)
+	// Reactivate a previously-left row for this exact card, if any.
 	updateQuery := `
 		UPDATE game_players
-		SET card_id = $1, is_eliminated = $2, joined_at = $3, left_at = NULL
-		WHERE game_id = $4 AND user_id = $5 AND left_at IS NOT NULL
+		SET user_id = $1, is_eliminated = $2, joined_at = $3, left_at = NULL
+		WHERE game_id = $4 AND card_id = $5 AND left_at IS NOT NULL
 	`
 
 	var err error
 	var result sql.Result
 	if tx != nil {
-		result, err = tx.ExecContext(ctx, updateQuery, player.CardID, player.IsEliminated, player.JoinedAt, player.GameID, player.UserID)
+		result, err = tx.ExecContext(ctx, updateQuery, player.UserID, player.IsEliminated, player.JoinedAt, player.GameID, player.CardID)
 	} else {
-		result, err = r.db.ExecContext(ctx, updateQuery, player.CardID, player.IsEliminated, player.JoinedAt, player.GameID, player.UserID)
+		result, err = r.db.ExecContext(ctx, updateQuery, player.UserID, player.IsEliminated, player.JoinedAt, player.GameID, player.CardID)
 	}
 
 	if err != nil {
 		return fmt.Errorf("failed to update player: %w", err)
 	}
 
-	// Check if update affected any rows (player was rejoining)
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
 
-	// If update didn't affect any rows, insert new record
+	// If no left row was reactivated, insert a fresh card row.
 	if rowsAffected == 0 {
 		insertQuery := `
 			INSERT INTO game_players (id, game_id, user_id, card_id, is_eliminated, joined_at)
@@ -534,36 +537,37 @@ func (r *gameRepository) AddPlayer(ctx context.Context, tx *sql.Tx, player *doma
 	return nil
 }
 
-// RemovePlayer removes a player from a game
-// Sets left_at timestamp to mark the player as having left (soft delete)
-func (r *gameRepository) RemovePlayer(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID) error {
+// RemovePlayerCard soft-deletes one specific card row (sets left_at).
+func (r *gameRepository) RemovePlayerCard(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID, cardID int) error {
 	query := `
 		UPDATE game_players
-		SET left_at = $3
-		WHERE game_id = $1 AND user_id = $2 AND left_at IS NULL
+		SET left_at = $4
+		WHERE game_id = $1 AND user_id = $2 AND card_id = $3 AND left_at IS NULL
 	`
 
 	leftAt := time.Now()
 	var err error
 	if tx != nil {
-		_, err = tx.ExecContext(ctx, query, gameID, userID, leftAt)
+		_, err = tx.ExecContext(ctx, query, gameID, userID, cardID, leftAt)
 	} else {
-		_, err = r.db.ExecContext(ctx, query, gameID, userID, leftAt)
+		_, err = r.db.ExecContext(ctx, query, gameID, userID, cardID, leftAt)
 	}
 
 	if err != nil {
-		return fmt.Errorf("failed to remove player: %w", err)
+		return fmt.Errorf("failed to remove player card: %w", err)
 	}
 
 	return nil
 }
 
-// FindPlayer finds a player in a game
+// FindPlayer finds any one active card row for the user in a game.
 func (r *gameRepository) FindPlayer(ctx context.Context, gameID, userID uuid.UUID) (*domain.GamePlayer, error) {
 	query := `
 		SELECT id, game_id, user_id, card_id, is_eliminated, joined_at, left_at
 		FROM game_players
 		WHERE game_id = $1 AND user_id = $2 AND left_at IS NULL
+		ORDER BY joined_at
+		LIMIT 1
 	`
 
 	player := &domain.GamePlayer{}
@@ -585,6 +589,102 @@ func (r *gameRepository) FindPlayer(ctx context.Context, gameID, userID uuid.UUI
 	}
 
 	return player, nil
+}
+
+// FindPlayersByUser returns all of a user's active card rows in a game.
+func (r *gameRepository) FindPlayersByUser(ctx context.Context, gameID, userID uuid.UUID) ([]*domain.GamePlayer, error) {
+	query := `
+		SELECT id, game_id, user_id, card_id, is_eliminated, joined_at, left_at
+		FROM game_players
+		WHERE game_id = $1 AND user_id = $2 AND left_at IS NULL
+		ORDER BY joined_at
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, gameID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find user cards: %w", err)
+	}
+	defer rows.Close()
+
+	players := []*domain.GamePlayer{}
+	for rows.Next() {
+		player := &domain.GamePlayer{}
+		if err := rows.Scan(
+			&player.ID,
+			&player.GameID,
+			&player.UserID,
+			&player.CardID,
+			&player.IsEliminated,
+			&player.JoinedAt,
+			&player.LeftAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan user card: %w", err)
+		}
+		players = append(players, player)
+	}
+
+	return players, nil
+}
+
+// FindPlayerCard returns the user's active row for one specific card.
+func (r *gameRepository) FindPlayerCard(ctx context.Context, gameID, userID uuid.UUID, cardID int) (*domain.GamePlayer, error) {
+	query := `
+		SELECT id, game_id, user_id, card_id, is_eliminated, joined_at, left_at
+		FROM game_players
+		WHERE game_id = $1 AND user_id = $2 AND card_id = $3 AND left_at IS NULL
+	`
+
+	player := &domain.GamePlayer{}
+	err := r.db.QueryRowContext(ctx, query, gameID, userID, cardID).Scan(
+		&player.ID,
+		&player.GameID,
+		&player.UserID,
+		&player.CardID,
+		&player.IsEliminated,
+		&player.JoinedAt,
+		&player.LeftAt,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("player not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to find player card: %w", err)
+	}
+
+	return player, nil
+}
+
+// CountActiveCardsForUser counts a user's active cards in a game (cap check).
+func (r *gameRepository) CountActiveCardsForUser(ctx context.Context, gameID, userID uuid.UUID) (int, error) {
+	query := `
+		SELECT COUNT(*)
+		FROM game_players
+		WHERE game_id = $1 AND user_id = $2 AND left_at IS NULL
+	`
+
+	var count int
+	if err := r.db.QueryRowContext(ctx, query, gameID, userID).Scan(&count); err != nil {
+		return 0, fmt.Errorf("failed to count user cards: %w", err)
+	}
+
+	return count, nil
+}
+
+// CountDistinctPlayers counts distinct active users in a game (start rule).
+func (r *gameRepository) CountDistinctPlayers(ctx context.Context, gameID uuid.UUID) (int, error) {
+	query := `
+		SELECT COUNT(DISTINCT user_id)
+		FROM game_players
+		WHERE game_id = $1 AND left_at IS NULL
+	`
+
+	var count int
+	if err := r.db.QueryRowContext(ctx, query, gameID).Scan(&count); err != nil {
+		return 0, fmt.Errorf("failed to count distinct players: %w", err)
+	}
+
+	return count, nil
 }
 
 // GetPlayers gets all players in a game
@@ -622,23 +722,24 @@ func (r *gameRepository) GetPlayers(ctx context.Context, gameID uuid.UUID) ([]*d
 	return players, nil
 }
 
-// EliminatePlayer marks a player as eliminated
-func (r *gameRepository) EliminatePlayer(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID) error {
+// EliminatePlayerCard marks one specific card as eliminated (after a wrong
+// claim). The player's other cards are left untouched.
+func (r *gameRepository) EliminatePlayerCard(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID, cardID int) error {
 	query := `
 		UPDATE game_players
 		SET is_eliminated = TRUE
-		WHERE game_id = $1 AND user_id = $2
+		WHERE game_id = $1 AND user_id = $2 AND card_id = $3
 	`
 
 	var err error
 	if tx != nil {
-		_, err = tx.ExecContext(ctx, query, gameID, userID)
+		_, err = tx.ExecContext(ctx, query, gameID, userID, cardID)
 	} else {
-		_, err = r.db.ExecContext(ctx, query, gameID, userID)
+		_, err = r.db.ExecContext(ctx, query, gameID, userID, cardID)
 	}
 
 	if err != nil {
-		return fmt.Errorf("failed to eliminate player: %w", err)
+		return fmt.Errorf("failed to eliminate player card: %w", err)
 	}
 
 	return nil
@@ -688,16 +789,28 @@ func (r *gameRepository) SaveDrawnNumber(ctx context.Context, gameID uuid.UUID, 
 
 // FindGamesByUserID finds all games a user has participated in
 func (r *gameRepository) FindGamesByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*domain.GameHistoryEntry, error) {
+	// A player may hold several cards in one game, which would otherwise produce
+	// duplicate history rows. DISTINCT ON (g.id) collapses each game to a single
+	// entry, keeping the most recently joined card as the representative one so
+	// pagination counts games, not cards.
 	query := `
-		SELECT 
-			g.id, g.game_type, g.state, g.bet_amount, g.min_players, g.player_count, 
-			g.prize_pool, g.house_cut, g.winner_id, g.countdown_ends, g.started_at, 
-			g.finished_at, g.created_at, g.updated_at,
-			gp.card_id, gp.is_eliminated, gp.joined_at, gp.left_at
-		FROM game_players gp
-		INNER JOIN games g ON gp.game_id = g.id
-		WHERE gp.user_id = $1
-		ORDER BY gp.joined_at DESC
+		SELECT
+			id, game_type, state, bet_amount, min_players, player_count,
+			prize_pool, house_cut, winner_id, countdown_ends, started_at,
+			finished_at, created_at, updated_at,
+			card_id, is_eliminated, joined_at, left_at
+		FROM (
+			SELECT DISTINCT ON (g.id)
+				g.id, g.game_type, g.state, g.bet_amount, g.min_players, g.player_count,
+				g.prize_pool, g.house_cut, g.winner_id, g.countdown_ends, g.started_at,
+				g.finished_at, g.created_at, g.updated_at,
+				gp.card_id, gp.is_eliminated, gp.joined_at, gp.left_at
+			FROM game_players gp
+			INNER JOIN games g ON gp.game_id = g.id
+			WHERE gp.user_id = $1
+			ORDER BY g.id, gp.joined_at DESC
+		) sub
+		ORDER BY joined_at DESC
 		LIMIT $2 OFFSET $3
 	`
 

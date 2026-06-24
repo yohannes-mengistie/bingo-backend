@@ -105,24 +105,23 @@ func (uc *GameUseCase) JoinGame(ctx context.Context, gameID uuid.UUID, req domai
 		return nil, fmt.Errorf("game not found: %w", err)
 	}
 
-	// Idempotent reconnect: if the user is already an active player in this
-	// game, return their existing record instead of an error. This lets a
-	// player who dropped off (closed the app / lost their WebSocket) tap their
-	// already-selected card and get back in — even after drawing has started.
-	// Their card cannot change, so we ignore req.CardID and return the truth.
-	existingPlayer, _ := uc.gameRepo.FindPlayer(ctx, gameID, req.UserID)
-	if existingPlayer != nil {
-		return existingPlayer, nil
+	// Idempotent reconnect for THIS card: if the user already holds this exact
+	// card, return that row instead of charging again. This lets a player who
+	// dropped off (closed the app / lost their WebSocket) tap an already-owned
+	// card and get back in, even after drawing has started. A *different* card
+	// is a new purchase and falls through to the checks below.
+	if existingCard, _ := uc.gameRepo.FindPlayerCard(ctx, gameID, req.UserID, req.CardID); existingCard != nil {
+		return existingCard, nil
 	}
 
-	// Check game state - allow new players to join only in WAITING or COUNTDOWN
+	// A new card can only be bought while the game hasn't started yet.
 	if game.State != domain.GameStateWaiting && game.State != domain.GameStateCountdown {
 		return nil, errors.New("game is not accepting new players")
 	}
 
-	// Enforce one card per player per game: reject if another active player
-	// already holds this card. (The DB also has a UNIQUE(game_id, card_id)
-	// constraint as a hard safety net against the rare check-then-insert race.)
+	// Reject if this card is already held by someone (active). The DB also has a
+	// UNIQUE(game_id, card_id) constraint as a hard safety net against the rare
+	// check-then-insert race.
 	takenCards, err := uc.gameRepo.GetTakenCards(ctx, gameID)
 	if err == nil {
 		for _, taken := range takenCards {
@@ -145,7 +144,19 @@ func (uc *GameUseCase) JoinGame(ctx context.Context, gameID uuid.UUID, req domai
 		return nil, fmt.Errorf("wallet not found: %w", err)
 	}
 
-	// Check balance
+	// Enforce the per-player card cap. Read after locking the wallet so a user's
+	// concurrent joins (which serialize on that lock) can't both slip past it.
+	// count == 0 means this is the player's first card in the game.
+	existingCardCount, err := uc.gameRepo.CountActiveCardsForUser(ctx, gameID, req.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count player cards: %w", err)
+	}
+	if existingCardCount >= domain.MaxCardsPerPlayer {
+		return nil, fmt.Errorf("maximum %d cards per game", domain.MaxCardsPerPlayer)
+	}
+	isFirstCard := existingCardCount == 0
+
+	// Check balance (one card = one bet)
 	if wallet.Balance < game.BetAmount {
 		return nil, errors.New("insufficient balance")
 	}
@@ -182,8 +193,11 @@ func (uc *GameUseCase) JoinGame(ctx context.Context, gameID uuid.UUID, req domai
 		return nil, fmt.Errorf("failed to add player: %w", err)
 	}
 
-	// Update game player count and prize pool
-	game.PlayerCount++
+	// player_count tracks DISTINCT people (the start rule needs 2 real players),
+	// so it only grows on a player's first card. The prize pool grows per card.
+	if isFirstCard {
+		game.PlayerCount++
+	}
 	game.PrizePool += game.BetAmount * (1 - game.HouseCut) // Prize pool excludes house cut
 
 	if err := uc.gameRepo.Update(ctx, game); err != nil {
@@ -200,8 +214,9 @@ func (uc *GameUseCase) JoinGame(ctx context.Context, gameID uuid.UUID, req domai
 	uc.redisService.AddTakenCard(ctx, gameID, req.CardID)
 	uc.redisService.SaveGameState(ctx, game)
 
-	// If this is the minimum required player, start countdown
-	if game.PlayerCount == domain.MinPlayers {
+	// When the 2nd distinct player joins, start the countdown. Gated on
+	// isFirstCard so extra cards from existing players don't re-trigger it.
+	if isFirstCard && game.PlayerCount == domain.MinPlayers {
 		go uc.startCountdown(context.Background(), gameID)
 	}
 
@@ -222,12 +237,27 @@ func (uc *GameUseCase) LeaveGame(ctx context.Context, gameID uuid.UUID, req doma
 		return fmt.Errorf("game not found: %w", err)
 	}
 
-	// Check if user is in the game and get player info (including card ID)
-	player, err := uc.gameRepo.FindPlayer(ctx, gameID, req.UserID)
-	if err != nil {
+	// Figure out which of the user's cards to drop. req.CardID > 0 drops just
+	// that one card; req.CardID == 0 means leave the game entirely (all cards).
+	userCards, err := uc.gameRepo.FindPlayersByUser(ctx, gameID, req.UserID)
+	if err != nil || len(userCards) == 0 {
 		return errors.New("user is not in this game")
 	}
-	cardID := player.CardID
+
+	var toDrop []*domain.GamePlayer
+	if req.CardID > 0 {
+		for _, p := range userCards {
+			if p.CardID == req.CardID {
+				toDrop = append(toDrop, p)
+				break
+			}
+		}
+		if len(toDrop) == 0 {
+			return errors.New("you do not hold that card")
+		}
+	} else {
+		toDrop = userCards
+	}
 
 	// Start transaction
 	tx, err := uc.db.BeginTx(ctx, nil)
@@ -249,53 +279,54 @@ func (uc *GameUseCase) LeaveGame(ctx context.Context, gameID uuid.UUID, req doma
 	}
 
 	// Note: Players can leave during DRAWING phase, but won't get a refund
-
-	// Remove player
-	if err := uc.gameRepo.RemovePlayer(ctx, tx, gameID, req.UserID); err != nil {
-		return fmt.Errorf("failed to remove player: %w", err)
-	}
-
-	// Refund bet (only if in WAITING or COUNTDOWN)
-	if game.State == domain.GameStateWaiting || game.State == domain.GameStateCountdown {
-		// Lock wallet
-		_, err := uc.walletRepo.LockForUpdate(ctx, tx, req.UserID)
-		if err != nil {
+	refundable := game.State == domain.GameStateWaiting || game.State == domain.GameStateCountdown
+	if refundable {
+		// Lock the wallet once for all of this user's refunds.
+		if _, err := uc.walletRepo.LockForUpdate(ctx, tx, req.UserID); err != nil {
 			return fmt.Errorf("wallet not found: %w", err)
 		}
-
-		// Refund
-		if err := uc.walletRepo.UpdateBalance(ctx, tx, req.UserID, game.BetAmount); err != nil {
-			return fmt.Errorf("failed to refund: %w", err)
-		}
-
-		// Create refund transaction
-		gameRefundRef := "GAME_REFUND"
-		transaction := &domain.Transaction{
-			UserID:    req.UserID,
-			Type:      domain.TransactionTypeDeposit, // Refund is treated as deposit
-			Amount:    game.BetAmount,
-			Status:    domain.TransactionStatusCompleted,
-			Reference: &gameRefundRef, // Mark as game refund to exclude from deposit history
-		}
-
-		if err := uc.transactionRepo.Create(ctx, tx, transaction); err != nil {
-			return fmt.Errorf("failed to create refund transaction: %w", err)
-		}
-
-		// Update game prize pool
-		game.PrizePool -= game.BetAmount * (1 - game.HouseCut)
 	}
 
-	// Update game player count
-	game.PlayerCount--
+	gameRefundRef := "GAME_REFUND"
+	for _, p := range toDrop {
+		// Drop this card.
+		if err := uc.gameRepo.RemovePlayerCard(ctx, tx, gameID, req.UserID, p.CardID); err != nil {
+			return fmt.Errorf("failed to remove card: %w", err)
+		}
 
-	// If players drop below minimum during countdown, revert to WAITING state
-	// This allows the game to continue when more players join, rather than cancelling
+		// Refund this card's stake (only before the game starts).
+		if refundable {
+			if err := uc.walletRepo.UpdateBalance(ctx, tx, req.UserID, game.BetAmount); err != nil {
+				return fmt.Errorf("failed to refund: %w", err)
+			}
+			transaction := &domain.Transaction{
+				UserID:    req.UserID,
+				Type:      domain.TransactionTypeDeposit, // Refund is treated as deposit
+				Amount:    game.BetAmount,
+				Status:    domain.TransactionStatusCompleted,
+				Reference: &gameRefundRef, // Mark as game refund to exclude from deposit history
+			}
+			if err := uc.transactionRepo.Create(ctx, tx, transaction); err != nil {
+				return fmt.Errorf("failed to create refund transaction: %w", err)
+			}
+			game.PrizePool -= game.BetAmount * (1 - game.HouseCut)
+		}
+	}
+
+	// player_count counts distinct people, so it only drops when the user has no
+	// cards left in the game.
+	leftEntirely := len(toDrop) == len(userCards)
+	if leftEntirely {
+		game.PlayerCount--
+	}
+
+	// If distinct players drop below minimum during countdown, revert to WAITING.
+	// Remaining players stay; the countdown restarts when a 2nd player returns.
+	didRevert := false
 	if game.State == domain.GameStateCountdown && game.PlayerCount < domain.MinPlayers {
 		game.State = domain.GameStateWaiting
-		game.CountdownEnds = nil // Clear countdown timestamp
-		// Note: Remaining players stay in the game and will continue when minimum players join
-		// The countdown will automatically restart when player count reaches MinPlayers again
+		game.CountdownEnds = nil
+		didRevert = true
 	}
 
 	if err := uc.gameRepo.Update(ctx, game); err != nil {
@@ -307,30 +338,27 @@ func (uc *GameUseCase) LeaveGame(ctx context.Context, gameID uuid.UUID, req doma
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	// Update Redis - remove player
-	uc.redisService.RemovePlayer(ctx, gameID, req.UserID)
+	// Update Redis - only drop the player from the live set if they fully left.
+	if leftEntirely {
+		uc.redisService.RemovePlayer(ctx, gameID, req.UserID)
+	}
 
-	// Check if any other active players are using this card
-	// Only remove card from taken cards if no other players have it
-	// (GetPlayers already filters by left_at IS NULL, so leaving player won't be in the list)
+	// Free each dropped card if no remaining active player holds it.
 	players, err := uc.gameRepo.GetPlayers(ctx, gameID)
 	if err == nil {
-		otherPlayersHaveCard := false
+		held := make(map[int]bool, len(players))
 		for _, p := range players {
-			if p.CardID == cardID {
-				otherPlayersHaveCard = true
-				break
-			}
+			held[p.CardID] = true
 		}
-		// Only remove card if no other active players are using it
-		if !otherPlayersHaveCard {
-			uc.redisService.RemoveTakenCard(ctx, gameID, cardID)
+		for _, p := range toDrop {
+			if !held[p.CardID] {
+				uc.redisService.RemoveTakenCard(ctx, gameID, p.CardID)
+			}
 		}
 	}
 
-	// If game reverted to WAITING from COUNTDOWN, clear countdown state and notify
-	revertedFromCountdown := game.State == domain.GameStateWaiting && game.CountdownEnds == nil
-	if revertedFromCountdown {
+	// If the countdown was reverted to WAITING, clear countdown state and notify.
+	if didRevert {
 		uc.redisService.ClearCountdown(ctx, gameID)
 		uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventGameStatus, map[string]interface{}{
 			"status": string(domain.GameStateWaiting),
@@ -339,10 +367,13 @@ func (uc *GameUseCase) LeaveGame(ctx context.Context, gameID uuid.UUID, req doma
 
 	uc.redisService.SaveGameState(ctx, game)
 
-	// Publish event
-	uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventPlayerLeft, map[string]interface{}{
-		"user_id": req.UserID.String(),
-	})
+	// Publish a PLAYER_LEFT per dropped card so clients can free the card in the UI.
+	for _, p := range toDrop {
+		uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventPlayerLeft, map[string]interface{}{
+			"user_id": req.UserID.String(),
+			"card_id": p.CardID,
+		})
+	}
 
 	return nil
 }
@@ -512,14 +543,15 @@ func (uc *GameUseCase) ClaimBingo(ctx context.Context, gameID uuid.UUID, req dom
 		return false, errors.New("game is not in drawing phase")
 	}
 
-	// Check if user is in the game
-	player, err := uc.gameRepo.FindPlayer(ctx, gameID, req.UserID)
+	// Resolve the specific card being claimed. It must belong to this user and
+	// still be active in the game.
+	player, err := uc.gameRepo.FindPlayerCard(ctx, gameID, req.UserID, req.CardID)
 	if err != nil {
-		return false, errors.New("user is not in this game")
+		return false, errors.New("you do not hold that card in this game")
 	}
 
 	if player.IsEliminated {
-		return false, errors.New("player is already eliminated")
+		return false, errors.New("this card is already eliminated")
 	}
 
 	// Get drawn numbers
@@ -663,22 +695,28 @@ func (uc *GameUseCase) ClaimBingo(ctx context.Context, gameID uuid.UUID, req dom
 
 		return true, nil
 	} else {
-		// Invalid claim - eliminate player
-		if err := uc.gameRepo.EliminatePlayer(ctx, tx, gameID, req.UserID); err != nil {
-			return false, fmt.Errorf("failed to eliminate player: %w", err)
+		// Invalid claim - eliminate only this card; the player's other cards live on.
+		if err := uc.gameRepo.EliminatePlayerCard(ctx, tx, gameID, req.UserID, req.CardID); err != nil {
+			return false, fmt.Errorf("failed to eliminate card: %w", err)
 		}
 
-		// Check if all players are eliminated
+		// Count cards still in play. GetPlayers reads committed state, which does
+		// not yet reflect this transaction's elimination, so skip the just-killed
+		// card explicitly.
 		players, _ := uc.gameRepo.GetPlayers(ctx, gameID)
-		activePlayers := 0
+		activeCards := 0
 		for _, p := range players {
-			if !p.IsEliminated {
-				activePlayers++
+			if p.IsEliminated {
+				continue
 			}
+			if p.UserID == req.UserID && p.CardID == req.CardID {
+				continue // eliminated in this tx
+			}
+			activeCards++
 		}
 
-		if activePlayers == 0 {
-			// All players eliminated - cancel game and refund
+		if activeCards == 0 {
+			// Every card is out - cancel the game and refund each card's stake
 			game.State = domain.GameStateCancelled
 			gameRefundRef := "GAME_REFUND"
 			for _, p := range players {
@@ -762,6 +800,12 @@ func (uc *GameUseCase) GetGameState(ctx context.Context, gameID uuid.UUID) (*dom
 // GetPlayerInGame checks if a player is in a game (for WebSocket validation)
 func (uc *GameUseCase) GetPlayerInGame(ctx context.Context, gameID, userID uuid.UUID) (*domain.GamePlayer, error) {
 	return uc.gameRepo.FindPlayer(ctx, gameID, userID)
+}
+
+// GetMyCardsInGame returns all of the authenticated user's active cards in a
+// game (a player may hold up to MaxCardsPerPlayer).
+func (uc *GameUseCase) GetMyCardsInGame(ctx context.Context, gameID, userID uuid.UUID) ([]*domain.GamePlayer, error) {
+	return uc.gameRepo.FindPlayersByUser(ctx, gameID, userID)
 }
 
 // GetCardData returns the card data for a given card ID
@@ -906,9 +950,9 @@ func (uc *GameUseCase) cancelGameAndRefund(ctx context.Context, gameID uuid.UUID
 			return nil, 0, 0, fmt.Errorf("failed to record refund: %w", err)
 		}
 
-		// Mark the player as having left so they can't be refunded again.
-		if err := uc.gameRepo.RemovePlayer(ctx, tx, gameID, p.UserID); err != nil {
-			return nil, 0, 0, fmt.Errorf("failed to remove player: %w", err)
+		// Mark this card as having left so it can't be refunded again.
+		if err := uc.gameRepo.RemovePlayerCard(ctx, tx, gameID, p.UserID, p.CardID); err != nil {
+			return nil, 0, 0, fmt.Errorf("failed to remove player card: %w", err)
 		}
 
 		refundedCount++

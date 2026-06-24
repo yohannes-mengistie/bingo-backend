@@ -119,7 +119,8 @@ func (h *GameHandler) JoinGame(c *gin.Context) {
 		if err.Error() == "game is not accepting new players" ||
 			err.Error() == "user is already in this game" ||
 			err.Error() == "card is already taken" ||
-			err.Error() == "insufficient balance" {
+			err.Error() == "insufficient balance" ||
+			strings.Contains(err.Error(), "cards per game") {
 			statusCode = http.StatusBadRequest
 		}
 
@@ -161,6 +162,7 @@ func (h *GameHandler) LeaveGame(c *gin.Context) {
 	if err := h.gameUseCase.LeaveGame(c.Request.Context(), gameID, req); err != nil {
 		statusCode := http.StatusInternalServerError
 		if err.Error() == "user is not in this game" ||
+			err.Error() == "you do not hold that card" ||
 			err.Error() == "game is no longer active" {
 			statusCode = http.StatusBadRequest
 		}
@@ -207,8 +209,8 @@ func (h *GameHandler) ClaimBingo(c *gin.Context) {
 	if err != nil {
 		statusCode := http.StatusInternalServerError
 		if err.Error() == "game is not in drawing phase" ||
-			err.Error() == "user is not in this game" ||
-			err.Error() == "player is already eliminated" {
+			err.Error() == "you do not hold that card in this game" ||
+			err.Error() == "this card is already eliminated" {
 			statusCode = http.StatusBadRequest
 		} else if err.Error() == "game already has a winner" {
 			// Lost the race to another simultaneous valid claim.
@@ -229,7 +231,7 @@ func (h *GameHandler) ClaimBingo(c *gin.Context) {
 	} else {
 		c.JSON(http.StatusOK, gin.H{
 			"winner":  false,
-			"message": "Invalid bingo claim. You have been eliminated.",
+			"message": "Invalid bingo claim. This card has been eliminated.",
 		})
 	}
 }
@@ -394,6 +396,30 @@ func (h *GameHandler) GetMyPlayerInGame(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"player": player})
+}
+
+// GetMyCardsInGame handles GET /me/games/:gameId/cards — all of the
+// authenticated user's active cards in the given game (0..MaxCardsPerPlayer).
+func (h *GameHandler) GetMyCardsInGame(c *gin.Context) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
+
+	gameID, err := uuid.Parse(c.Param("gameId"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid game ID"})
+		return
+	}
+
+	cards, err := h.gameUseCase.GetMyCardsInGame(c.Request.Context(), gameID, userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"cards": cards})
 }
 
 // AdminListGames handles GET /admin/games

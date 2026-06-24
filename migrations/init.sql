@@ -69,7 +69,8 @@ CREATE TABLE IF NOT EXISTS game_players (
     is_eliminated BOOLEAN NOT NULL DEFAULT FALSE,
     joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     left_at TIMESTAMP,
-    UNIQUE(game_id, user_id),
+    -- A player may hold multiple cards per game (cap of 4 enforced in app), so
+    -- there is no UNIQUE(game_id, user_id). A card is still unique per game.
     UNIQUE(game_id, card_id)
 );
 

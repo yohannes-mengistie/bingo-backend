@@ -225,6 +225,7 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			// Games (self)
 			authed.GET("/me/games", gameHandler.GetMyGameHistory)
 			authed.GET("/me/games/:gameId", gameHandler.GetMyPlayerInGame)
+			authed.GET("/me/games/:gameId/cards", gameHandler.GetMyCardsInGame)
 			authed.POST("/games/:gameId/join", gameHandler.JoinGame)
 			authed.POST("/games/:gameId/leave", gameHandler.LeaveGame)
 			authed.POST("/games/:gameId/bingo", gameHandler.ClaimBingo)
@@ -279,8 +280,8 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			// Game management
 			games := admin.Group("/games")
 			{
-				games.GET("", gameHandler.AdminListGames)              // list games (?state=&type=&limit=&offset=)
-				games.GET("/:gameId", gameHandler.AdminGetGame)        // game detail + players
+				games.GET("", gameHandler.AdminListGames)                  // list games (?state=&type=&limit=&offset=)
+				games.GET("/:gameId", gameHandler.AdminGetGame)            // game detail + players
 				games.POST("/:gameId/cancel", gameHandler.AdminCancelGame) // force-cancel + refund stakes
 			}
 
