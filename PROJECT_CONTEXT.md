@@ -46,18 +46,25 @@ Both frontends are React + Vite + TypeScript + Tailwind. The player app uses
 - **Card:** 5×5 grid, columns **B I N G O**. Each letter owns 15 numbers:
   B 1–15, I 16–30, N 31–45, G 46–60, O 61–75 → **75 numbers total**. Center
   cell (`N` middle) is **FREE**. Cards are deterministic, IDs **1–200**.
-- **Stakes / game types:** REGULAR=10 birr, VIP=50 birr. (The earlier G1–G7
-  tiers were retired in migration 014.)
-- **House cut:** 20%. Prize pool per game = `stake × players × 0.8`. Winner takes
-  the whole pool.
-- **Flow:** `WAITING` → (2nd player joins) `COUNTDOWN` (60s) → `DRAWING`
-  (a number every 3s) → `FINISHED` (someone claims a valid bingo) or
-  `CANCELLED` (refunded).
-- **Min players:** 2. **Win patterns:** any row, column, either diagonal, or
-  four corners (validated server-side in `pkg/bingo`, mirrored client-side in
-  `src/lib/bingo.ts`).
-- **Refund rules:** leave during `WAITING`/`COUNTDOWN` → full refund; leave
-  during `DRAWING` → forfeit. Invalid claim → eliminated (no refund).
+- **Stakes / game types:** REGULAR=10 birr, VIP=50 birr, both open to everyone.
+  (The earlier G1–G7 tiers were retired in migration 014.)
+- **Cards per player:** up to **4** in one game (migration 015), each costing one
+  full stake (e.g. 4 cards on a 10-birr table = 40 birr), gated by wallet
+  balance. The **card** is the unit of play — claims, eliminations and refunds
+  are per-card. Cap enforced in the use case; a card is still unique per game.
+- **House cut:** 20%. Prize pool = `stake × number of cards × 0.8` (grows per
+  **card**, not per person). Winner takes the whole pool.
+- **Flow:** `WAITING` → (2nd **distinct** player joins) `COUNTDOWN` (60s) →
+  `DRAWING` (a number every 3s) → `FINISHED` (a valid bingo) or `CANCELLED`
+  (refunded). `player_count` counts DISTINCT people, so one person holding
+  several cards can't start a game alone.
+- **Min players:** 2 distinct people. **Win patterns:** any row, column, either
+  diagonal, or four corners (validated server-side in `pkg/bingo`, mirrored
+  client-side in `src/lib/bingo.ts`).
+- **Refund rules:** leave during `WAITING`/`COUNTDOWN` → refund the dropped
+  card(s); leave during `DRAWING` → forfeit. A wrong claim eliminates **only
+  that card** (the player's other cards keep playing); when no cards remain in
+  play the game auto-cancels and refunds every stake.
 
 ---
 
@@ -81,7 +88,9 @@ state='DRAWING'`.
 ### Key API surface
 - Public: `GET /games`, `/games/recent-winners`, `/games/:id/state`, `/cards/:id`
 - Player (JWT): `/me`, `/me/wallet`, `POST /wallet/{deposit,withdraw,transfer}`,
-  `POST /games/:id/{join,leave,bingo}`
+  `POST /games/:id/{join,leave,bingo}`, `GET /me/games/:id/cards` (all of the
+  player's cards in a game). `join` takes one `card_id`; `leave` takes an
+  optional `card_id` (one card vs. whole game); `bingo` requires a `card_id`.
 - WebSocket: `/ws/game?type=VIP` or `/ws/game/:gameId`
 - Admin (JWT + admin): `/admin/users…`, `/admin/transactions…`,
   `/admin/stats/dashboard`, **`/admin/games`**, **`/admin/games/:id`**,
@@ -92,16 +101,54 @@ state='DRAWING'`.
 ## 5. Real-time WebSocket events
 
 The WS handler forwards the backend's `{event, data}` envelope verbatim from
-Redis pub/sub. Events: `INITIAL_STATE`, `GAME_STATUS` (carries `status`),
-`COUNTDOWN`, `NUMBER_DRAWN`, `PLAYER_JOINED`, `PLAYER_LEFT`,
-`PLAYER_ELIMINATED` (`userId`), `WINNER` (`user_id`, `winner_name`, `prize`),
-`NEW_GAME_AVAILABLE`. The player app maps these to live UI updates.
+Redis pub/sub. Events: `INITIAL_STATE`, `GAME_STATUS` (carries `status`; the
+countdown one also carries `prize_pool`/`player_count`), `COUNTDOWN`,
+`NUMBER_DRAWN`, `PLAYER_JOINED`, `PLAYER_LEFT` (both now carry the live
+`prize_pool` + `player_count` so every connected client stays in sync — not just
+the freshly-connected one), `PLAYER_ELIMINATED` (`userId`), `WINNER` (`user_id`,
+`winner_name`, `prize`, `card_id`), `NEW_GAME_AVAILABLE`. The player app maps
+these to live UI updates.
 
 ---
 
-## 6. Recent progress (this work cycle)
+## 6. Recent progress
 
-### Backend (`bingo-backend`, all merged to `main`)
+### Today (2026-06-25) — all merged to `main` and auto-deploying
+1. **Two stake tiers (REGULAR / VIP)** — collapsed the seven G1–G7 tiers
+   (5/7/10/20/50/100/200) into **REGULAR = 10 birr** and **VIP = 50 birr**, both
+   open to everyone. Migration `014` relabels old rows + swaps the `game_type`
+   CHECK; `CreateOrGetGame` now rejects unsupported tiers (closed a hole where an
+   unknown type silently made a 0-birr game).
+2. **Premium VIP lobby card** — the player Lobby is now two full-width tier
+   cards; the VIP one stands out with a gold gradient + border + glow, a crown,
+   an animated shine sweep, a glowing bet amount, a gold CTA and a heavier haptic.
+3. **Up to 4 cards per player** — migration `015` drops
+   `UNIQUE(game_id, user_id)` (keeps `UNIQUE(game_id, card_id)`); the cap of 4 is
+   enforced in the use case. The card became the unit of play: per-card
+   claim/elimination (a wrong claim kills only that card), per-card leave/refund,
+   prize pool scales with cards, and `player_count` tracks DISTINCT people so the
+   2-player start rule still needs two real people. Added
+   `GET /me/games/:id/cards`; game history dedupes to one row per game. Frontend:
+   multi-select `CardSelect` (running cost + cap + affordability), multi-card
+   `GameRoom` with a scrollable stack and a per-card BINGO button.
+4. **Live prize-sync fix** — the prize pool was only sent in `INITIAL_STATE`, so
+   an already-connected player's pool froze (two players saw different prizes —
+   8 vs 16). `PLAYER_JOINED`/`PLAYER_LEFT`/countdown `GAME_STATUS` now carry live
+   `prize_pool` + `player_count`, and the room reads them.
+5. **Render DB** — migrations `014` and `015` applied to production.
+6. **Verification** — a throwaway harness drove the **real `GameUseCase` against
+   live Postgres + Redis**: **32/32 checks** green — multi-card join, the 4-card
+   cap, distinct-player counting, per-card leave/refund, a valid BINGO payout
+   (winner takes the whole pool), per-card elimination, all-eliminated
+   cancel+refund, and a pub/sub assertion that the join/countdown broadcasts now
+   carry the live `prize_pool`. (Browser-level Mini App test not yet run.)
+
+> ⚠️ Frontend and backend share the tier codes and `card_id` contract — they
+> must deploy together. Both auto-deploy from `main`.
+
+### Prior cycle
+
+#### Backend (`bingo-backend`, all merged to `main`)
 - **Admin game management** — `GET /admin/games` (list, filters, pagination),
   `GET /admin/games/:id` (detail + players), `POST /admin/games/:id/cancel`
   (force-cancel + refund every active player, atomic, game-row locked).
@@ -114,7 +161,7 @@ Redis pub/sub. Events: `INITIAL_STATE`, `GAME_STATUS` (carries `status`),
 - **Public recent-winners endpoint** — `GET /games/recent-winners` for the
   lobby trust feed.
 
-### Player Mini App (`bingo-miniapp/src/`, merged to `main`)
+#### Player Mini App (`bingo-miniapp/src/`, merged to `main`)
 - **WebSocket fixes** — read `GAME_STATUS.status` (was `state`); show a
   "cancelled — refunded" overlay; handle `PLAYER_JOINED`/`PLAYER_LEFT`; read
   `PLAYER_ELIMINATED.userId`.
@@ -136,14 +183,14 @@ Redis pub/sub. Events: `INITIAL_STATE`, `GAME_STATUS` (carries `status`),
   to lobby on every non-home screen) + a game-room back chevron (non-destructive
   minimize, distinct from the "Leave"/refund button).
 
-### Admin dashboard (`bingo-miniapp/admin/`, merged to `main`)
+#### Admin dashboard (`bingo-miniapp/admin/`, merged to `main`)
 - **Games section** — list (state/type filters), detail + player roster,
   **Cancel & refund** a game. The tool to recover money from stuck/abandoned
   games.
 - **Mobile responsive** — off-canvas drawer + hamburger; tables scroll inside
   their card instead of stretching the page.
 
-### Verification
+#### Verification
 End-to-end tested against a local stack rebuilt from `main` (identical to
 deployed code): seeded users, minted JWTs, drove join/leave/countdown, a real
 win + payout, admin cancel+refund, and the 75-draw auto-refund — **44 checks,
@@ -164,7 +211,12 @@ all green**. (One blank-names failure was local schema drift — migration
   not durable long-term.
 - **Local dev:** `docker compose up -d` runs api(:8000) + postgres(:5432) +
   redis. Rebuild the api image (`docker compose build api`) to pick up code
-  changes — a stale container will 404 on new routes.
+  changes — a stale container will 404 on new routes. Migrations are **not**
+  auto-applied to the local DB; apply new ones by hand (the local DB now has
+  `014`/`015`, plus throwaway rows from the 2026-06-25 e2e harness).
+- **Migration gotcha:** a migration that swaps a CHECK constraint must DROP the
+  old constraint *before* UPDATE-ing rows to the new values, or the still-active
+  old constraint rejects the update (learned applying `014`).
 - **Deploy order when a frontend change depends on a new backend endpoint:**
   ship the **backend first**, then the frontend (the lobby feed degrades
   gracefully — just hidden — if the endpoint isn't there yet).
@@ -174,8 +226,12 @@ all green**. (One blank-names failure was local schema drift — migration
 ## 8. Open follow-ups
 
 - Set the **real CBE / Telebirr deposit account numbers** (currently placeholders).
-- Eyeball the **UI sizing refinement** and **Telegram back button** on a real
-  device (taste/native behavior can't be verified in CI).
-- Backend `add-telegram-bot` branch is still open (not created in this cycle).
+- **Browser-level smoke test** of the deployed Mini App (multi-card buy, the
+  2-distinct-players start, per-card claim/refund) — logic is covered by the
+  use-case + pub/sub tests, but no real browser/WS round-trip has been driven.
+- Optional UX: show **total cards in play** in the room (today `player_count` is
+  distinct people while the pool scales with cards, so the two can differ).
+- Eyeball the **VIP lobby card**, UI sizing, and **Telegram back button** on a
+  real device (taste/native behavior can't be verified in CI).
 - Optional: louder error surfacing in admin game-detail enrichment; concurrency
   stress-testing of simultaneous claims/joins (guards exist, not load-tested).
