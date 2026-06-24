@@ -112,15 +112,20 @@ type JoinGameRequest struct {
 
 // LeaveGameRequest represents the request to leave a game.
 // UserID is populated from the authenticated JWT, not the request body.
+// CardID is optional: when > 0 only that one card is dropped (refunded if the
+// game hasn't started); when 0 the player leaves entirely (all their cards).
 type LeaveGameRequest struct {
 	UserID uuid.UUID `json:"-"`
+	CardID int       `json:"card_id"`
 }
 
 // ClaimBingoRequest represents the request to claim bingo.
 // UserID is populated from the authenticated JWT, not the request body.
+// CardID identifies which of the player's cards the claim is for.
 type ClaimBingoRequest struct {
 	UserID        uuid.UUID `json:"-"`
-	MarkedNumbers []int     `json:"marked_numbers" binding:"required"` // Array of marked number positions (0-24)
+	CardID        int       `json:"card_id" binding:"required,min=1,max=200"` // which card to claim on
+	MarkedNumbers []int     `json:"marked_numbers" binding:"required"`        // marked positions (0-24)
 }
 
 // GetGamesRequest represents the request to get available games

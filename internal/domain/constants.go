@@ -27,6 +27,10 @@ const MaxCardID = 200
 // TotalCards is the total number of available bingo cards
 const TotalCards = 200
 
+// MaxCardsPerPlayer is the maximum number of cards a single player may hold in
+// one game. Each card costs one full bet (e.g. 4 cards on a 10-birr table = 40).
+const MaxCardsPerPlayer = 4
+
 // CardGridSize is the size of the bingo card grid (5x5)
 const CardGridSize = 5
 

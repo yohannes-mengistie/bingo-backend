@@ -83,10 +83,24 @@ type GameRepository interface {
 	// it is still DRAWING. Returns true only for the single claim that succeeds.
 	ClaimWinner(ctx context.Context, tx *sql.Tx, gameID, winnerID uuid.UUID) (bool, error)
 	AddPlayer(ctx context.Context, tx *sql.Tx, player *GamePlayer) error
-	RemovePlayer(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID) error
+	// RemovePlayerCard marks one specific card (game_id, user_id, card_id) as
+	// left. A player may hold several cards, so leaving is per-card.
+	RemovePlayerCard(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID, cardID int) error
+	// FindPlayer returns any one active card row for the user (used to test
+	// membership / reconnect). Prefer FindPlayersByUser when all cards matter.
 	FindPlayer(ctx context.Context, gameID, userID uuid.UUID) (*GamePlayer, error)
+	// FindPlayersByUser returns all of a user's active card rows in a game.
+	FindPlayersByUser(ctx context.Context, gameID, userID uuid.UUID) ([]*GamePlayer, error)
+	// FindPlayerCard returns the user's row for one specific card, if active.
+	FindPlayerCard(ctx context.Context, gameID, userID uuid.UUID, cardID int) (*GamePlayer, error)
+	// CountActiveCardsForUser counts a user's active cards in a game (cap check).
+	CountActiveCardsForUser(ctx context.Context, gameID, userID uuid.UUID) (int, error)
+	// CountDistinctPlayers counts distinct active users in a game (start rule).
+	CountDistinctPlayers(ctx context.Context, gameID uuid.UUID) (int, error)
 	GetPlayers(ctx context.Context, gameID uuid.UUID) ([]*GamePlayer, error)
-	EliminatePlayer(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID) error
+	// EliminatePlayerCard eliminates one specific card after a wrong claim; the
+	// player's other cards keep playing.
+	EliminatePlayerCard(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID, cardID int) error
 	GetTakenCards(ctx context.Context, gameID uuid.UUID) ([]int, error)
 	SaveDrawnNumber(ctx context.Context, gameID uuid.UUID, letter string, number int) error
 	FindGamesByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*GameHistoryEntry, error)
