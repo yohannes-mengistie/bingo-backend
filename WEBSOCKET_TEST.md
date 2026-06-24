@@ -99,7 +99,7 @@ Before testing WebSocket:
 
 1. **Create/Get a game:**
    ```bash
-   curl https://web-production-201fa.up.railway.app/api/v1/games?type=G1
+   curl https://web-production-201fa.up.railway.app/api/v1/games?type=REGULAR
    ```
 
 2. **Join the game:**
@@ -176,7 +176,7 @@ Before testing WebSocket, verify REST API works:
 curl https://web-production-201fa.up.railway.app/health
 
 # Get games
-curl https://web-production-201fa.up.railway.app/api/v1/games?type=G1
+curl https://web-production-201fa.up.railway.app/api/v1/games?type=REGULAR
 ```
 
 ### Network Tab

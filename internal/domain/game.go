@@ -6,38 +6,35 @@ import (
 	"github.com/google/uuid"
 )
 
-// GameType represents the type of game (G1-G7)
+// GameType represents the type of game.
+// There are two tiers: a standard game and a VIP game.
 type GameType string
 
 const (
-	GameTypeG1 GameType = "G1" // Bet: 5
-	GameTypeG2 GameType = "G2" // Bet: 7
-	GameTypeG3 GameType = "G3" // Bet: 10
-	GameTypeG4 GameType = "G4" // Bet: 20
-	GameTypeG5 GameType = "G5" // Bet: 50
-	GameTypeG6 GameType = "G6" // Bet: 100
-	GameTypeG7 GameType = "G7" // Bet: 200
+	GameTypeRegular GameType = "REGULAR" // Bet: 10
+	GameTypeVIP     GameType = "VIP"     // Bet: 50
 )
 
-// GetBetAmount returns the bet amount for a game type
+// GetBetAmount returns the bet amount for a game type.
+// Returns 0 for unknown game types (see IsValid).
 func (gt GameType) GetBetAmount() float64 {
 	switch gt {
-	case GameTypeG1:
-		return BetAmountG1
-	case GameTypeG2:
-		return BetAmountG2
-	case GameTypeG3:
-		return BetAmountG3
-	case GameTypeG4:
-		return BetAmountG4
-	case GameTypeG5:
-		return BetAmountG5
-	case GameTypeG6:
-		return BetAmountG6
-	case GameTypeG7:
-		return BetAmountG7
+	case GameTypeRegular:
+		return BetAmountRegular
+	case GameTypeVIP:
+		return BetAmountVIP
 	default:
 		return 0
+	}
+}
+
+// IsValid reports whether the game type is one of the supported tiers.
+func (gt GameType) IsValid() bool {
+	switch gt {
+	case GameTypeRegular, GameTypeVIP:
+		return true
+	default:
+		return false
 	}
 }
 

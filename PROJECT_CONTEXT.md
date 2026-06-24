@@ -46,7 +46,8 @@ Both frontends are React + Vite + TypeScript + Tailwind. The player app uses
 - **Card:** 5×5 grid, columns **B I N G O**. Each letter owns 15 numbers:
   B 1–15, I 16–30, N 31–45, G 46–60, O 61–75 → **75 numbers total**. Center
   cell (`N` middle) is **FREE**. Cards are deterministic, IDs **1–200**.
-- **Stakes / game types:** G1=5, G2=7, G3=10, G4=20, G5=50, G6=100, G7=200 birr.
+- **Stakes / game types:** REGULAR=10 birr, VIP=50 birr. (The earlier G1–G7
+  tiers were retired in migration 014.)
 - **House cut:** 20%. Prize pool per game = `stake × players × 0.8`. Winner takes
   the whole pool.
 - **Flow:** `WAITING` → (2nd player joins) `COUNTDOWN` (60s) → `DRAWING`
@@ -81,7 +82,7 @@ state='DRAWING'`.
 - Public: `GET /games`, `/games/recent-winners`, `/games/:id/state`, `/cards/:id`
 - Player (JWT): `/me`, `/me/wallet`, `POST /wallet/{deposit,withdraw,transfer}`,
   `POST /games/:id/{join,leave,bingo}`
-- WebSocket: `/ws/game?type=G5` or `/ws/game/:gameId`
+- WebSocket: `/ws/game?type=VIP` or `/ws/game/:gameId`
 - Admin (JWT + admin): `/admin/users…`, `/admin/transactions…`,
   `/admin/stats/dashboard`, **`/admin/games`**, **`/admin/games/:id`**,
   **`/admin/games/:id/cancel`**

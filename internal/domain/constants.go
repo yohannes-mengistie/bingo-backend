@@ -89,26 +89,11 @@ const NumbersPerLetter = 15
 
 // Game Type Bet Amount Constants
 
-// BetAmountG1 is the bet amount for game type G1
-const BetAmountG1 = 5.0
+// BetAmountRegular is the bet amount for the standard game (10 birr)
+const BetAmountRegular = 10.0
 
-// BetAmountG2 is the bet amount for game type G2
-const BetAmountG2 = 7.0
-
-// BetAmountG3 is the bet amount for game type G3
-const BetAmountG3 = 10.0
-
-// BetAmountG4 is the bet amount for game type G4
-const BetAmountG4 = 20.0
-
-// BetAmountG5 is the bet amount for game type G5
-const BetAmountG5 = 50.0
-
-// BetAmountG6 is the bet amount for game type G6
-const BetAmountG6 = 100.0
-
-// BetAmountG7 is the bet amount for game type G7
-const BetAmountG7 = 200.0
+// BetAmountVIP is the bet amount for the VIP game (50 birr)
+const BetAmountVIP = 50.0
 
 // WebSocket Event Name Constants
 

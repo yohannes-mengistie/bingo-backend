@@ -3,9 +3,8 @@
 ## How to Play
 
 ### 1️⃣ Choose Your Game
-- **G1**: 5 bet | **G2**: 7 bet | **G3**: 10 bet | **G4**: 20 bet
-- **G5**: 50 bet | **G6**: 100 bet | **G7**: 200 bet
-- Higher bet = Bigger prize! 🎉
+- **REGULAR**: 10 bet | **VIP**: 50 bet
+- VIP = higher bet, bigger prize! 🎉
 
 ### 2️⃣ Join & Select Card
 - Join any available game
@@ -53,7 +52,7 @@ Corners:  [X]              [X]
 
 **Prize Pool = (Bet × Players) × 80%**
 
-Example: G5 (50 bet) with 10 players
+Example: VIP (50 bet) with 10 players
 - Total: 500
 - Prize: 400 (winner gets all!)
 
@@ -83,7 +82,7 @@ Example: G5 (50 bet) with 10 players
 
 ## 🎯 Quick Tips
 
-1. Start with G1 to learn
+1. Start with REGULAR to learn
 2. Be quick - first valid claim wins!
 3. More players = bigger prizes
 4. Center cell is always FREE
