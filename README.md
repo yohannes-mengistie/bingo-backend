@@ -698,17 +698,12 @@ The game system implements a real-time multiplayer bingo game with server-author
 
 ### Game Types
 
-There are 7 fixed game types, each with a fixed bet amount:
+There are 2 fixed game types, each with a fixed bet amount:
 
 | Game Type | Bet Amount |
 | --------- | ---------- |
-| G1        | 5          |
-| G2        | 7          |
-| G3        | 10         |
-| G4        | 20         |
-| G5        | 50         |
-| G6        | 100        |
-| G7        | 200        |
+| REGULAR   | 10         |
+| VIP       | 50         |
 
 ### Game States
 
@@ -751,7 +746,7 @@ Get available games (WAITING or COUNTDOWN state).
 
 **Query Parameters:**
 
-- `type` (optional): Filter by game type (G1, G2, G3, G4, G5, G6, G7)
+- `type` (optional): Filter by game type (REGULAR or VIP)
 
 **Response:**
 
@@ -760,7 +755,7 @@ Get available games (WAITING or COUNTDOWN state).
   "games": [
     {
       "id": "770e8400-e29b-41d4-a716-446655440000",
-      "game_type": "G1",
+      "game_type": "REGULAR",
       "state": "WAITING",
       "bet_amount": 5.00,
       "min_players": 2,
@@ -785,7 +780,7 @@ Get available games (WAITING or COUNTDOWN state).
 curl http://localhost:8080/api/v1/games
 
 # Get available G1 games
-curl http://localhost:8080/api/v1/games?type=G1
+curl http://localhost:8080/api/v1/games?type=REGULAR
 ```
 
 ### GET /api/v1/games/user/:user_id/history
@@ -809,7 +804,7 @@ Get game history for a user. Returns all games the user has participated in, ord
     {
       "game": {
         "id": "770e8400-e29b-41d4-a716-446655440000",
-        "game_type": "G5",
+        "game_type": "VIP",
         "state": "FINISHED",
         "bet_amount": 50.00,
         "min_players": 2,
@@ -832,7 +827,7 @@ Get game history for a user. Returns all games the user has participated in, ord
     {
       "game": {
         "id": "880e8400-e29b-41d4-a716-446655440000",
-        "game_type": "G3",
+        "game_type": "REGULAR",
         "state": "FINISHED",
         "bet_amount": 10.00,
         "min_players": 2,
@@ -897,7 +892,7 @@ Get the current game state (used for initial connection snapshot).
 {
   "game": {
     "id": "770e8400-e29b-41d4-a716-446655440000",
-    "game_type": "G1",
+    "game_type": "REGULAR",
     "state": "DRAWING",
     "bet_amount": 5.00,
     "player_count": 3,
@@ -1121,7 +1116,7 @@ Connect to real-time game updates via WebSocket. **No authentication required** 
 
 ```javascript
 // Automatically finds or creates an available game of the specified type
-const ws = new WebSocket('ws://localhost:8080/api/v1/ws/game?type=G5');
+const ws = new WebSocket('ws://localhost:8080/api/v1/ws/game?type=VIP');
 ```
 
 **Option 2: Connect by Game ID**
@@ -1132,7 +1127,7 @@ const ws = new WebSocket('ws://localhost:8080/api/v1/ws/game/{gameId}');
 
 **Query Parameters (for Option 1):**
 
-- `type` (string, required): Game type (G1, G2, G3, G4, G5, G6, G7)
+- `type` (string, required): Game type (REGULAR or VIP)
 
 **Path Parameters (for Option 2):**
 
@@ -1254,7 +1249,7 @@ All events follow this format:
   "event": "NEW_GAME_AVAILABLE",
   "data": {
     "gameId": "880e8400-e29b-41d4-a716-446655440000",
-    "gameType": "G5"
+    "gameType": "VIP"
   }
 }
 ```
@@ -1607,13 +1602,8 @@ Get dashboard statistics for the admin panel. Returns aggregated statistics abou
   "total_transactions": 5000,
   "total_balance": 125000.50,
   "games_by_type": {
-    "G1": 250,
-    "G2": 180,
-    "G3": 150,
-    "G4": 120,
-    "G5": 100,
-    "G6": 80,
-    "G7": 50
+    "REGULAR": 250,
+    "VIP": 100
   },
   "total_house_cut": 15000.75
 }
@@ -1626,7 +1616,7 @@ Get dashboard statistics for the admin panel. Returns aggregated statistics abou
 - `total_users`: Total number of users in the system
 - `total_transactions`: Total number of transactions (all types and statuses)
 - `total_balance`: Sum of all wallet balances across all users
-- `games_by_type`: Count of games grouped by game type (G1-G7)
+- `games_by_type`: Count of games grouped by game type (REGULAR or VIP)
 - `total_house_cut`: Total house cut collected from finished games (calculated from prize pools)
 
 **Error Responses:**

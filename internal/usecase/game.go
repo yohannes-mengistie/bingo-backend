@@ -53,6 +53,11 @@ func (uc *GameUseCase) GetAvailableGames(ctx context.Context, gameType *domain.G
 
 // CreateOrGetGame creates a new game or returns an existing available game
 func (uc *GameUseCase) CreateOrGetGame(ctx context.Context, gameType domain.GameType) (*domain.Game, error) {
+	// Reject unsupported tiers (only REGULAR and VIP are offered)
+	if !gameType.IsValid() {
+		return nil, fmt.Errorf("invalid game type %q: must be REGULAR or VIP", gameType)
+	}
+
 	// Try to find an available game first
 	games, err := uc.gameRepo.FindAvailable(ctx, &gameType, 1)
 	if err == nil && len(games) > 0 {

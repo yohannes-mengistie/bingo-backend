@@ -45,7 +45,7 @@ CREATE TABLE transactions (
 -- Create games table
 CREATE TABLE IF NOT EXISTS games (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    game_type VARCHAR(10) NOT NULL CHECK (game_type IN ('G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7')),
+    game_type VARCHAR(10) NOT NULL CHECK (game_type IN ('REGULAR', 'VIP')),
     state VARCHAR(20) NOT NULL DEFAULT 'WAITING' CHECK (state IN ('WAITING', 'COUNTDOWN', 'DRAWING', 'FINISHED', 'CLOSED', 'CANCELLED')),
     bet_amount DECIMAL(10, 2) NOT NULL,
     min_players INTEGER NOT NULL DEFAULT 2,

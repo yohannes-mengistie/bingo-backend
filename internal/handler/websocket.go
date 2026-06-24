@@ -20,21 +20,7 @@ import (
 
 // isValidGameType checks if the game type is valid
 func isValidGameType(gameType domain.GameType) bool {
-	validTypes := []domain.GameType{
-		domain.GameTypeG1,
-		domain.GameTypeG2,
-		domain.GameTypeG3,
-		domain.GameTypeG4,
-		domain.GameTypeG5,
-		domain.GameTypeG6,
-		domain.GameTypeG7,
-	}
-	for _, vt := range validTypes {
-		if gameType == vt {
-			return true
-		}
-	}
-	return false
+	return gameType.IsValid()
 }
 
 var upgrader = websocket.Upgrader{
@@ -85,7 +71,7 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 		// Connect by game type - find or create an available game
 		gameType := domain.GameType(gameTypeStr)
 		if !isValidGameType(gameType) {
-			errorReason = fmt.Sprintf("Invalid game type '%s'. Must be one of: G1, G2, G3, G4, G5, G6, G7", gameTypeStr)
+			errorReason = fmt.Sprintf("Invalid game type '%s'. Must be one of: REGULAR, VIP", gameTypeStr)
 			log.Printf("[WebSocket] ERROR: %s", errorReason)
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error":  errorReason,

@@ -128,7 +128,7 @@ POST /api/v1/games/:gameId/join
 ## Real-time games (WebSocket)
 
 - `internal/handler/websocket.go` uses **gorilla/websocket**.
-- Players connect to `/api/v1/ws/game?type=G5` (by type) or `/ws/game/:gameId`.
+- Players connect to `/api/v1/ws/game?type=VIP` (by type) or `/ws/game/:gameId`.
 - The server pushes drawn numbers and game events live; cards update instantly.
 - Redis holds the shared game state that all connected clients observe.
 

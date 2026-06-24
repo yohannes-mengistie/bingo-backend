@@ -10,7 +10,7 @@ The WebSocket API provides real-time updates for bingo games. Clients connect to
 
 **Option 1: Connect by Game Type (Public Viewing - Recommended)**
 ```
-ws://localhost:8080/api/v1/ws/game?type=G5
+ws://localhost:8080/api/v1/ws/game?type=VIP
 ```
 
 **Option 2: Connect by Game ID**
@@ -20,14 +20,14 @@ ws://localhost:8080/api/v1/ws/game/:gameId
 
 **Production:**
 ```
-wss://web-production-201fa.up.railway.app/api/v1/ws/game?type=G5
+wss://web-production-201fa.up.railway.app/api/v1/ws/game?type=VIP
 wss://web-production-201fa.up.railway.app/api/v1/ws/game/:gameId
 ```
 
 ### Parameters
 
 **For Game Type Connection:**
-- **type** (query parameter, required): Game type (G1, G2, G3, G4, G5, G6, G7)
+- **type** (query parameter, required): Game type (REGULAR or VIP)
   - Automatically finds or creates an available game of that type
   - **No user authentication required** - anyone can watch
 
@@ -45,8 +45,8 @@ wss://web-production-201fa.up.railway.app/api/v1/ws/game/:gameId
 
 **By Game Type (Recommended):**
 ```javascript
-// Connect to G5 game type - automatically finds available game
-const wsUrl = `ws://localhost:8080/api/v1/ws/game?type=G5`;
+// Connect to VIP game type - automatically finds available game
+const wsUrl = `ws://localhost:8080/api/v1/ws/game?type=VIP`;
 
 const ws = new WebSocket(wsUrl);
 ```
@@ -152,7 +152,7 @@ Sent immediately after connection is established. Contains the current game stat
   "data": {
     "game": {
       "id": "550e8400-e29b-41d4-a716-446655440000",
-      "game_type": "G1",
+      "game_type": "REGULAR",
       "state": "WAITING",
       "bet_amount": 5.00,
       "min_players": 2,
@@ -345,23 +345,23 @@ If the connection fails, the server will return an HTTP error before upgrading t
 
 ```json
 {
-  "error": "Invalid game type 'G10'. Must be one of: G1, G2, G3, G4, G5, G6, G7",
-  "reason": "Invalid game type 'G10'. Must be one of: G1, G2, G3, G4, G5, G6, G7"
+  "error": "Invalid game type 'G10'. Must be one of: REGULAR, VIP",
+  "reason": "Invalid game type 'G10'. Must be one of: REGULAR, VIP"
 }
 ```
 
 ```json
 {
-  "error": "No game type or game ID provided. Use ?type=G5 or /ws/game/:gameId",
-  "reason": "No game type or game ID provided. Use ?type=G5 or /ws/game/:gameId"
+  "error": "No game type or game ID provided. Use ?type=VIP or /ws/game/:gameId",
+  "reason": "No game type or game ID provided. Use ?type=VIP or /ws/game/:gameId"
 }
 ```
 
 **500 Internal Server Error:**
 ```json
 {
-  "error": "Failed to create or get game of type G5: database error",
-  "reason": "Failed to create or get game of type G5: database error"
+  "error": "Failed to create or get game of type VIP: database error",
+  "reason": "Failed to create or get game of type VIP: database error"
 }
 ```
 
@@ -407,11 +407,11 @@ The server sends ping messages every 54 seconds to keep the connection alive. Th
 ```typescript
 class GameWebSocket {
   private ws: WebSocket | null = null;
-  private gameId: string; // Can be game type (G1-G7) or game ID (UUID)
+  private gameId: string; // Can be game type (REGULAR or VIP) or game ID (UUID)
   private onMessageCallback: ((message: any) => void) | null = null;
 
   constructor(gameTypeOrId: string) {
-    // Can be either game type (G1-G7) or game ID (UUID)
+    // Can be either game type (REGULAR or VIP) or game ID (UUID)
     this.gameId = gameTypeOrId;
   }
 
@@ -501,7 +501,7 @@ class GameWebSocket {
 }
 
 // Usage - by game type (recommended)
-const gameWS = new GameWebSocket("G5"); // Automatically finds/creates a G5 game
+const gameWS = new GameWebSocket("VIP"); // Automatically finds/creates a VIP game
 
 // Or by specific game ID
 // const gameWS = new GameWebSocket("550e8400-e29b-41d4-a716-446655440000");
@@ -570,7 +570,7 @@ You can test the WebSocket connection using a browser console:
 
 **By Game Type (Recommended):**
 ```javascript
-const ws = new WebSocket('ws://localhost:8080/api/v1/ws/game?type=G5');
+const ws = new WebSocket('ws://localhost:8080/api/v1/ws/game?type=VIP');
 
 ws.onopen = () => console.log('Connected');
 ws.onmessage = (e) => console.log('Message:', JSON.parse(e.data));
@@ -590,7 +590,7 @@ ws.onclose = (e) => console.log('Closed:', e.code, e.reason);
 
 **Production (Railway):**
 ```javascript
-const ws = new WebSocket('wss://web-production-201fa.up.railway.app/api/v1/ws/game?type=G5');
+const ws = new WebSocket('wss://web-production-201fa.up.railway.app/api/v1/ws/game?type=VIP');
 ```
 
 ## Notes
@@ -599,7 +599,7 @@ const ws = new WebSocket('wss://web-production-201fa.up.railway.app/api/v1/ws/ga
 - All game actions (join, leave, claim bingo) must be done via REST API
 - The WebSocket only provides real-time updates
 - **Public viewing** - No authentication required, anyone can watch games
-- Connect by game type (G1-G7) to automatically find available games
+- Connect by game type (REGULAR or VIP) to automatically find available games
 - Redis must be configured on the server for WebSocket to work
 - Error responses include both `error` and `reason` fields for detailed debugging
 - Server logs all connection attempts and errors with `[WebSocket]` prefix for easy debugging

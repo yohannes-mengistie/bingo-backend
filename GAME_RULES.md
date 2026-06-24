@@ -22,17 +22,12 @@ Bingo is a game of chance where players mark numbers on a 5×5 card as they are 
 
 ### Game Types & Bet Amounts
 
-Choose from 7 different game types based on your budget:
+There are two game tiers:
 
-| Game Type | Bet Amount | Prize Pool (with 10 players) |
-|-----------|------------|------------------------------|
-| **G1**    | 5          | 40 (80% of 50)               |
-| **G2**    | 7          | 56 (80% of 70)               |
-| **G3**    | 10         | 80 (80% of 100)              |
-| **G4**    | 20         | 160 (80% of 200)             |
-| **G5**    | 50         | 400 (80% of 500)             |
-| **G6**    | 100        | 800 (80% of 1000)             |
-| **G7**    | 200        | 1600 (80% of 2000)            |
+| Game Type   | Bet Amount | Prize Pool (with 10 players) |
+|-------------|------------|------------------------------|
+| **REGULAR** | 10         | 80 (80% of 100)              |
+| **VIP**     | 50         | 400 (80% of 500)             |
 
 **Note:** 20% of each bet goes to the house, 80% goes to the prize pool.
 
@@ -42,11 +37,11 @@ Choose from 7 different game types based on your budget:
 
 ### Step 1: Check Your Balance
 - Make sure you have enough balance in your wallet to cover the bet amount
-- You need at least the bet amount (e.g., 5 for G1, 50 for G5)
+- You need at least the bet amount (10 for REGULAR, 50 for VIP)
 
 ### Step 2: Choose a Game Type
-- Select a game type (G1-G7) that matches your budget
-- Higher bet amounts = bigger prize pools!
+- Select a game type: REGULAR (10) or VIP (50)
+- The VIP tier has a higher bet and a bigger prize pool!
 
 ### Step 3: Join a Game
 - Find an available game of your chosen type
@@ -206,17 +201,17 @@ Position:  0   1   2   3   4
 
 ### Example Calculations
 
-**G5 Game (Bet: 50) with 10 players:**
+**VIP Game (Bet: 50) with 10 players:**
 - Total bets: 50 × 10 = 500
 - House cut (20%): 100
 - Prize pool (80%): 400
 - **Winner receives: 400**
 
-**G1 Game (Bet: 5) with 5 players:**
-- Total bets: 5 × 5 = 25
-- House cut (20%): 5
-- Prize pool (80%): 20
-- **Winner receives: 20**
+**REGULAR Game (Bet: 10) with 5 players:**
+- Total bets: 10 × 5 = 50
+- House cut (20%): 10
+- Prize pool (80%): 40
+- **Winner receives: 40**
 
 **More players = Bigger prizes!** 🎉
 
@@ -262,8 +257,8 @@ Position:  0   1   2   3   4
    - Learn the patterns before betting
 
 2. **Start Small**
-   - Begin with G1 (5 bet) to learn the game
-   - Move to higher stakes once comfortable
+   - Begin with the REGULAR (10 bet) tier to learn the game
+   - Move up to VIP (50 bet) once comfortable
 
 3. **Be Quick**
    - First valid claim wins
@@ -296,7 +291,7 @@ Position:  0   1   2   3   4
 ### Game Flow Summary
 
 ```
-1. Choose game type (G1-G7)
+1. Choose game type (REGULAR or VIP)
 2. Join game → Bet deducted
 3. Select card (1-100)
 4. Wait for 2nd player → Countdown starts (60s)
