@@ -220,10 +220,14 @@ func (uc *GameUseCase) JoinGame(ctx context.Context, gameID uuid.UUID, req domai
 		go uc.startCountdown(context.Background(), gameID)
 	}
 
-	// Publish event
+	// Publish event. Carry the live prize_pool and player_count so already-
+	// connected clients update — otherwise their pool stays frozen at whatever
+	// it was when they first received INITIAL_STATE.
 	uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventPlayerJoined, map[string]interface{}{
-		"user_id": req.UserID.String(),
-		"card_id": req.CardID,
+		"user_id":      req.UserID.String(),
+		"card_id":      req.CardID,
+		"prize_pool":   game.PrizePool,
+		"player_count": game.PlayerCount,
 	})
 
 	return player, nil
@@ -367,11 +371,14 @@ func (uc *GameUseCase) LeaveGame(ctx context.Context, gameID uuid.UUID, req doma
 
 	uc.redisService.SaveGameState(ctx, game)
 
-	// Publish a PLAYER_LEFT per dropped card so clients can free the card in the UI.
+	// Publish a PLAYER_LEFT per dropped card so clients can free the card in the
+	// UI. Carry the live prize_pool and player_count so every client updates.
 	for _, p := range toDrop {
 		uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventPlayerLeft, map[string]interface{}{
-			"user_id": req.UserID.String(),
-			"card_id": p.CardID,
+			"user_id":      req.UserID.String(),
+			"card_id":      p.CardID,
+			"prize_pool":   game.PrizePool,
+			"player_count": game.PlayerCount,
 		})
 	}
 
@@ -397,10 +404,13 @@ func (uc *GameUseCase) startCountdown(ctx context.Context, gameID uuid.UUID) {
 	uc.redisService.SetCountdown(ctx, gameID, countdownEnds)
 	uc.redisService.SaveGameState(ctx, game)
 
-	// Publish countdown start
+	// Publish countdown start. Include prize_pool/player_count so every client
+	// (including the player who joined first) shows the final live pool.
 	uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventGameStatus, map[string]interface{}{
-		"status":      string(domain.GameStateCountdown),
-		"secondsLeft": int(domain.CountdownDuration.Seconds()),
+		"status":       string(domain.GameStateCountdown),
+		"secondsLeft":  int(domain.CountdownDuration.Seconds()),
+		"prize_pool":   game.PrizePool,
+		"player_count": game.PlayerCount,
 	})
 
 	// Countdown ticker
