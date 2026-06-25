@@ -350,14 +350,20 @@ func (s *TransactionService) ProcessWithdrawal(ctx context.Context, userID uuid.
 		return nil, fmt.Errorf("wallet not found: %w", err)
 	}
 
-	// Check if user has at least one completed deposit
+	// Check if user has at least one completed *real* cash-in deposit. Genuine
+	// deposits have a NULL reference; system credits that share the deposit type
+	// (game prizes "GAME_PRIZE", refunds "GAME_REFUND", admin balance adjustments)
+	// all carry a reference, so `reference IS NULL` excludes them — a player who
+	// only ever won/was-refunded/was-credited still can't withdraw without
+	// having put real money in.
 	var depositCount int
 	checkDepositQuery := `
-		SELECT COUNT(*) 
-		FROM transactions 
-		WHERE user_id = $1 
-		  AND type = $2 
+		SELECT COUNT(*)
+		FROM transactions
+		WHERE user_id = $1
+		  AND type = $2
 		  AND status = $3
+		  AND reference IS NULL
 	`
 	err = tx.QueryRowContext(ctx, checkDepositQuery, userID, domain.TransactionTypeDeposit, domain.TransactionStatusCompleted).Scan(&depositCount)
 	if err != nil {
