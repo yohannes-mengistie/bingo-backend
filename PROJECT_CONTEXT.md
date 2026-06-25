@@ -142,9 +142,19 @@ these to live UI updates.
    (winner takes the whole pool), per-card elimination, all-eliminated
    cancel+refund, and a pub/sub assertion that the join/countdown broadcasts now
    carry the live `prize_pool`. (Browser-level Mini App test not yet run.)
+7. **Auto-mark (auto-daub)** — players asked to stop tapping each called number.
+   The game room now **marks every drawn number on every card automatically**;
+   the player only joins, watches, and taps **BINGO** to claim (manual claim
+   kept on purpose, for the win moment + agency). Marks are no longer tap state —
+   they're **derived** from the drawn-number set (`autoMarked(card, drawn)` in
+   `src/lib/bingo.ts`), so a card is always in sync with what's been called.
+   **Frontend-only** (`bingo-miniapp/src/`): the server already re-validates every
+   claim against the real drawn numbers, so auto-marking changes nothing backend
+   and can't be cheated. No backend deploy needed.
 
-> ⚠️ Frontend and backend share the tier codes and `card_id` contract — they
-> must deploy together. Both auto-deploy from `main`.
+> ⚠️ Frontend and backend share the tier codes and `card_id` contract — when a
+> change touches both they must deploy together. (The auto-mark change above is
+> frontend-only — safe to ship alone.) Both auto-deploy from `main`.
 
 ### Prior cycle
 
@@ -169,6 +179,7 @@ these to live UI updates.
   master board replaced by a compact "called" strip (current ball + recent
   calls, lettered like `N42`); the card flexes to fit.
 - **Manual marking** — removed auto-daub; the player taps each called number.
+  *(Superseded 2026-06-25: auto-mark restored by player request — see Today #7.)*
 - **Winner reveal** — every player (incl. losers/eliminated) sees who won and
   how much at game end.
 - **Recent-winners lobby feed** — persistent, auto-refreshing list of recent
