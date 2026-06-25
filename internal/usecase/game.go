@@ -138,6 +138,29 @@ func (uc *GameUseCase) JoinGame(ctx context.Context, gameID uuid.UUID, req domai
 	}
 	defer tx.Rollback()
 
+	// Serialize concurrent joins to THIS game by locking its row before touching
+	// the live counters. Without it, two players joining at once both read the
+	// same player_count/prize_pool and one update is lost — the pool ends up
+	// undercounted (winner underpaid) and the count can stay below MinPlayers so
+	// the game never starts. Lock order is game-then-wallet everywhere.
+	game, err = uc.gameRepo.LockForUpdate(ctx, tx, gameID)
+	if err != nil {
+		return nil, fmt.Errorf("game not found: %w", err)
+	}
+
+	// Re-check under the lock: the game may have started since the pre-lock read,
+	// and a concurrent join may have just taken this card.
+	if game.State != domain.GameStateWaiting && game.State != domain.GameStateCountdown {
+		return nil, errors.New("game is not accepting new players")
+	}
+	if takenCards, terr := uc.gameRepo.GetTakenCards(ctx, gameID); terr == nil {
+		for _, taken := range takenCards {
+			if taken == req.CardID {
+				return nil, errors.New("card is already taken")
+			}
+		}
+	}
+
 	// Lock wallet
 	wallet, err := uc.walletRepo.LockForUpdate(ctx, tx, req.UserID)
 	if err != nil {
@@ -154,7 +177,6 @@ func (uc *GameUseCase) JoinGame(ctx context.Context, gameID uuid.UUID, req domai
 	if existingCardCount >= domain.MaxCardsPerPlayer {
 		return nil, fmt.Errorf("maximum %d cards per game", domain.MaxCardsPerPlayer)
 	}
-	isFirstCard := existingCardCount == 0
 
 	// Check balance (one card = one bet)
 	if wallet.Balance < game.BetAmount {
@@ -193,14 +215,24 @@ func (uc *GameUseCase) JoinGame(ctx context.Context, gameID uuid.UUID, req domai
 		return nil, fmt.Errorf("failed to add player: %w", err)
 	}
 
-	// player_count tracks DISTINCT people (the start rule needs 2 real players),
-	// so it only grows on a player's first card. The prize pool grows per card.
-	if isFirstCard {
-		game.PlayerCount++
+	// Recompute the live counters from the authoritative set of active cards in
+	// this game (visible within this locked transaction, including the card just
+	// added) rather than incrementing in memory — so concurrent joins can't lose
+	// an update. player_count is DISTINCT people (the start rule needs 2 real
+	// players); the prize pool is (cards × stake), excluding the house cut.
+	active, err := uc.gameRepo.GetActivePlayersTx(ctx, tx, gameID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read players: %w", err)
 	}
-	game.PrizePool += game.BetAmount * (1 - game.HouseCut) // Prize pool excludes house cut
+	distinct := make(map[uuid.UUID]bool, len(active))
+	for _, p := range active {
+		distinct[p.UserID] = true
+	}
+	prevCount := game.PlayerCount
+	game.PlayerCount = len(distinct)
+	game.PrizePool = float64(len(active)) * game.BetAmount * (1 - game.HouseCut)
 
-	if err := uc.gameRepo.Update(ctx, game); err != nil {
+	if err := uc.gameRepo.UpdateTx(ctx, tx, game); err != nil {
 		return nil, fmt.Errorf("failed to update game: %w", err)
 	}
 
@@ -214,9 +246,10 @@ func (uc *GameUseCase) JoinGame(ctx context.Context, gameID uuid.UUID, req domai
 	uc.redisService.AddTakenCard(ctx, gameID, req.CardID)
 	uc.redisService.SaveGameState(ctx, game)
 
-	// When the 2nd distinct player joins, start the countdown. Gated on
-	// isFirstCard so extra cards from existing players don't re-trigger it.
-	if isFirstCard && game.PlayerCount == domain.MinPlayers {
+	// Start the countdown on the join that brings the game up to the minimum
+	// distinct players (the WAITING → ready transition), and only from WAITING so
+	// extra cards from existing players don't re-trigger it.
+	if game.State == domain.GameStateWaiting && prevCount < domain.MinPlayers && game.PlayerCount >= domain.MinPlayers {
 		go uc.startCountdown(context.Background(), gameID)
 	}
 
@@ -270,9 +303,9 @@ func (uc *GameUseCase) LeaveGame(ctx context.Context, gameID uuid.UUID, req doma
 	}
 	defer tx.Rollback()
 
-	// Re-fetch game state to get latest state (prevents race condition if countdown ended)
-	// Note: This happens right after transaction starts to minimize race window
-	game, err = uc.gameRepo.FindByID(ctx, gameID)
+	// Lock the game row to read the latest state and serialize against concurrent
+	// joins/leaves that also recompute the live counters (same lock as JoinGame).
+	game, err = uc.gameRepo.LockForUpdate(ctx, tx, gameID)
 	if err != nil {
 		return fmt.Errorf("game not found: %w", err)
 	}
@@ -313,16 +346,24 @@ func (uc *GameUseCase) LeaveGame(ctx context.Context, gameID uuid.UUID, req doma
 			if err := uc.transactionRepo.Create(ctx, tx, transaction); err != nil {
 				return fmt.Errorf("failed to create refund transaction: %w", err)
 			}
-			game.PrizePool -= game.BetAmount * (1 - game.HouseCut)
 		}
 	}
 
-	// player_count counts distinct people, so it only drops when the user has no
-	// cards left in the game.
-	leftEntirely := len(toDrop) == len(userCards)
-	if leftEntirely {
-		game.PlayerCount--
+	// Recompute the live counters from the authoritative remaining active cards
+	// (this tx's removals are already visible) instead of decrementing in memory,
+	// so a concurrent join/leave can't lose an update. player_count is DISTINCT
+	// people; the pool is (remaining cards × stake), excluding the house cut.
+	remaining, err := uc.gameRepo.GetActivePlayersTx(ctx, tx, gameID)
+	if err != nil {
+		return fmt.Errorf("failed to read players: %w", err)
 	}
+	distinct := make(map[uuid.UUID]bool, len(remaining))
+	for _, p := range remaining {
+		distinct[p.UserID] = true
+	}
+	leftEntirely := !distinct[req.UserID]
+	game.PlayerCount = len(distinct)
+	game.PrizePool = float64(len(remaining)) * game.BetAmount * (1 - game.HouseCut)
 
 	// If distinct players drop below minimum during countdown, revert to WAITING.
 	// Remaining players stay; the countdown restarts when a 2nd player returns.
@@ -333,7 +374,7 @@ func (uc *GameUseCase) LeaveGame(ctx context.Context, gameID uuid.UUID, req doma
 		didRevert = true
 	}
 
-	if err := uc.gameRepo.Update(ctx, game); err != nil {
+	if err := uc.gameRepo.UpdateTx(ctx, tx, game); err != nil {
 		return fmt.Errorf("failed to update game: %w", err)
 	}
 
@@ -387,17 +428,29 @@ func (uc *GameUseCase) LeaveGame(ctx context.Context, gameID uuid.UUID, req doma
 
 // startCountdown starts the countdown for a game
 func (uc *GameUseCase) startCountdown(ctx context.Context, gameID uuid.UUID) {
-	game, err := uc.gameRepo.FindByID(ctx, gameID)
+	// Transition WAITING → COUNTDOWN under the game-row lock and re-read, so this
+	// only changes state/timing and never clobbers the player_count/prize_pool
+	// that concurrent joins are still recomputing (a stale full-row write here
+	// was reverting the live pool back to its 2-player value).
+	tx, err := uc.db.BeginTx(ctx, nil)
+	if err != nil {
+		return
+	}
+	game, err := uc.gameRepo.LockForUpdate(ctx, tx, gameID)
 	if err != nil || game.State != domain.GameStateWaiting {
+		tx.Rollback()
 		return
 	}
 
-	// Update game state to COUNTDOWN
-	game.State = domain.GameStateCountdown
 	countdownEnds := time.Now().Add(domain.CountdownDuration)
+	game.State = domain.GameStateCountdown
 	game.CountdownEnds = &countdownEnds
 
-	if err := uc.gameRepo.Update(ctx, game); err != nil {
+	if err := uc.gameRepo.UpdateTx(ctx, tx, game); err != nil {
+		tx.Rollback()
+		return
+	}
+	if err := tx.Commit(); err != nil {
 		return
 	}
 
@@ -448,8 +501,16 @@ func (uc *GameUseCase) startCountdown(ctx context.Context, gameID uuid.UUID) {
 
 // startDrawing starts the drawing phase
 func (uc *GameUseCase) startDrawing(ctx context.Context, gameID uuid.UUID) {
-	game, err := uc.gameRepo.FindByID(ctx, gameID)
+	// Transition COUNTDOWN → DRAWING under the game-row lock and re-read, so a
+	// late join finishing during the last tick of the countdown can't have its
+	// counter update clobbered by a stale full-row write here.
+	tx, err := uc.db.BeginTx(ctx, nil)
+	if err != nil {
+		return
+	}
+	game, err := uc.gameRepo.LockForUpdate(ctx, tx, gameID)
 	if err != nil || game.State != domain.GameStateCountdown {
+		tx.Rollback()
 		return
 	}
 
@@ -457,7 +518,11 @@ func (uc *GameUseCase) startDrawing(ctx context.Context, gameID uuid.UUID) {
 	now := time.Now()
 	game.StartedAt = &now
 
-	if err := uc.gameRepo.Update(ctx, game); err != nil {
+	if err := uc.gameRepo.UpdateTx(ctx, tx, game); err != nil {
+		tx.Rollback()
+		return
+	}
+	if err := tx.Commit(); err != nil {
 		return
 	}
 
@@ -746,7 +811,7 @@ func (uc *GameUseCase) ClaimBingo(ctx context.Context, gameID uuid.UUID, req dom
 			}
 		}
 
-		if err := uc.gameRepo.Update(ctx, game); err != nil {
+		if err := uc.gameRepo.UpdateTx(ctx, tx, game); err != nil {
 			return false, fmt.Errorf("failed to update game: %w", err)
 		}
 
