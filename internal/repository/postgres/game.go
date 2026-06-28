@@ -117,10 +117,14 @@ func (r *gameRepository) FindAvailable(ctx context.Context, gameType *domain.Gam
 		       winner_id, countdown_ends, started_at, finished_at, created_at, updated_at
 		FROM games
 		WHERE state IN ('WAITING', 'COUNTDOWN')
+		  AND (
+		        (game_type = 'REGULAR' AND bet_amount = $1)
+		     OR (game_type = 'VIP' AND bet_amount = $2)
+		  )
 	`
 
-	args := []interface{}{}
-	argPos := 1
+	args := []interface{}{domain.BetAmountRegular, domain.BetAmountVIP}
+	argPos := 3
 
 	if gameType != nil {
 		query += fmt.Sprintf(" AND game_type = $%d", argPos)
