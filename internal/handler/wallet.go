@@ -48,10 +48,10 @@ func (h *WalletHandler) Deposit(c *gin.Context) {
 		if err.Error() == "amount must be greater than 0" ||
 			err.Error() == "transaction_type must be Telebirr" ||
 			err.Error() == "transaction_id is required" ||
-			err.Error() == "payment provider does not match transaction_type" ||
-			err.Error() == "verified payment amount does not match requested amount" {
+			err.Error() == "payment provider does not match transaction_type" {
 			statusCode = http.StatusBadRequest
-		} else if strings.HasPrefix(err.Error(), "payment verification failed:") {
+		} else if strings.HasPrefix(err.Error(), "payment verification failed:") ||
+			strings.HasPrefix(err.Error(), "verified payment amount") {
 			statusCode = http.StatusBadRequest
 		} else if err.Error() == "user not found" {
 			statusCode = http.StatusNotFound

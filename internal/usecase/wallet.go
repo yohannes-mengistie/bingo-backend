@@ -93,7 +93,8 @@ func (uc *WalletUseCase) Deposit(ctx context.Context, req domain.DepositRequest)
 				return nil, errors.New("payment provider does not match transaction_type")
 			}
 			if math.Abs(verification.Amount-req.Amount) > 0.01 {
-				return nil, errors.New("verified payment amount does not match requested amount")
+				log.Printf("deposit %s: amount mismatch — verified %.2f, requested %.2f", req.TransactionID, verification.Amount, req.Amount)
+				return nil, fmt.Errorf("verified payment amount (%.2f) does not match requested amount (%.2f)", verification.Amount, req.Amount)
 			}
 			verified = true
 		case errors.Is(err, domain.ErrVerifierUnavailable):
