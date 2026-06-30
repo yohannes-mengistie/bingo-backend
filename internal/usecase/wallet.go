@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"strings"
 
@@ -80,16 +81,29 @@ func (uc *WalletUseCase) Deposit(ctx context.Context, req domain.DepositRequest)
 		return nil, errDuplicateReference
 	}
 
+	// verified stays false unless the verifier returns a positive verdict. A
+	// verified deposit is auto-approved below; everything else is left pending
+	// for manual admin approval.
+	verified := false
 	if uc.paymentVerifier != nil {
 		verification, err := uc.paymentVerifier.Verify(ctx, req.TransactionType, req.TransactionID)
-		if err != nil {
+		switch {
+		case err == nil:
+			if verification.Provider != req.TransactionType {
+				return nil, errors.New("payment provider does not match transaction_type")
+			}
+			if math.Abs(verification.Amount-req.Amount) > 0.01 {
+				return nil, errors.New("verified payment amount does not match requested amount")
+			}
+			verified = true
+		case errors.Is(err, domain.ErrVerifierUnavailable):
+			// Infrastructure failure (verifier down, timeout, 5xx, auth, rate
+			// limit) — fall back to manual approval rather than reject the
+			// deposit. The receipt was NOT judged invalid.
+			log.Printf("deposit %s: payment verifier unavailable, falling back to manual approval: %v", req.TransactionID, err)
+		default:
+			// Definitive negative verdict (bad receipt, amount/provider mismatch).
 			return nil, fmt.Errorf("payment verification failed: %w", err)
-		}
-		if verification.Provider != req.TransactionType {
-			return nil, errors.New("payment provider does not match transaction_type")
-		}
-		if math.Abs(verification.Amount-req.Amount) > 0.01 {
-			return nil, errors.New("verified payment amount does not match requested amount")
 		}
 	}
 
@@ -114,7 +128,7 @@ func (uc *WalletUseCase) Deposit(ctx context.Context, req domain.DepositRequest)
 		return nil, fmt.Errorf("failed to create deposit transaction: %w", err)
 	}
 
-	if uc.paymentVerifier != nil {
+	if verified {
 		return uc.transactionService.ApproveDeposit(ctx, transaction.ID)
 	}
 

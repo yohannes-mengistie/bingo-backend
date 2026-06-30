@@ -3,6 +3,7 @@ package payment
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -87,6 +88,20 @@ func TestVerifierCBEIncludesSuffix(t *testing.T) {
 	}
 	if result.Amount != 1000 {
 		t.Fatalf("amount = %v", result.Amount)
+	}
+}
+
+func TestVerifierUnavailableOnServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte("upstream down"))
+	}))
+	defer server.Close()
+
+	verifier := NewVerifier(config.PaymentVerifierConfig{BaseURL: server.URL, APIKey: "test-key"})
+	_, err := verifier.Verify(context.Background(), domain.PaymentMethodTelebirr, "CE626EJRNS")
+	if !errors.Is(err, domain.ErrVerifierUnavailable) {
+		t.Fatalf("expected ErrVerifierUnavailable, got %v", err)
 	}
 }
 

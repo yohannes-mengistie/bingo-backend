@@ -354,6 +354,8 @@ curl -X PUT http://localhost:8080/api/v1/user/550e8400-e29b-41d4-a716-4466554400
 
 Create a deposit request. If `VERIFY_API_KEY` is configured, the backend verifies the submitted Telebirr/CBE reference against the external verifier, checks the verified amount against `amount`, then completes the deposit and credits the wallet immediately. Without verifier configuration, the transaction is created with `pending` status and balance is not updated until admin approval.
 
+If the verifier is configured but cannot be reached (network failure, timeout, 5xx, auth, or rate-limit), the deposit falls back to a `pending` transaction for manual admin approval instead of being rejected. A definitive negative verdict (receipt not found, amount/provider mismatch) is still rejected.
+
 **Request Body:**
 
 ```json

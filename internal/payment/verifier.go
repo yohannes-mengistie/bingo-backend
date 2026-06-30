@@ -79,18 +79,30 @@ func (v *Verifier) Verify(ctx context.Context, method domain.PaymentMethod, refe
 
 	resp, err := v.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("verifier request failed: %w", err)
+		// Network failure, timeout, DNS, connection refused — infrastructure,
+		// not a verdict on the receipt. Let the caller fall back to manual review.
+		return nil, fmt.Errorf("%w: verifier request failed: %v", domain.ErrVerifierUnavailable, err)
 	}
 	defer resp.Body.Close()
+
+	// 5xx / auth / rate-limit / timeout mean the verifier gave us no usable
+	// answer — treat as transient so the deposit falls back to manual approval
+	// instead of being rejected as fraudulent.
+	if isTransientStatus(resp.StatusCode) {
+		return nil, fmt.Errorf("%w: verifier returned status %d", domain.ErrVerifierUnavailable, resp.StatusCode)
+	}
 
 	var decoded map[string]any
 	decoder := json.NewDecoder(resp.Body)
 	decoder.UseNumber()
 	if err := decoder.Decode(&decoded); err != nil {
-		return nil, fmt.Errorf("failed to decode verifier response: %w", err)
+		// A response we can't parse is not a verdict either — fall back to manual.
+		return nil, fmt.Errorf("%w: failed to decode verifier response: %v", domain.ErrVerifierUnavailable, err)
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// Remaining non-2xx (400/404/422, etc.) — the verifier rejected the
+		// request or receipt. This IS a definitive negative verdict.
 		return nil, fmt.Errorf("verifier returned status %d: %s", resp.StatusCode, responseMessage(decoded))
 	}
 
@@ -181,6 +193,19 @@ func normalizeProvider(value string, fallback domain.PaymentMethod) domain.Payme
 		return fallback
 	}
 	return ""
+}
+
+// isTransientStatus reports whether an HTTP status from the verifier means we
+// got no usable verdict (so the caller should fall back to manual approval),
+// rather than a definitive answer about the receipt. 401/403 (our own auth /
+// misconfiguration) and 429 (rate limit) are included so a temporary key or
+// quota problem doesn't block every player's deposit.
+func isTransientStatus(code int) bool {
+	switch code {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusRequestTimeout, http.StatusTooManyRequests:
+		return true
+	}
+	return code >= 500
 }
 
 func isCompletedStatus(status string) bool {

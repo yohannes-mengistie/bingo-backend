@@ -2,10 +2,17 @@ package domain
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// ErrVerifierUnavailable means the payment verifier could not produce a verdict
+// (network failure, timeout, 5xx, auth, or rate-limit). Callers should fall back
+// to manual admin approval rather than rejecting the deposit. It does NOT mean
+// the receipt was rejected — a definitive "receipt invalid" is a plain error.
+var ErrVerifierUnavailable = errors.New("payment verifier unavailable")
 
 // TransactionType represents the type of transaction
 type TransactionType string
