@@ -35,7 +35,7 @@ Both frontends are React + Vite + TypeScript + Tailwind. The player app uses
 - **Money** (wallets, transactions, games) lives in **PostgreSQL** (durable,
   row-locked for safety). **Redis** holds ephemeral live-game state and is the
   pub/sub backbone for the real-time WebSocket stream.
-- Payments (CBE / Telebirr) are **manual**: players send money to the house
+- Payments (Telebirr) are **manual**: players send money to the house
   accounts and submit a reference; an admin approves the deposit. No automated
   payment gateway.
 
@@ -185,9 +185,8 @@ these to live UI updates.
 - **Recent-winners lobby feed** — persistent, auto-refreshing list of recent
   winners (name · stake · prize · time).
 - **Deposit destinations** — the deposit screen shows the house Telebirr number
-  / CBE account (by method) with a copy button. Configured via `VITE_*` env —
-  ⚠️ **still placeholders; set the real numbers before players deposit**
-  (`VITE_TELEBIRR_NUMBER`, `VITE_CBE_ACCOUNT`, `VITE_PAYMENT_NAME`).
+  with a copy button. Configured via `VITE_*` env
+  (`VITE_TELEBIRR_NUMBER`, `VITE_PAYMENT_NAME`).
 - **UI refinement** — tighter, more professional sizing via the shared
   `Button`/`Card`/`Sheet` primitives.
 - **Back navigation** — wired Telegram's native `BackButton` app-wide (returns
@@ -236,7 +235,7 @@ all green**. (One blank-names failure was local schema drift — migration
 
 ## 8. Open follow-ups
 
-- Set the **real CBE / Telebirr deposit account numbers** (currently placeholders).
+- Set the **real Telebirr deposit account number**.
 - **Browser-level smoke test** of the deployed Mini App (multi-card buy, the
   2-distinct-players start, per-card claim/refund) — logic is covered by the
   use-case + pub/sub tests, but no real browser/WS round-trip has been driven.

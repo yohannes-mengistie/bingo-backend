@@ -60,9 +60,8 @@ type TelegramConfig struct {
 }
 
 type PaymentVerifierConfig struct {
-	BaseURL   string
-	APIKey    string
-	CBESuffix string
+	BaseURL string
+	APIKey  string
 }
 
 // Load loads configuration from environment variables
@@ -101,9 +100,8 @@ func Load() (*Config, error) {
 			MiniAppURL:    getEnv("TELEGRAM_MINIAPP_URL", "https://bingo-miniapp-gold.vercel.app"),
 		},
 		PaymentVerifier: PaymentVerifierConfig{
-			BaseURL:   strings.TrimRight(getEnv("VERIFY_API_BASE_URL", "https://verifyapi.leulzenebe.pro"), "/"),
-			APIKey:    getEnv("VERIFY_API_KEY", ""),
-			CBESuffix: getEnv("VERIFY_CBE_SUFFIX", ""),
+			BaseURL: strings.TrimRight(getEnv("VERIFY_API_BASE_URL", "https://verifyapi.leulzenebe.pro"), "/"),
+			APIKey:  getEnv("VERIFY_API_KEY", ""),
 		},
 	}
 

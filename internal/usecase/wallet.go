@@ -56,8 +56,8 @@ func (uc *WalletUseCase) Deposit(ctx context.Context, req domain.DepositRequest)
 		return nil, errors.New("amount must be greater than 0")
 	}
 
-	if req.TransactionType != domain.PaymentMethodCBE && req.TransactionType != domain.PaymentMethodTelebirr {
-		return nil, errors.New("transaction_type must be either CBE or Telebirr")
+	if req.TransactionType != domain.PaymentMethodTelebirr {
+		return nil, errors.New("transaction_type must be Telebirr")
 	}
 
 	req.TransactionID = strings.TrimSpace(req.TransactionID)
@@ -143,8 +143,8 @@ func (uc *WalletUseCase) Withdraw(ctx context.Context, req domain.WithdrawReques
 	}
 
 	// Validate account type
-	if req.AccountType != domain.PaymentMethodCBE && req.AccountType != domain.PaymentMethodTelebirr {
-		return nil, errors.New("account_type must be either CBE or Telebirr")
+	if req.AccountType != domain.PaymentMethodTelebirr {
+		return nil, errors.New("account_type must be Telebirr")
 	}
 
 	// Validate account number is not empty

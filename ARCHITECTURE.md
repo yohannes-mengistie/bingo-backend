@@ -153,8 +153,9 @@ Two entry paths, one token system:
 - **Telegram Bot API** (`pkg/telegram/bot.go`) — outbound: send messages /
   buttons; inbound: webhook updates (registration gateway).
 - **Telegram Mini App** — `initData` signature verification for player login.
-- **CBE / Telebirr** — payment *references* are recorded; settlement is manual
-  via admin approval. There is no automated payment-gateway integration.
+- **Telebirr** — payment *references* are recorded; deposits are auto-verified
+  via the verify.leul.et integration when configured, otherwise settled manually
+  via admin approval.
 
 ---
 

@@ -56,38 +56,10 @@ func TestVerifierTelebirr(t *testing.T) {
 	}
 }
 
-func TestVerifierCBEIncludesSuffix(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var payload map[string]string
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
-		if payload["suffix"] != "16825193" {
-			t.Fatalf("suffix = %q", payload["suffix"])
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"success": true,
-			"provider": "cbe",
-			"data": {
-				"reference": "FT253089F68Z",
-				"amount": "1,000.00 ETB"
-			}
-		}`))
-	}))
-	defer server.Close()
-
-	verifier := NewVerifier(config.PaymentVerifierConfig{BaseURL: server.URL, APIKey: "test-key", CBESuffix: "16825193"})
-	result, err := verifier.Verify(context.Background(), domain.PaymentMethodCBE, "FT253089F68Z")
-	if err != nil {
-		t.Fatalf("Verify returned error: %v", err)
-	}
-	if result.Provider != domain.PaymentMethodCBE {
-		t.Fatalf("provider = %q", result.Provider)
-	}
-	if result.Amount != 1000 {
-		t.Fatalf("amount = %v", result.Amount)
+func TestVerifierRejectsCBEMethod(t *testing.T) {
+	verifier := NewVerifier(config.PaymentVerifierConfig{BaseURL: "http://unused", APIKey: "test-key"})
+	if _, err := verifier.Verify(context.Background(), domain.PaymentMethod("CBE"), "FT253089F68Z"); err == nil {
+		t.Fatal("expected unsupported payment method error for CBE")
 	}
 }
 
@@ -116,8 +88,8 @@ func TestVerifierRejectsUnsupportedProvider(t *testing.T) {
 	}))
 	defer server.Close()
 
-	verifier := NewVerifier(config.PaymentVerifierConfig{BaseURL: server.URL, APIKey: "test-key", CBESuffix: "12345678"})
-	if _, err := verifier.Verify(context.Background(), domain.PaymentMethodCBE, "FT253089F68Z"); err == nil {
+	verifier := NewVerifier(config.PaymentVerifierConfig{BaseURL: server.URL, APIKey: "test-key"})
+	if _, err := verifier.Verify(context.Background(), domain.PaymentMethodTelebirr, "CE626EJRNS"); err == nil {
 		t.Fatal("expected unsupported provider error")
 	}
 }

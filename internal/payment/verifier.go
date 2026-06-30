@@ -19,10 +19,9 @@ import (
 var numberPattern = regexp.MustCompile(`[-+]?\d+(\.\d+)?`)
 
 type Verifier struct {
-	baseURL   string
-	apiKey    string
-	cbeSuffix string
-	client    *http.Client
+	baseURL string
+	apiKey  string
+	client  *http.Client
 }
 
 // NewVerifier returns a configured verifier, or a nil domain.PaymentVerifier
@@ -40,9 +39,8 @@ func NewVerifier(cfg config.PaymentVerifierConfig) domain.PaymentVerifier {
 	}
 
 	return &Verifier{
-		baseURL:   baseURL,
-		apiKey:    cfg.APIKey,
-		cbeSuffix: strings.TrimSpace(cfg.CBESuffix),
+		baseURL: baseURL,
+		apiKey:  cfg.APIKey,
 		client: &http.Client{
 			Timeout: 20 * time.Second,
 		},
@@ -53,17 +51,11 @@ func (v *Verifier) Verify(ctx context.Context, method domain.PaymentMethod, refe
 	if v == nil {
 		return nil, errors.New("payment verifier is not configured")
 	}
-	if method != domain.PaymentMethodCBE && method != domain.PaymentMethodTelebirr {
+	if method != domain.PaymentMethodTelebirr {
 		return nil, errors.New("unsupported payment method")
 	}
 
 	payload := map[string]string{"reference": strings.TrimSpace(reference)}
-	if method == domain.PaymentMethodCBE {
-		if v.cbeSuffix == "" {
-			return nil, errors.New("cbe verification suffix is not configured")
-		}
-		payload["suffix"] = v.cbeSuffix
-	}
 
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -185,8 +177,6 @@ func parseAmount(value any) (float64, bool) {
 func normalizeProvider(value string, fallback domain.PaymentMethod) domain.PaymentMethod {
 	normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(value), " ", ""))
 	switch normalized {
-	case "cbe", "commercialbankofethiopia":
-		return domain.PaymentMethodCBE
 	case "telebirr", "telebirrmobilemoney":
 		return domain.PaymentMethodTelebirr
 	case "":

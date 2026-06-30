@@ -46,7 +46,7 @@ func (h *WalletHandler) Deposit(c *gin.Context) {
 	if err != nil {
 		statusCode := http.StatusInternalServerError
 		if err.Error() == "amount must be greater than 0" ||
-			err.Error() == "transaction_type must be either CBE or Telebirr" ||
+			err.Error() == "transaction_type must be Telebirr" ||
 			err.Error() == "transaction_id is required" ||
 			err.Error() == "payment provider does not match transaction_type" ||
 			err.Error() == "verified payment amount does not match requested amount" {
@@ -99,7 +99,7 @@ func (h *WalletHandler) Withdraw(c *gin.Context) {
 	if err != nil {
 		statusCode := http.StatusInternalServerError
 		if err.Error() == "amount must be greater than 0" ||
-			err.Error() == "account_type must be either CBE or Telebirr" ||
+			err.Error() == "account_type must be Telebirr" ||
 			err.Error() == "account_number is required" {
 			statusCode = http.StatusBadRequest
 		} else if err.Error() == "user not found" || err.Error() == "wallet not found" {

@@ -86,7 +86,7 @@ make migrate-up
 - Server: `localhost:8080`
 - Database: `postgres@localhost:5432/bingo`
 - Redis: `localhost:6379`
-- Payment verifier: set `VERIFY_API_KEY` to enable Telebirr/CBE receipt verification, and set `VERIFY_CBE_SUFFIX` to your receiving CBE account suffix. `VERIFY_API_BASE_URL` defaults to `https://verifyapi.leulzenebe.pro`.
+- Payment verifier: set `VERIFY_API_KEY` to enable Telebirr receipt verification. `VERIFY_API_BASE_URL` defaults to `https://verifyapi.leulzenebe.pro`.
 
 5. Run the server:
 
@@ -352,7 +352,7 @@ curl -X PUT http://localhost:8080/api/v1/user/550e8400-e29b-41d4-a716-4466554400
 
 ### POST /api/v1/wallet/deposit
 
-Create a deposit request. If `VERIFY_API_KEY` is configured, the backend verifies the submitted Telebirr/CBE reference against the external verifier, checks the verified amount against `amount`, then completes the deposit and credits the wallet immediately. Without verifier configuration, the transaction is created with `pending` status and balance is not updated until admin approval.
+Create a deposit request. Telebirr is the only supported payment method. If `VERIFY_API_KEY` is configured, the backend verifies the submitted Telebirr reference against the external verifier, checks the verified amount against `amount`, then completes the deposit and credits the wallet immediately. Without verifier configuration, the transaction is created with `pending` status and balance is not updated until admin approval.
 
 If the verifier is configured but cannot be reached (network failure, timeout, 5xx, auth, or rate-limit), the deposit falls back to a `pending` transaction for manual admin approval instead of being rejected. A definitive negative verdict (receipt not found, amount/provider mismatch) is still rejected.
 
@@ -361,7 +361,7 @@ If the verifier is configured but cannot be reached (network failure, timeout, 5
 ```json
 {
   "amount": 100.00,
-  "transaction_type": "CBE",
+  "transaction_type": "Telebirr",
   "transaction_id": "tx_123456789"
 }
 ```
@@ -377,7 +377,7 @@ If the verifier is configured but cannot be reached (network failure, timeout, 5
     "type": "deposit",
     "amount": 100.00,
     "status": "completed",
-    "transaction_type": "CBE",
+    "transaction_type": "Telebirr",
     "transaction_id": "tx_123456789",
     "reference": null,
     "created_at": "2024-01-01T00:00:00Z"
@@ -561,7 +561,7 @@ Get the top 10 deposit transactions for a user, ordered by most recent first.
       "type": "deposit",
       "amount": 100.00,
       "status": "completed",
-      "transaction_type": "CBE",
+      "transaction_type": "Telebirr",
       "transaction_id": "tx_123456789",
       "reference": null,
       "created_at": "2024-01-01T00:00:00Z"
@@ -1372,7 +1372,7 @@ Get all transactions with pagination.
       "type": "deposit",
       "amount": 100.00,
       "status": "pending",
-      "transaction_type": "CBE",
+      "transaction_type": "Telebirr",
       "transaction_id": "tx_123456789",
       "reference": null,
       "created_at": "2024-01-01T00:00:00Z"
@@ -1404,7 +1404,7 @@ Get all pending deposit transactions.
       "type": "deposit",
       "amount": 100.00,
       "status": "pending",
-      "transaction_type": "CBE",
+      "transaction_type": "Telebirr",
       "transaction_id": "tx_123456789",
       "reference": null,
       "created_at": "2024-01-01T00:00:00Z"
@@ -1468,7 +1468,7 @@ Get all completed (approved) deposit transactions.
       "type": "deposit",
       "amount": 100.00,
       "status": "completed",
-      "transaction_type": "CBE",
+      "transaction_type": "Telebirr",
       "transaction_id": "tx_123456789",
       "reference": null,
       "created_at": "2024-01-01T00:00:00Z"
@@ -1532,7 +1532,7 @@ Get all failed transactions (any type).
       "type": "deposit",
       "amount": 100.00,
       "status": "failed",
-      "transaction_type": "CBE",
+      "transaction_type": "Telebirr",
       "transaction_id": "tx_123456789",
       "reference": null,
       "created_at": "2024-01-01T00:00:00Z"
@@ -1656,7 +1656,7 @@ Approve a pending deposit transaction. This will update the transaction status t
     "type": "deposit",
     "amount": 100.00,
     "status": "completed",
-    "transaction_type": "CBE",
+    "transaction_type": "Telebirr",
     "transaction_id": "tx_123456789",
     "reference": null,
     "created_at": "2024-01-01T00:00:00Z"
@@ -1695,7 +1695,7 @@ Reject a pending deposit transaction. The transaction status is updated to `fail
     "type": "deposit",
     "amount": 100.00,
     "status": "failed",
-    "transaction_type": "CBE",
+    "transaction_type": "Telebirr",
     "transaction_id": "tx_123456789",
     "reference": null,
     "created_at": "2024-01-01T00:00:00Z"
@@ -1798,7 +1798,7 @@ Cancel any pending transaction. For deposits, no balance change occurs. For with
     "type": "deposit",
     "amount": 100.00,
     "status": "cancelled",
-    "transaction_type": "CBE",
+    "transaction_type": "Telebirr",
     "transaction_id": "tx_123456789",
     "reference": null,
     "created_at": "2024-01-01T00:00:00Z"

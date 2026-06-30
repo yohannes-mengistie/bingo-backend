@@ -38,9 +38,12 @@ const (
 type PaymentMethod string
 
 const (
-	PaymentMethodCBE      PaymentMethod = "CBE"
 	PaymentMethodTelebirr PaymentMethod = "Telebirr"
 )
+
+// Note: CBE is no longer an accepted payment method. Historical transactions
+// may still carry transaction_type = "CBE" in the database; that value reads
+// back fine as a plain string but can no longer be submitted.
 
 // PaymentVerificationResult contains normalized data returned by an external
 // payment verifier.
