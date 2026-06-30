@@ -11,12 +11,13 @@ import (
 )
 
 type Config struct {
-	Server   ServerConfig
-	Database DatabaseConfig
-	Redis    RedisConfig
-	JWT      JWTConfig
-	Admin    AdminConfig
-	Telegram TelegramConfig
+	Server          ServerConfig
+	Database        DatabaseConfig
+	Redis           RedisConfig
+	JWT             JWTConfig
+	Admin           AdminConfig
+	Telegram        TelegramConfig
+	PaymentVerifier PaymentVerifierConfig
 }
 
 type ServerConfig struct {
@@ -58,6 +59,12 @@ type TelegramConfig struct {
 	MiniAppURL    string // URL the bot's "Play" button opens (the Vercel Mini App)
 }
 
+type PaymentVerifierConfig struct {
+	BaseURL   string
+	APIKey    string
+	CBESuffix string
+}
+
 // Load loads configuration from environment variables
 func Load() (*Config, error) {
 	// Load .env file if it exists (optional)
@@ -92,6 +99,11 @@ func Load() (*Config, error) {
 			BotToken:      getEnv("TELEGRAM_BOT_TOKEN", ""),
 			WebhookSecret: getEnv("TELEGRAM_WEBHOOK_SECRET", ""),
 			MiniAppURL:    getEnv("TELEGRAM_MINIAPP_URL", "https://bingo-miniapp-gold.vercel.app"),
+		},
+		PaymentVerifier: PaymentVerifierConfig{
+			BaseURL:   strings.TrimRight(getEnv("VERIFY_API_BASE_URL", "https://verifyapi.leulzenebe.pro"), "/"),
+			APIKey:    getEnv("VERIFY_API_KEY", ""),
+			CBESuffix: getEnv("VERIFY_CBE_SUFFIX", ""),
 		},
 	}
 

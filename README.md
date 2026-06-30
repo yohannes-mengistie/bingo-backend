@@ -86,6 +86,7 @@ make migrate-up
 - Server: `localhost:8080`
 - Database: `postgres@localhost:5432/bingo`
 - Redis: `localhost:6379`
+- Payment verifier: set `VERIFY_API_KEY` to enable Telebirr/CBE receipt verification, and set `VERIFY_CBE_SUFFIX` to your receiving CBE account suffix. `VERIFY_API_BASE_URL` defaults to `https://verifyapi.leulzenebe.pro`.
 
 5. Run the server:
 
@@ -351,13 +352,12 @@ curl -X PUT http://localhost:8080/api/v1/user/550e8400-e29b-41d4-a716-4466554400
 
 ### POST /api/v1/wallet/deposit
 
-Create a deposit request. The transaction is created with `pending` status and **balance is NOT updated** until admin approval.
+Create a deposit request. If `VERIFY_API_KEY` is configured, the backend verifies the submitted Telebirr/CBE reference against the external verifier, checks the verified amount against `amount`, then completes the deposit and credits the wallet immediately. Without verifier configuration, the transaction is created with `pending` status and balance is not updated until admin approval.
 
 **Request Body:**
 
 ```json
 {
-  "user_id": "550e8400-e29b-41d4-a716-446655440000",
   "amount": 100.00,
   "transaction_type": "CBE",
   "transaction_id": "tx_123456789"
@@ -368,13 +368,13 @@ Create a deposit request. The transaction is created with `pending` status and *
 
 ```json
 {
-  "message": "Deposit request created successfully",
+  "message": "Deposit verified and completed successfully",
   "transaction": {
     "id": "660e8400-e29b-41d4-a716-446655440001",
     "user_id": "550e8400-e29b-41d4-a716-446655440000",
     "type": "deposit",
     "amount": 100.00,
-    "status": "pending",
+    "status": "completed",
     "transaction_type": "CBE",
     "transaction_id": "tx_123456789",
     "reference": null,
@@ -385,8 +385,9 @@ Create a deposit request. The transaction is created with `pending` status and *
 
 **Error Responses:**
 
-- `400`: Invalid amount (must be > 0)
+- `400`: Invalid amount, unsupported payment method, failed payment verification, or amount mismatch
 - `404`: User not found
+- `409`: Transaction reference already used
 
 ### POST /api/v1/wallet/withdraw
 

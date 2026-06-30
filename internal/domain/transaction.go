@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"context"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,6 +34,19 @@ const (
 	PaymentMethodCBE      PaymentMethod = "CBE"
 	PaymentMethodTelebirr PaymentMethod = "Telebirr"
 )
+
+// PaymentVerificationResult contains normalized data returned by an external
+// payment verifier.
+type PaymentVerificationResult struct {
+	Provider  PaymentMethod `json:"provider"`
+	Reference string        `json:"reference"`
+	Amount    float64       `json:"amount"`
+	Status    string        `json:"status,omitempty"`
+}
+
+type PaymentVerifier interface {
+	Verify(ctx context.Context, method PaymentMethod, reference string) (*PaymentVerificationResult, error)
+}
 
 // Transaction represents a transaction entity in the domain
 type Transaction struct {

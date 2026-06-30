@@ -3,6 +3,7 @@ package handler
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/bingo/backend/internal/domain"
 	"github.com/bingo/backend/internal/middleware"
@@ -44,7 +45,13 @@ func (h *WalletHandler) Deposit(c *gin.Context) {
 	transaction, err := h.walletUseCase.Deposit(c.Request.Context(), req)
 	if err != nil {
 		statusCode := http.StatusInternalServerError
-		if err.Error() == "amount must be greater than 0" {
+		if err.Error() == "amount must be greater than 0" ||
+			err.Error() == "transaction_type must be either CBE or Telebirr" ||
+			err.Error() == "transaction_id is required" ||
+			err.Error() == "payment provider does not match transaction_type" ||
+			err.Error() == "verified payment amount does not match requested amount" {
+			statusCode = http.StatusBadRequest
+		} else if strings.HasPrefix(err.Error(), "payment verification failed:") {
 			statusCode = http.StatusBadRequest
 		} else if err.Error() == "user not found" {
 			statusCode = http.StatusNotFound
@@ -58,8 +65,13 @@ func (h *WalletHandler) Deposit(c *gin.Context) {
 		return
 	}
 
+	message := "Deposit request created successfully"
+	if transaction.Status == domain.TransactionStatusCompleted {
+		message = "Deposit verified and completed successfully"
+	}
+
 	c.JSON(http.StatusCreated, gin.H{
-		"message":     "Deposit request created successfully",
+		"message":     message,
 		"transaction": transaction,
 	})
 }

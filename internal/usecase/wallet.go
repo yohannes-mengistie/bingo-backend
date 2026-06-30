@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/bingo/backend/internal/domain"
@@ -23,6 +24,7 @@ type WalletUseCase struct {
 	gameRepo           domain.GameRepository
 	transactionService *postgres.TransactionService
 	db                 *sql.DB
+	paymentVerifier    domain.PaymentVerifier
 }
 
 // NewWalletUseCase creates a new wallet use case
@@ -32,6 +34,7 @@ func NewWalletUseCase(
 	userRepo domain.UserRepository,
 	gameRepo domain.GameRepository,
 	db *sql.DB,
+	paymentVerifier domain.PaymentVerifier,
 ) *WalletUseCase {
 	transactionService := postgres.NewTransactionService(db, walletRepo, transactionRepo)
 	return &WalletUseCase{
@@ -41,14 +44,24 @@ func NewWalletUseCase(
 		gameRepo:           gameRepo,
 		transactionService: transactionService,
 		db:                 db,
+		paymentVerifier:    paymentVerifier,
 	}
 }
 
-// Deposit creates a deposit request (pending status, does not update balance)
+// Deposit creates or completes a deposit, depending on verifier configuration.
 func (uc *WalletUseCase) Deposit(ctx context.Context, req domain.DepositRequest) (*domain.Transaction, error) {
 	// Validate amount
 	if req.Amount <= 0 {
 		return nil, errors.New("amount must be greater than 0")
+	}
+
+	if req.TransactionType != domain.PaymentMethodCBE && req.TransactionType != domain.PaymentMethodTelebirr {
+		return nil, errors.New("transaction_type must be either CBE or Telebirr")
+	}
+
+	req.TransactionID = strings.TrimSpace(req.TransactionID)
+	if req.TransactionID == "" {
+		return nil, errors.New("transaction_id is required")
 	}
 
 	// Verify user exists
@@ -67,7 +80,21 @@ func (uc *WalletUseCase) Deposit(ctx context.Context, req domain.DepositRequest)
 		return nil, errDuplicateReference
 	}
 
-	// Create transaction with pending status
+	if uc.paymentVerifier != nil {
+		verification, err := uc.paymentVerifier.Verify(ctx, req.TransactionType, req.TransactionID)
+		if err != nil {
+			return nil, fmt.Errorf("payment verification failed: %w", err)
+		}
+		if verification.Provider != req.TransactionType {
+			return nil, errors.New("payment provider does not match transaction_type")
+		}
+		if math.Abs(verification.Amount-req.Amount) > 0.01 {
+			return nil, errors.New("verified payment amount does not match requested amount")
+		}
+	}
+
+	// Create transaction with pending status. Verified deposits are immediately
+	// approved below so balance updates still use the existing atomic path.
 	transactionType := req.TransactionType
 	transaction := &domain.Transaction{
 		UserID:          req.UserID,
@@ -85,6 +112,10 @@ func (uc *WalletUseCase) Deposit(ctx context.Context, req domain.DepositRequest)
 			return nil, errDuplicateReference
 		}
 		return nil, fmt.Errorf("failed to create deposit transaction: %w", err)
+	}
+
+	if uc.paymentVerifier != nil {
+		return uc.transactionService.ApproveDeposit(ctx, transaction.ID)
 	}
 
 	return transaction, nil

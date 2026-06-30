@@ -89,3 +89,14 @@ services:
       # override here if the frontend moves to another host.
       - key: TELEGRAM_MINIAPP_URL
         value: https://bingo-miniapp-gold.vercel.app
+
+      # ---- Payment verifier (verify.leul.et) ----
+      # When VERIFY_API_KEY is set, deposits are auto-verified against the
+      # external receipt verifier and credited instantly; leave it blank to keep
+      # the manual admin-approval flow. Set the key/suffix in the dashboard.
+      - key: VERIFY_API_KEY        # your key from verify.leul.et — secret
+        sync: false
+      - key: VERIFY_CBE_SUFFIX     # last 8 digits of YOUR receiving CBE account
+        sync: false
+      - key: VERIFY_API_BASE_URL
+        value: https://verifyapi.leulzenebe.pro

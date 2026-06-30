@@ -15,6 +15,7 @@ import (
 	"github.com/bingo/backend/config"
 	"github.com/bingo/backend/internal/handler"
 	"github.com/bingo/backend/internal/middleware"
+	"github.com/bingo/backend/internal/payment"
 	"github.com/bingo/backend/internal/repository/postgres"
 	"github.com/bingo/backend/internal/usecase"
 	"github.com/bingo/backend/pkg/jwt"
@@ -69,8 +70,9 @@ func main() {
 	jwtService := jwt.NewService(cfg)
 
 	// Initialize use cases
+	paymentVerifier := payment.NewVerifier(cfg.PaymentVerifier)
 	userUseCase := usecase.NewUserUseCase(userRepo, walletRepo, db)
-	walletUseCase := usecase.NewWalletUseCase(walletRepo, transactionRepo, userRepo, gameRepo, db)
+	walletUseCase := usecase.NewWalletUseCase(walletRepo, transactionRepo, userRepo, gameRepo, db, paymentVerifier)
 	authUseCase := usecase.NewAuthUseCase(userRepo, jwtService, cfg.Admin.SecretCode, cfg.Telegram.BotToken)
 	gameUseCase := usecase.NewGameUseCase(gameRepo, walletRepo, transactionRepo, userRepo, db, gameStateService)
 
