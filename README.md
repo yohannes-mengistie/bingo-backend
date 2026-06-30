@@ -395,16 +395,19 @@ If the verifier is configured but cannot be reached (network failure, timeout, 5
 
 Create a withdrawal request. The balance is **immediately subtracted** and the transaction is created with `pending` status. If admin rejects, balance is refunded.
 
-Payouts always go to the user's **verified registration phone** (the number they shared with the bot). Any `account_number` in the body is ignored — a withdrawal cannot be redirected to another account. Requirements: `account_type` must be `Telebirr`, amount ≥ the minimum withdrawal (50 birr), the user must have at least one completed **real** cash-in deposit, and the remaining balance must stay ≥ 10.
+Payouts default to the user's **verified registration phone** (the number they shared with the bot). The player may supply a different `account_number`, but it must be a valid Ethiopian Telebirr mobile — it's normalized server-side. Requirements: `account_type` must be `Telebirr`, amount ≥ the minimum withdrawal (10 birr), the user must have at least one completed **real** cash-in deposit, and the remaining balance must stay ≥ 10.
 
 **Request Body:**
 
 ```json
 {
   "amount": 50.00,
-  "account_type": "Telebirr"
+  "account_type": "Telebirr",
+  "account_number": "0997709691"
 }
 ```
+
+`account_number` is optional — omit it to pay out to the registered phone.
 
 **Response:**
 

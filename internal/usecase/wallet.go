@@ -171,14 +171,23 @@ func (uc *WalletUseCase) Withdraw(ctx context.Context, req domain.WithdrawReques
 		return nil, errors.New("user not found")
 	}
 
-	// Security: pay out only to the user's verified registration phone. Players
-	// register through the bot by sharing their real Telegram contact, which is
-	// validated as an Ethiopian mobile, so this is a trusted number. We ignore
-	// req.AccountNumber entirely.
-	if !utils.IsEthiopianMobile(user.PhoneNumber) {
-		return nil, errors.New("no verified phone number on file; register your phone with the bot before withdrawing")
+	// Determine the payout destination. By default it is the user's verified
+	// registration phone (a real Ethiopian mobile shared with the bot). If the
+	// player supplies a different Telebirr number — because their Telebirr is on
+	// another phone — we accept it, but only after validating it is a real
+	// Ethiopian mobile, so a payout can never go to a garbage/typo'd account.
+	var payoutAccount string
+	if supplied := strings.TrimSpace(req.AccountNumber); supplied != "" {
+		if !utils.IsEthiopianMobile(supplied) {
+			return nil, errors.New("withdrawal account must be a valid Ethiopian Telebirr number")
+		}
+		payoutAccount = utils.CanonicalEthiopianPhone(supplied)
+	} else {
+		if !utils.IsEthiopianMobile(user.PhoneNumber) {
+			return nil, errors.New("no verified phone number on file; provide a Telebirr number to withdraw to")
+		}
+		payoutAccount = utils.CanonicalEthiopianPhone(user.PhoneNumber)
 	}
-	payoutAccount := utils.CanonicalEthiopianPhone(user.PhoneNumber)
 
 	// Process withdrawal (database operations in repository)
 	return uc.transactionService.ProcessWithdrawal(ctx, req.UserID, req.Amount, payoutAccount, req.AccountType)

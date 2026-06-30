@@ -32,7 +32,7 @@ const TotalCards = 200
 const MaxCardsPerPlayer = 4
 
 // MinWithdrawalAmount is the smallest withdrawal a player may request (birr).
-const MinWithdrawalAmount = 50.0
+const MinWithdrawalAmount = 10.0
 
 // CardGridSize is the size of the bingo card grid (5x5)
 const CardGridSize = 5

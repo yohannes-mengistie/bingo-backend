@@ -100,6 +100,7 @@ func (h *WalletHandler) Withdraw(c *gin.Context) {
 		statusCode := http.StatusInternalServerError
 		if err.Error() == "amount must be greater than 0" ||
 			err.Error() == "account_type must be Telebirr" ||
+			err.Error() == "withdrawal account must be a valid Ethiopian Telebirr number" ||
 			strings.HasPrefix(err.Error(), "minimum withdrawal") ||
 			strings.HasPrefix(err.Error(), "no verified phone number") {
 			statusCode = http.StatusBadRequest
