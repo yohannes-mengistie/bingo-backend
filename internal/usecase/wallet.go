@@ -11,6 +11,7 @@ import (
 
 	"github.com/bingo/backend/internal/domain"
 	"github.com/bingo/backend/internal/repository/postgres"
+	"github.com/bingo/backend/pkg/utils"
 	"github.com/google/uuid"
 )
 
@@ -144,11 +145,19 @@ func (uc *WalletUseCase) Deposit(ctx context.Context, req domain.DepositRequest)
 	return transaction, nil
 }
 
-// Withdraw creates a withdrawal and immediately subtracts from balance
+// Withdraw creates a withdrawal and immediately subtracts from balance.
+// The payout destination is always the user's verified registration phone — the
+// client-supplied account number is ignored — so a withdrawal can never be
+// redirected to a different account.
 func (uc *WalletUseCase) Withdraw(ctx context.Context, req domain.WithdrawRequest) (*domain.Transaction, error) {
 	// Validate amount
 	if req.Amount <= 0 {
 		return nil, errors.New("amount must be greater than 0")
+	}
+
+	// Enforce the minimum withdrawal.
+	if req.Amount < domain.MinWithdrawalAmount {
+		return nil, fmt.Errorf("minimum withdrawal is %.0f birr", domain.MinWithdrawalAmount)
 	}
 
 	// Validate account type
@@ -156,19 +165,23 @@ func (uc *WalletUseCase) Withdraw(ctx context.Context, req domain.WithdrawReques
 		return nil, errors.New("account_type must be Telebirr")
 	}
 
-	// Validate account number is not empty
-	if req.AccountNumber == "" {
-		return nil, errors.New("account_number is required")
-	}
-
 	// Verify user exists
-	_, err := uc.userRepo.FindByID(ctx, req.UserID)
+	user, err := uc.userRepo.FindByID(ctx, req.UserID)
 	if err != nil {
 		return nil, errors.New("user not found")
 	}
 
+	// Security: pay out only to the user's verified registration phone. Players
+	// register through the bot by sharing their real Telegram contact, which is
+	// validated as an Ethiopian mobile, so this is a trusted number. We ignore
+	// req.AccountNumber entirely.
+	if !utils.IsEthiopianMobile(user.PhoneNumber) {
+		return nil, errors.New("no verified phone number on file; register your phone with the bot before withdrawing")
+	}
+	payoutAccount := utils.CanonicalEthiopianPhone(user.PhoneNumber)
+
 	// Process withdrawal (database operations in repository)
-	return uc.transactionService.ProcessWithdrawal(ctx, req.UserID, req.Amount, req.AccountNumber, req.AccountType)
+	return uc.transactionService.ProcessWithdrawal(ctx, req.UserID, req.Amount, payoutAccount, req.AccountType)
 }
 
 // Transfer transfers money from one user to another (atomic operation)

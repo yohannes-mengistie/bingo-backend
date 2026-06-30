@@ -82,10 +82,13 @@ type DepositRequest struct {
 
 // WithdrawRequest represents the data needed to create a withdrawal.
 // UserID is populated from the authenticated JWT, not the request body.
+// AccountNumber is ignored: payouts always go to the user's verified
+// registration phone (see WalletUseCase.Withdraw), so a client cannot redirect
+// money to another account. The field is retained for backward compatibility.
 type WithdrawRequest struct {
 	UserID        uuid.UUID     `json:"-"`
 	Amount        float64       `json:"amount" binding:"required,gt=0"`
-	AccountNumber string        `json:"account_number" binding:"required"`
+	AccountNumber string        `json:"account_number"`
 	AccountType   PaymentMethod `json:"account_type" binding:"required"`
 }
 

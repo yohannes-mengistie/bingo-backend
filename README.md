@@ -393,14 +393,16 @@ If the verifier is configured but cannot be reached (network failure, timeout, 5
 
 ### POST /api/v1/wallet/withdraw
 
-Create a withdrawal request. The balance is **immediately subtracted** and transaction is created with `pending` status. If admin rejects, balance will be refunded.
+Create a withdrawal request. The balance is **immediately subtracted** and the transaction is created with `pending` status. If admin rejects, balance is refunded.
+
+Payouts always go to the user's **verified registration phone** (the number they shared with the bot). Any `account_number` in the body is ignored — a withdrawal cannot be redirected to another account. Requirements: `account_type` must be `Telebirr`, amount ≥ the minimum withdrawal (50 birr), the user must have at least one completed **real** cash-in deposit, and the remaining balance must stay ≥ 10.
 
 **Request Body:**
 
 ```json
 {
-  "user_id": "550e8400-e29b-41d4-a716-446655440000",
-  "amount": 50.00
+  "amount": 50.00,
+  "account_type": "Telebirr"
 }
 ```
 

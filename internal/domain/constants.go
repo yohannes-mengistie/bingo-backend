@@ -31,6 +31,9 @@ const TotalCards = 200
 // one game. Each card costs one full bet (e.g. 4 cards on a 10-birr table = 40).
 const MaxCardsPerPlayer = 4
 
+// MinWithdrawalAmount is the smallest withdrawal a player may request (birr).
+const MinWithdrawalAmount = 50.0
+
 // CardGridSize is the size of the bingo card grid (5x5)
 const CardGridSize = 5
 
