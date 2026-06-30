@@ -138,13 +138,21 @@ func (v *Verifier) Verify(ctx context.Context, method domain.PaymentMethod, refe
 	}, nil
 }
 
+// amountKeys are the response fields that may carry the payment amount, in
+// preference order. settledAmount (the net amount actually credited to the
+// receiving account) comes FIRST so the Telebirr service fee baked into
+// totalPaidAmount is never counted — a 20-birr transfer reads as 20, not the
+// 21 the sender paid. totalPaidAmount is only a last-resort fallback for
+// receipts that omit the net amount.
+var amountKeys = []string{"settledAmount", "amount", "transactionAmount", "paidAmount", "total", "totalPaidAmount"}
+
 func responseAmount(root, data map[string]any) (float64, error) {
-	for _, key := range []string{"amount", "paidAmount", "totalPaidAmount", "transactionAmount", "total", "settledAmount"} {
+	for _, key := range amountKeys {
 		if amount, ok := parseAmount(data[key]); ok {
 			return amount, nil
 		}
 	}
-	for _, key := range []string{"amount", "paidAmount", "totalPaidAmount", "transactionAmount", "total", "settledAmount"} {
+	for _, key := range amountKeys {
 		if amount, ok := parseAmount(root[key]); ok {
 			return amount, nil
 		}

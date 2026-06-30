@@ -83,8 +83,11 @@ func (uc *WalletUseCase) Deposit(ctx context.Context, req domain.DepositRequest)
 
 	// verified stays false unless the verifier returns a positive verdict. A
 	// verified deposit is auto-approved below; everything else is left pending
-	// for manual admin approval.
+	// for manual admin approval. creditAmount is what actually hits the wallet —
+	// for a verified deposit it is the net amount the house account received
+	// (settledAmount), NOT what the player typed or the fee-inclusive total.
 	verified := false
+	creditAmount := req.Amount
 	if uc.paymentVerifier != nil {
 		verification, err := uc.paymentVerifier.Verify(ctx, req.TransactionType, req.TransactionID)
 		switch {
@@ -92,11 +95,16 @@ func (uc *WalletUseCase) Deposit(ctx context.Context, req domain.DepositRequest)
 			if verification.Provider != req.TransactionType {
 				return nil, errors.New("payment provider does not match transaction_type")
 			}
-			if math.Abs(verification.Amount-req.Amount) > 0.01 {
+			// Guard against referencing a receipt for a wildly different amount.
+			// The Telebirr service fee is already excluded (we read settledAmount),
+			// so the player simply types the amount they sent; a small tolerance
+			// absorbs rounding. The wallet is credited the verified net amount.
+			if math.Abs(verification.Amount-req.Amount) > 1.0 {
 				log.Printf("deposit %s: amount mismatch — verified %.2f, requested %.2f", req.TransactionID, verification.Amount, req.Amount)
 				return nil, fmt.Errorf("verified payment amount (%.2f) does not match requested amount (%.2f)", verification.Amount, req.Amount)
 			}
 			verified = true
+			creditAmount = verification.Amount
 		case errors.Is(err, domain.ErrVerifierUnavailable):
 			// Infrastructure failure (verifier down, timeout, 5xx, auth, rate
 			// limit) — fall back to manual approval rather than reject the
@@ -114,7 +122,7 @@ func (uc *WalletUseCase) Deposit(ctx context.Context, req domain.DepositRequest)
 	transaction := &domain.Transaction{
 		UserID:          req.UserID,
 		Type:            domain.TransactionTypeDeposit,
-		Amount:          req.Amount,
+		Amount:          creditAmount,
 		Status:          domain.TransactionStatusPending,
 		TransactionType: &transactionType,
 		TransactionID:   &req.TransactionID,

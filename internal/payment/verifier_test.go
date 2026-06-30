@@ -56,6 +56,37 @@ func TestVerifierTelebirr(t *testing.T) {
 	}
 }
 
+// A real Telebirr receipt carries both settledAmount (net, what the house got)
+// and totalPaidAmount (settled + service fee). We must use settledAmount so the
+// player isn't charged for the fee.
+func TestVerifierTelebirrUsesSettledAmountNotTotalPaid(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"success": true,
+			"provider": "telebirr",
+			"data": {
+				"transactionStatus": "Completed",
+				"receiptNo": "DFU3F35PH3",
+				"settledAmount": "20 Birr",
+				"serviceFee": "0.87 Birr",
+				"serviceFeeVAT": "0.13 Birr",
+				"totalPaidAmount": "21 Birr"
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	verifier := NewVerifier(config.PaymentVerifierConfig{BaseURL: server.URL, APIKey: "test-key"})
+	result, err := verifier.Verify(context.Background(), domain.PaymentMethodTelebirr, "DFU3F35PH3")
+	if err != nil {
+		t.Fatalf("Verify returned error: %v", err)
+	}
+	if result.Amount != 20 {
+		t.Fatalf("amount = %v, want 20 (settledAmount, not totalPaidAmount 21)", result.Amount)
+	}
+}
+
 func TestVerifierRejectsCBEMethod(t *testing.T) {
 	verifier := NewVerifier(config.PaymentVerifierConfig{BaseURL: "http://unused", APIKey: "test-key"})
 	if _, err := verifier.Verify(context.Background(), domain.PaymentMethod("CBE"), "FT253089F68Z"); err == nil {
