@@ -51,10 +51,15 @@ type TransactionRepository interface {
 	CountAll(ctx context.Context) (int, error)
 }
 
-// GameHistoryEntry represents a game with user's participation details
+// GameHistoryEntry represents a game with user's participation details.
+// A player may hold several cards in one game; CardsHeld is how many, and
+// TotalStake is what they actually spent (CardsHeld × bet_amount). CardID is
+// just the representative (most recently joined) card.
 type GameHistoryEntry struct {
 	Game         *Game      `json:"game"`
 	CardID       int        `json:"card_id"`
+	CardsHeld    int        `json:"cards_held"`
+	TotalStake   float64    `json:"total_stake"`
 	IsEliminated bool       `json:"is_eliminated"`
 	JoinedAt     time.Time  `json:"joined_at"`
 	LeftAt       *time.Time `json:"left_at,omitempty"`

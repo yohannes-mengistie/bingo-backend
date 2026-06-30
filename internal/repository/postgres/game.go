@@ -802,13 +802,14 @@ func (r *gameRepository) FindGamesByUserID(ctx context.Context, userID uuid.UUID
 			id, game_type, state, bet_amount, min_players, player_count,
 			prize_pool, house_cut, winner_id, countdown_ends, started_at,
 			finished_at, created_at, updated_at,
-			card_id, is_eliminated, joined_at, left_at
+			card_id, cards_held, is_eliminated, joined_at, left_at
 		FROM (
 			SELECT DISTINCT ON (g.id)
 				g.id, g.game_type, g.state, g.bet_amount, g.min_players, g.player_count,
 				g.prize_pool, g.house_cut, g.winner_id, g.countdown_ends, g.started_at,
 				g.finished_at, g.created_at, g.updated_at,
-				gp.card_id, gp.is_eliminated, gp.joined_at, gp.left_at
+				gp.card_id, gp.is_eliminated, gp.joined_at, gp.left_at,
+				COUNT(*) OVER (PARTITION BY g.id) AS cards_held
 			FROM game_players gp
 			INNER JOIN games g ON gp.game_id = g.id
 			WHERE gp.user_id = $1
@@ -851,6 +852,7 @@ func (r *gameRepository) FindGamesByUserID(ctx context.Context, userID uuid.UUID
 			&entry.Game.CreatedAt,
 			&entry.Game.UpdatedAt,
 			&entry.CardID,
+			&entry.CardsHeld,
 			&entry.IsEliminated,
 			&entry.JoinedAt,
 			&leftAt,
@@ -858,6 +860,9 @@ func (r *gameRepository) FindGamesByUserID(ctx context.Context, userID uuid.UUID
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan game history entry: %w", err)
 		}
+
+		// What the player actually spent in this game across all their cards.
+		entry.TotalStake = float64(entry.CardsHeld) * entry.Game.BetAmount
 
 		// Handle nullable fields
 		if winnerID.Valid {
