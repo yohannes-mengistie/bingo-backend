@@ -62,6 +62,10 @@ type TelegramConfig struct {
 type PaymentVerifierConfig struct {
 	BaseURL string
 	APIKey  string
+	// TelebirrAccount is the house Telebirr number that deposits must be paid
+	// to. When set, the verifier rejects any receipt credited to a different
+	// account, so a valid receipt for money sent elsewhere can't be claimed.
+	TelebirrAccount string
 }
 
 // Load loads configuration from environment variables
@@ -100,8 +104,9 @@ func Load() (*Config, error) {
 			MiniAppURL:    getEnv("TELEGRAM_MINIAPP_URL", "https://bingo-miniapp-gold.vercel.app"),
 		},
 		PaymentVerifier: PaymentVerifierConfig{
-			BaseURL: strings.TrimRight(getEnv("VERIFY_API_BASE_URL", "https://verifyapi.leulzenebe.pro"), "/"),
-			APIKey:  getEnv("VERIFY_API_KEY", ""),
+			BaseURL:         strings.TrimRight(getEnv("VERIFY_API_BASE_URL", "https://verifyapi.leulzenebe.pro"), "/"),
+			APIKey:          getEnv("VERIFY_API_KEY", ""),
+			TelebirrAccount: getEnv("VERIFY_TELEBIRR_ACCOUNT", ""),
 		},
 	}
 

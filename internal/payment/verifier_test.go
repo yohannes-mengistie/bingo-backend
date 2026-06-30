@@ -94,6 +94,36 @@ func TestVerifierRejectsCBEMethod(t *testing.T) {
 	}
 }
 
+func TestVerifierAccountBinding(t *testing.T) {
+	body := `{
+		"success": true,
+		"provider": "telebirr",
+		"data": {
+			"transactionStatus": "Completed",
+			"receiptNo": "DFU3F35PH3",
+			"creditedPartyAccountNo": "2519****9691",
+			"settledAmount": "20 Birr"
+		}
+	}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer server.Close()
+
+	// Matching house account → accepted.
+	ok := NewVerifier(config.PaymentVerifierConfig{BaseURL: server.URL, APIKey: "k", TelebirrAccount: "0997709691"})
+	if _, err := ok.Verify(context.Background(), domain.PaymentMethodTelebirr, "DFU3F35PH3"); err != nil {
+		t.Fatalf("matching account should verify, got %v", err)
+	}
+
+	// Receipt credited to a different account → rejected.
+	bad := NewVerifier(config.PaymentVerifierConfig{BaseURL: server.URL, APIKey: "k", TelebirrAccount: "0911112222"})
+	if _, err := bad.Verify(context.Background(), domain.PaymentMethodTelebirr, "DFU3F35PH3"); err == nil {
+		t.Fatal("receipt paid to a different account should be rejected")
+	}
+}
+
 func TestVerifierUnavailableOnServerError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)

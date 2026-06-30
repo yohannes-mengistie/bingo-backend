@@ -21,7 +21,11 @@ var numberPattern = regexp.MustCompile(`[-+]?\d+(\.\d+)?`)
 type Verifier struct {
 	baseURL string
 	apiKey  string
-	client  *http.Client
+	// telebirrAccount holds the digits of the house Telebirr number; when set,
+	// receipts credited to a different account are rejected. Empty disables the
+	// check.
+	telebirrAccount string
+	client          *http.Client
 }
 
 // NewVerifier returns a configured verifier, or a nil domain.PaymentVerifier
@@ -39,8 +43,9 @@ func NewVerifier(cfg config.PaymentVerifierConfig) domain.PaymentVerifier {
 	}
 
 	return &Verifier{
-		baseURL: baseURL,
-		apiKey:  cfg.APIKey,
+		baseURL:         baseURL,
+		apiKey:          cfg.APIKey,
+		telebirrAccount: onlyDigits(cfg.TelebirrAccount),
 		client: &http.Client{
 			Timeout: 20 * time.Second,
 		},
@@ -115,6 +120,16 @@ func (v *Verifier) Verify(ctx context.Context, method domain.PaymentMethod, refe
 	status := firstString(data, "transactionStatus", "status")
 	if status != "" && !isCompletedStatus(status) {
 		return nil, fmt.Errorf("receipt status is %s", status)
+	}
+
+	// Account binding: ensure the receipt was actually credited to the house
+	// account, not to some third party. Receipts mask the middle digits
+	// (e.g. "2519****9691"), so we compare the visible trailing digits.
+	if v.telebirrAccount != "" {
+		credited := firstString(data, "creditedPartyAccountNo", "creditedAccountNo", "creditedPartyAccount", "receiverAccount")
+		if !accountMatches(v.telebirrAccount, credited) {
+			return nil, fmt.Errorf("receipt was paid to a different account (%s), not the house account", credited)
+		}
 	}
 
 	amount, err := responseAmount(decoded, data)
@@ -204,6 +219,39 @@ func isTransientStatus(code int) bool {
 		return true
 	}
 	return code >= 500
+}
+
+// accountMatches reports whether a (possibly masked) credited account from a
+// receipt belongs to the configured house account. Receipts reveal only the
+// trailing digits, so we require at least the last 4 visible digits to be a
+// suffix of the house account's digits.
+func accountMatches(houseDigits, credited string) bool {
+	tail := trailingDigits(credited)
+	if len(tail) < 4 || len(tail) > len(houseDigits) {
+		return false
+	}
+	return strings.HasSuffix(houseDigits, tail)
+}
+
+// trailingDigits returns the run of digits at the end of s, stopping at the
+// first non-digit (so the masked "****" in "2519****9691" is excluded).
+func trailingDigits(s string) string {
+	i := len(s)
+	for i > 0 && s[i-1] >= '0' && s[i-1] <= '9' {
+		i--
+	}
+	return s[i:]
+}
+
+// onlyDigits strips everything but 0-9 from s.
+func onlyDigits(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] >= '0' && s[i] <= '9' {
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
 }
 
 func isCompletedStatus(status string) bool {
