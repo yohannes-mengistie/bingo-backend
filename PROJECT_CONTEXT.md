@@ -144,13 +144,30 @@ these to live UI updates.
    carry the live `prize_pool`. (Browser-level Mini App test not yet run.)
 7. **Auto-mark (auto-daub)** — players asked to stop tapping each called number.
    The game room now **marks every drawn number on every card automatically**;
-   the player only joins, watches, and taps **BINGO** to claim (manual claim
-   kept on purpose, for the win moment + agency). Marks are no longer tap state —
-   they're **derived** from the drawn-number set (`autoMarked(card, drawn)` in
+   marks are **derived** from the drawn-number set (`autoMarked(card, drawn)` in
    `src/lib/bingo.ts`), so a card is always in sync with what's been called.
    **Frontend-only** (`bingo-miniapp/src/`): the server already re-validates every
    claim against the real drawn numbers, so auto-marking changes nothing backend
-   and can't be cheated. No backend deploy needed.
+   and can't be cheated.
+8. **Automatic BINGO + pot splitting** (backend) — the game no longer waits for
+   a player to tap BINGO. After **each drawn number**, `GameUseCase.checkAutoBingo`
+   scans every active card and, because auto-daub means marks == drawn numbers on
+   the card, declares a win the instant `ValidateBingo(card, drawn)` is true.
+   - **Co-winners split the pot**: every card completing on the **same draw** is a
+     winner and shares the prize pool evenly (`splitPot`, santim-rounded, remainder
+     to the earliest joiner so the payout total is exactly the pool). One user
+     holding several winning cards gets one share per card.
+   - All winner resolution flows through the shared `finalizeWinners`, whose atomic
+     `ClaimWinner` guard (DRAWING→FINISHED) still prevents any double payout if the
+     now-vestigial manual `POST /games/:id/bingo` races the auto-check.
+   - Per-card winner state is recorded on `game_players.is_winner` / `prize_won`
+     (**migration `017_add_game_player_winnings.sql` — apply before deploy**).
+     `games.winner_id` still stores the single *primary* winner for recent-winners;
+     game history derives per-user win/amount from the per-card flags.
+   - `winner` WebSocket event is backward-compatible: top-level fields = primary
+     winner, plus new `winners[]` (each `{user_id, winner_name, prize, card_id,
+     marked_numbers}`), `prize_pool`, and `split` bool. Frontend can hide the
+     BINGO button and render all winners.
 
 > ⚠️ Frontend and backend share the tier codes and `card_id` contract — when a
 > change touches both they must deploy together. (The auto-mark change above is

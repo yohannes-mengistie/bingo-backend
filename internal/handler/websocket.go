@@ -444,15 +444,27 @@ func (h *WebSocketHandler) sendInitialState(conn *websocket.Conn, gameID uuid.UU
 		}
 	}
 
+	stateData := map[string]interface{}{
+		"game":         game,
+		"drawnNumbers": drawnNumbers,
+		"takenCards":   takenCards,
+		"playerCount":  playerCount,
+		"secondsLeft":  secondsLeft,
+	}
+
+	// For a finished game, include the winning card(s) so a client connecting
+	// after the transient winner event (a reconnect, or a spectator opening the
+	// finished game) can still render the post-game winner screen. There may be
+	// several co-winners who split the pot.
+	if game.State == domain.GameStateFinished && h.gameUseCase != nil {
+		if winners, err := h.gameUseCase.GetGameWinners(ctx, gameID); err == nil {
+			stateData["winners"] = winners
+		}
+	}
+
 	initialState := map[string]interface{}{
 		"event": domain.WebSocketEventInitialState,
-		"data": map[string]interface{}{
-			"game":         game,
-			"drawnNumbers": drawnNumbers,
-			"takenCards":   takenCards,
-			"playerCount":  playerCount,
-			"secondsLeft":  secondsLeft,
-		},
+		"data":  stateData,
 	}
 
 	data, err := json.Marshal(initialState)

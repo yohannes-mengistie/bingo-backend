@@ -64,6 +64,10 @@ type GameHistoryEntry struct {
 	JoinedAt     time.Time  `json:"joined_at"`
 	LeftAt       *time.Time `json:"left_at,omitempty"`
 	IsWinner     bool       `json:"is_winner"`
+	// WinAmount is the total this user was paid in the game across all their
+	// winning cards (0 if they didn't win). With pot splitting this can be less
+	// than the full prize pool.
+	WinAmount float64 `json:"win_amount"`
 }
 
 // GameRepository defines the interface for game data operations
@@ -87,6 +91,14 @@ type GameRepository interface {
 	// ClaimWinner atomically marks the game FINISHED with the winner, but only if
 	// it is still DRAWING. Returns true only for the single claim that succeeds.
 	ClaimWinner(ctx context.Context, tx *sql.Tx, gameID, winnerID uuid.UUID) (bool, error)
+	// MarkCardWinner flags one card (game_id, user_id, card_id) as a winner and
+	// records the prize share it was paid. Used when splitting the pot across
+	// every card that completed on the same drawn number.
+	MarkCardWinner(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID, cardID int, prize float64) error
+	// FindWinningCards returns every winning card of a game (is_winner = TRUE)
+	// with its owner's name and prize share, ordered deterministically (earliest
+	// joiner, then card ID). Empty for games with no winner.
+	FindWinningCards(ctx context.Context, gameID uuid.UUID) ([]*GameWinner, error)
 	AddPlayer(ctx context.Context, tx *sql.Tx, player *GamePlayer) error
 	// RemovePlayerCard marks one specific card (game_id, user_id, card_id) as
 	// left. A player may hold several cards, so leaving is per-card.

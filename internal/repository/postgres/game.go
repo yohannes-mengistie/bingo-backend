@@ -749,6 +749,68 @@ func (r *gameRepository) EliminatePlayerCard(ctx context.Context, tx *sql.Tx, ga
 	return nil
 }
 
+// MarkCardWinner flags one specific card as a winner and records its prize
+// share. Runs inside the winner-finalization transaction.
+func (r *gameRepository) MarkCardWinner(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID, cardID int, prize float64) error {
+	query := `
+		UPDATE game_players
+		SET is_winner = TRUE, prize_won = $4
+		WHERE game_id = $1 AND user_id = $2 AND card_id = $3
+	`
+
+	var err error
+	if tx != nil {
+		_, err = tx.ExecContext(ctx, query, gameID, userID, cardID, prize)
+	} else {
+		_, err = r.db.ExecContext(ctx, query, gameID, userID, cardID, prize)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to mark card winner: %w", err)
+	}
+
+	return nil
+}
+
+// FindWinningCards returns every winning card of a game with its owner's name
+// and prize share, ordered by join time then card ID (matching the order used
+// when the pot was split). MarkedNumbers is left for the caller to reconstruct
+// from the drawn set.
+func (r *gameRepository) FindWinningCards(ctx context.Context, gameID uuid.UUID) ([]*domain.GameWinner, error) {
+	query := `
+		SELECT gp.user_id, gp.card_id, gp.prize_won, u.first_name, u.last_name
+		FROM game_players gp
+		JOIN users u ON u.id = gp.user_id
+		WHERE gp.game_id = $1 AND gp.is_winner = TRUE
+		ORDER BY gp.joined_at, gp.card_id
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, gameID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find winning cards: %w", err)
+	}
+	defer rows.Close()
+
+	winners := []*domain.GameWinner{}
+	for rows.Next() {
+		var w domain.GameWinner
+		var firstName string
+		var lastName sql.NullString
+		if err := rows.Scan(&w.UserID, &w.CardID, &w.Prize, &firstName, &lastName); err != nil {
+			return nil, fmt.Errorf("failed to scan winning card: %w", err)
+		}
+		w.WinnerName = firstName
+		if lastName.Valid && lastName.String != "" {
+			w.WinnerName = firstName + " " + lastName.String
+		}
+		winners = append(winners, &w)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating winning cards: %w", err)
+	}
+
+	return winners, nil
+}
+
 // GetTakenCards gets all taken card IDs for a game
 func (r *gameRepository) GetTakenCards(ctx context.Context, gameID uuid.UUID) ([]int, error) {
 	query := `
@@ -802,14 +864,27 @@ func (r *gameRepository) FindGamesByUserID(ctx context.Context, userID uuid.UUID
 			id, game_type, state, bet_amount, min_players, player_count,
 			prize_pool, house_cut, winner_id, countdown_ends, started_at,
 			finished_at, created_at, updated_at,
-			card_id, cards_held, is_eliminated, joined_at, left_at
+			card_id, cards_held, is_eliminated, joined_at, left_at,
+			user_won, win_amount
 		FROM (
 			SELECT DISTINCT ON (g.id)
 				g.id, g.game_type, g.state, g.bet_amount, g.min_players, g.player_count,
 				g.prize_pool, g.house_cut, g.winner_id, g.countdown_ends, g.started_at,
 				g.finished_at, g.created_at, g.updated_at,
 				gp.card_id, gp.is_eliminated, gp.joined_at, gp.left_at,
-				COUNT(*) OVER (PARTITION BY g.id) AS cards_held
+				COUNT(*) OVER (PARTITION BY g.id) AS cards_held,
+				-- Did any of this user's cards win, and how much did they win in
+				-- total (summed across their winning cards after a pot split)?
+				-- Fall back to games.winner_id for historical games finished before
+				-- per-card winner tracking existed (is_winner/prize_won not backfilled):
+				-- there the winner took the whole pool.
+				(bool_or(gp.is_winner) OVER (PARTITION BY g.id) OR g.winner_id = $1) AS user_won,
+				CASE
+					WHEN bool_or(gp.is_winner) OVER (PARTITION BY g.id)
+						THEN COALESCE(SUM(gp.prize_won) OVER (PARTITION BY g.id), 0)
+					WHEN g.winner_id = $1 THEN g.prize_pool
+					ELSE 0
+				END AS win_amount
 			FROM game_players gp
 			INNER JOIN games g ON gp.game_id = g.id
 			WHERE gp.user_id = $1
@@ -856,6 +931,8 @@ func (r *gameRepository) FindGamesByUserID(ctx context.Context, userID uuid.UUID
 			&entry.IsEliminated,
 			&entry.JoinedAt,
 			&leftAt,
+			&entry.IsWinner,
+			&entry.WinAmount,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan game history entry: %w", err)
@@ -864,14 +941,15 @@ func (r *gameRepository) FindGamesByUserID(ctx context.Context, userID uuid.UUID
 		// What the player actually spent in this game across all their cards.
 		entry.TotalStake = float64(entry.CardsHeld) * entry.Game.BetAmount
 
-		// Handle nullable fields
+		// Handle nullable fields. IsWinner/WinAmount are derived from the per-card
+		// winner flags (set above), so co-winners of a split pot are reported
+		// correctly even though games.winner_id only records the primary winner.
 		if winnerID.Valid {
 			parsedID, err := uuid.Parse(winnerID.String)
 			if err != nil {
 				return nil, fmt.Errorf("failed to parse winner_id: %w", err)
 			}
 			entry.Game.WinnerID = &parsedID
-			entry.IsWinner = parsedID == userID
 		}
 		if countdownEnds.Valid {
 			entry.Game.CountdownEnds = &countdownEnds.Time

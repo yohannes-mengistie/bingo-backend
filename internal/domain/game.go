@@ -86,6 +86,8 @@ type GamePlayer struct {
 	UserID       uuid.UUID  `json:"user_id" db:"user_id"`
 	CardID       int        `json:"card_id" db:"card_id"` // 1-200
 	IsEliminated bool       `json:"is_eliminated" db:"is_eliminated"`
+	IsWinner     bool       `json:"is_winner" db:"is_winner"`
+	PrizeWon     float64    `json:"prize_won" db:"prize_won"`
 	JoinedAt     time.Time  `json:"joined_at" db:"joined_at"`
 	LeftAt       *time.Time `json:"left_at,omitempty" db:"left_at"`
 }
@@ -173,4 +175,17 @@ type RecentWinner struct {
 	WinnerName string    `json:"winner_name"`
 	Prize      float64   `json:"prize"`
 	FinishedAt time.Time `json:"finished_at"`
+}
+
+// GameWinner is one winning card of a finished game, with the prize share it was
+// paid and the marks that prove the win. A game may have several (co-winners who
+// completed on the same draw and split the pot). Used to render the winning
+// card(s) on the post-game screen — including for clients that reconnect after
+// the live winner event, which the transient event alone can't reach.
+type GameWinner struct {
+	UserID        uuid.UUID `json:"user_id"`
+	WinnerName    string    `json:"winner_name"`
+	CardID        int       `json:"card_id"`
+	Prize         float64   `json:"prize"`
+	MarkedNumbers []int     `json:"marked_numbers"`
 }

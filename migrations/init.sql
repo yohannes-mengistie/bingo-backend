@@ -67,6 +67,11 @@ CREATE TABLE IF NOT EXISTS game_players (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     card_id INTEGER NOT NULL CHECK (card_id >= 1 AND card_id <= 200),
     is_eliminated BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Per-card winner tracking. When several cards complete a bingo on the same
+    -- drawn number the pot is split across them; is_winner flags each winning
+    -- card and prize_won is the share it was paid.
+    is_winner BOOLEAN NOT NULL DEFAULT FALSE,
+    prize_won NUMERIC(12, 2) NOT NULL DEFAULT 0,
     joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     left_at TIMESTAMP,
     -- A player may hold multiple cards per game (cap of 4 enforced in app), so

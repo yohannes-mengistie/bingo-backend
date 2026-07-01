@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
+	"sort"
 	"time"
 
 	"github.com/bingo/backend/internal/domain"
@@ -602,10 +604,285 @@ func (uc *GameUseCase) drawNumbers(ctx context.Context, gameID uuid.UUID) {
 			"number":   number,
 			"drawn_at": drawnAt.Format(time.RFC3339),
 		})
+
+		// Auto-declare a winner the instant a card completes a pattern with the
+		// number just drawn — players no longer need to press a Bingo button.
+		if uc.checkAutoBingo(ctx, gameID, game) {
+			return
+		}
 	}
 }
 
-// ClaimBingo validates and processes a bingo claim
+// winnerCard is one card that has completed a valid bingo, together with the
+// auto-daubbed marks that prove it.
+type winnerCard struct {
+	UserID uuid.UUID
+	CardID int
+	Marked []int
+}
+
+// checkAutoBingo scans every active card after a number is drawn and finalizes
+// the game the moment one or more cards complete a valid pattern. Because
+// auto-daub marks every drawn number on every card, a card wins exactly when its
+// marks (the free center plus every drawn number on the card) form a bingo over
+// the current draw set — no manual claim required. When several cards complete
+// on the same draw, they are all co-winners and split the prize pool.
+//
+// Returns true once the game has been resolved, so the draw loop can stop.
+func (uc *GameUseCase) checkAutoBingo(ctx context.Context, gameID uuid.UUID, game *domain.Game) bool {
+	drawnSet, err := uc.drawnNumberSet(ctx, gameID)
+	if err != nil {
+		return false
+	}
+
+	winners, err := uc.collectWinners(ctx, gameID, drawnSet)
+	if err != nil || len(winners) == 0 {
+		return false
+	}
+
+	if _, err := uc.finalizeWinners(ctx, game, winners); err != nil {
+		fmt.Printf("Warning: auto-bingo finalize failed for game %s: %v\n", gameID, err)
+		return false
+	}
+	// The game is resolved (won here, or already claimed elsewhere) — stop drawing.
+	return true
+}
+
+// drawnNumberSet returns the set of numbers drawn so far for quick membership tests.
+func (uc *GameUseCase) drawnNumberSet(ctx context.Context, gameID uuid.UUID) (map[int]bool, error) {
+	drawnNumbers, err := uc.redisService.GetDrawnNumbers(ctx, gameID)
+	if err != nil {
+		return nil, err
+	}
+	drawnSet := make(map[int]bool, len(drawnNumbers))
+	for _, dn := range drawnNumbers {
+		drawnSet[dn.Number] = true
+	}
+	return drawnSet, nil
+}
+
+// collectWinners returns every active card that currently forms a valid bingo
+// over the drawn set, sorted deterministically (earliest joiner, then lowest
+// card ID). The order fixes the "primary" winner (games.winner_id) and the
+// recipient of any rounding remainder when the pot is split.
+func (uc *GameUseCase) collectWinners(ctx context.Context, gameID uuid.UUID, drawnSet map[int]bool) ([]winnerCard, error) {
+	players, err := uc.gameRepo.GetPlayers(ctx, gameID)
+	if err != nil {
+		return nil, err
+	}
+
+	sort.Slice(players, func(i, j int) bool {
+		if players[i].JoinedAt.Equal(players[j].JoinedAt) {
+			return players[i].CardID < players[j].CardID
+		}
+		return players[i].JoinedAt.Before(players[j].JoinedAt)
+	})
+
+	winners := make([]winnerCard, 0)
+	for _, p := range players {
+		if p.IsEliminated {
+			continue
+		}
+		card := bingo.GenerateCard(p.CardID)
+		if card == nil {
+			continue
+		}
+		marked := autoDaubMarks(card, drawnSet)
+		if bingo.ValidateBingo(card, marked) {
+			winners = append(winners, winnerCard{UserID: p.UserID, CardID: p.CardID, Marked: marked})
+		}
+	}
+	return winners, nil
+}
+
+// autoDaubMarks returns the marked numbers of a card under auto-daub: the free
+// center plus every drawn number present on the card.
+func autoDaubMarks(card *bingo.BingoCard, drawnSet map[int]bool) []int {
+	marked := make([]int, 0, domain.CardTotalPositions)
+	for row := 0; row < domain.CardGridSize; row++ {
+		for col := 0; col < domain.CardGridSize; col++ {
+			n := card.Numbers[row][col]
+			if n == domain.CardCenterValue || drawnSet[n] {
+				marked = append(marked, n)
+			}
+		}
+	}
+	return marked
+}
+
+// round2 rounds a birr amount to the santim (2 decimal places).
+func round2(v float64) float64 {
+	return math.Round(v*100) / 100
+}
+
+// splitPot divides a prize pool into n even shares rounded to the santim. Any
+// rounding remainder is folded into the first share so the shares always sum to
+// exactly the pool (never paying out more than was staked).
+func splitPot(pool float64, n int) []float64 {
+	shares := make([]float64, n)
+	if n <= 0 {
+		return shares
+	}
+	share := round2(pool / float64(n))
+	for i := range shares {
+		shares[i] = share
+	}
+	remainder := round2(pool - share*float64(n))
+	shares[0] = round2(share + remainder)
+	return shares
+}
+
+// winnerDisplayName resolves a user's display name for winner events.
+func (uc *GameUseCase) winnerDisplayName(ctx context.Context, userID uuid.UUID) string {
+	name := "Unknown"
+	if u, err := uc.userRepo.FindByID(ctx, userID); err == nil && u != nil {
+		if u.LastName != nil && *u.LastName != "" {
+			name = fmt.Sprintf("%s %s", u.FirstName, *u.LastName)
+		} else {
+			name = u.FirstName
+		}
+	}
+	return name
+}
+
+// finalizeWinners closes the game and splits the prize pool evenly across every
+// winning card. It is the single winner-resolution path shared by manual bingo
+// claims and automatic bingo detection.
+//
+// The conditional ClaimWinner UPDATE is an atomic single-resolution guard: if
+// two resolutions race (a manual claim racing the auto-check), only the first
+// transitions DRAWING→FINISHED and pays out; the rest observe the game is
+// already claimed and return (false, nil) — no error, no double payout. The
+// winners slice must be pre-sorted deterministically; winners[0] becomes the
+// primary winner (games.winner_id) and absorbs any rounding remainder so the
+// credited total exactly equals the prize pool.
+func (uc *GameUseCase) finalizeWinners(ctx context.Context, game *domain.Game, winners []winnerCard) (bool, error) {
+	if len(winners) == 0 {
+		return false, nil
+	}
+
+	gameID := game.ID
+	primary := winners[0].UserID
+
+	tx, err := uc.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Atomic single-resolution guard: claim the game only if it is still DRAWING.
+	claimed, err := uc.gameRepo.ClaimWinner(ctx, tx, gameID, primary)
+	if err != nil {
+		return false, fmt.Errorf("failed to claim win: %w", err)
+	}
+	if !claimed {
+		// The game was already resolved elsewhere — nothing to do.
+		return false, nil
+	}
+
+	// Split the pot evenly across every winning card (santim-rounded, remainder
+	// to the first winner) so the credited total is exactly the prize pool.
+	n := len(winners)
+	amounts := splitPot(game.PrizePool, n)
+
+	// Reflect the claimed state in memory for the events/Redis updates below.
+	game.State = domain.GameStateFinished
+	game.WinnerID = &primary
+	now := time.Now()
+	game.FinishedAt = &now
+
+	gamePrizeRef := "GAME_PRIZE"
+	for i, w := range winners {
+		amount := amounts[i]
+
+		// Lock and credit the winner's wallet. Multiple cards may belong to the
+		// same user; each card's share is credited separately to that wallet.
+		if _, err := uc.walletRepo.LockForUpdate(ctx, tx, w.UserID); err != nil {
+			return false, fmt.Errorf("wallet not found: %w", err)
+		}
+		if err := uc.walletRepo.UpdateBalance(ctx, tx, w.UserID, amount); err != nil {
+			return false, fmt.Errorf("failed to add prize: %w", err)
+		}
+
+		// Record the prize as a completed transaction (GAME_PRIZE excludes it
+		// from deposit history).
+		if err := uc.transactionRepo.Create(ctx, tx, &domain.Transaction{
+			UserID:    w.UserID,
+			Type:      domain.TransactionTypeDeposit,
+			Amount:    amount,
+			Status:    domain.TransactionStatusCompleted,
+			Reference: &gamePrizeRef,
+		}); err != nil {
+			return false, fmt.Errorf("failed to create prize transaction: %w", err)
+		}
+
+		// Flag the winning card and record its share.
+		if err := uc.gameRepo.MarkCardWinner(ctx, tx, gameID, w.UserID, w.CardID, amount); err != nil {
+			return false, fmt.Errorf("failed to mark winning card: %w", err)
+		}
+	}
+
+	// Commit transaction (ClaimWinner already persisted the FINISHED state).
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	// Update Redis
+	uc.redisService.SaveGameState(ctx, game)
+
+	// Build the winners payload (each card's owner, share, and proving marks).
+	winnersPayload := make([]map[string]interface{}, n)
+	for i, w := range winners {
+		winnersPayload[i] = map[string]interface{}{
+			"user_id":        w.UserID.String(),
+			"winner_name":    uc.winnerDisplayName(ctx, w.UserID),
+			"prize":          amounts[i],
+			"card_id":        w.CardID,
+			"marked_numbers": w.Marked,
+		}
+	}
+
+	// Publish the winner event. Top-level fields describe the primary winner for
+	// backward compatibility with older clients; `winners` carries every
+	// co-winner and their individual share, and `prize_pool` is the full pot.
+	primaryPayload := winnersPayload[0]
+	uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventWinner, map[string]interface{}{
+		"user_id":        primaryPayload["user_id"],
+		"winner_name":    primaryPayload["winner_name"],
+		"prize":          primaryPayload["prize"],
+		"card_id":        primaryPayload["card_id"],
+		"marked_numbers": primaryPayload["marked_numbers"],
+		"prize_pool":     game.PrizePool,
+		"split":          n > 1,
+		"winners":        winnersPayload,
+	})
+
+	// Publish game finished status
+	uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventGameStatus, map[string]interface{}{
+		"status": string(domain.GameStateFinished),
+	})
+
+	// Create a new game of the same type and notify clients
+	go func() {
+		newGame, err := uc.CreateOrGetGame(context.Background(), game.GameType)
+		if err == nil && newGame != nil {
+			// Publish new game available event to the same channel so clients can
+			// reconnect to this new game.
+			uc.redisService.PublishEvent(context.Background(), gameID, domain.WebSocketEventNewGameAvailable, map[string]interface{}{
+				"gameId":   newGame.ID.String(),
+				"gameType": string(newGame.GameType),
+			})
+		}
+	}()
+
+	return true, nil
+}
+
+// ClaimBingo validates and processes a manual bingo claim. With automatic bingo
+// detection now resolving games as soon as a card completes (see checkAutoBingo),
+// this endpoint is a fallback/no-op in most games, but is kept working so an
+// explicit claim still pays out correctly — splitting the pot with any co-winners
+// through the shared finalizeWinners path.
 func (uc *GameUseCase) ClaimBingo(ctx context.Context, gameID uuid.UUID, req domain.ClaimBingoRequest) (bool, error) {
 	// Get game
 	game, err := uc.gameRepo.FindByID(ctx, gameID)
@@ -679,96 +956,17 @@ func (uc *GameUseCase) ClaimBingo(ctx context.Context, gameID uuid.UUID, req dom
 	defer tx.Rollback()
 
 	if isValid {
-		// Atomic single-winner guard: claim the win only if the game is still in
-		// DRAWING state. If two valid claims race, only the first conditional
-		// UPDATE affects a row; the second is rejected here — so there can never
-		// be two winners or a double payout of the prize pool.
-		claimed, err := uc.gameRepo.ClaimWinner(ctx, tx, gameID, req.UserID)
-		if err != nil {
-			return false, fmt.Errorf("failed to claim win: %w", err)
+		// Valid claim — resolve the game through the shared finalizeWinners path,
+		// splitting the pot with any other cards that completed on the same draw.
+		// Auto-daub marks are a superset of the client's marked positions, so the
+		// claimant's card is guaranteed to be among the collected winners. The
+		// atomic guard inside finalizeWinners prevents a double payout if a manual
+		// claim and the auto-check race.
+		winners, werr := uc.collectWinners(ctx, gameID, drawnSet)
+		if werr != nil {
+			return false, fmt.Errorf("failed to collect winners: %w", werr)
 		}
-		if !claimed {
-			return false, errors.New("game already has a winner")
-		}
-
-		// Reflect the claimed state in memory for the events/Redis updates below.
-		game.State = domain.GameStateFinished
-		game.WinnerID = &req.UserID
-		now := time.Now()
-		game.FinishedAt = &now
-
-		// Distribute prize
-		_, err = uc.walletRepo.LockForUpdate(ctx, tx, req.UserID)
-		if err != nil {
-			return false, fmt.Errorf("wallet not found: %w", err)
-		}
-
-		// Add prize to winner's wallet
-		if err := uc.walletRepo.UpdateBalance(ctx, tx, req.UserID, game.PrizePool); err != nil {
-			return false, fmt.Errorf("failed to add prize: %w", err)
-		}
-
-		// Create transaction
-		gamePrizeRef := "GAME_PRIZE"
-		transaction := &domain.Transaction{
-			UserID:    req.UserID,
-			Type:      domain.TransactionTypeDeposit,
-			Amount:    game.PrizePool,
-			Status:    domain.TransactionStatusCompleted,
-			Reference: &gamePrizeRef, // Mark as game prize to exclude from deposit history
-		}
-
-		if err := uc.transactionRepo.Create(ctx, tx, transaction); err != nil {
-			return false, fmt.Errorf("failed to create transaction: %w", err)
-		}
-
-		// Commit transaction (ClaimWinner already persisted the FINISHED state)
-		if err := tx.Commit(); err != nil {
-			return false, fmt.Errorf("failed to commit transaction: %w", err)
-		}
-
-		// Update Redis
-		uc.redisService.SaveGameState(ctx, game)
-
-		// Fetch winner's user information for the event
-		winner, err := uc.userRepo.FindByID(ctx, req.UserID)
-		winnerName := "Unknown"
-		if err == nil && winner != nil {
-			if winner.LastName != nil && *winner.LastName != "" {
-				winnerName = fmt.Sprintf("%s %s", winner.FirstName, *winner.LastName)
-			} else {
-				winnerName = winner.FirstName
-			}
-		}
-
-		// Publish winner event with full details
-		uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventWinner, map[string]interface{}{
-			"user_id":        req.UserID.String(),
-			"winner_name":    winnerName,
-			"prize":          game.PrizePool,
-			"card_id":        player.CardID,
-			"marked_numbers": markedNumbers,
-		})
-
-		// Publish game finished status
-		uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventGameStatus, map[string]interface{}{
-			"status": string(domain.GameStateFinished),
-		})
-
-		// Create a new game of the same type and notify clients
-		go func() {
-			newGame, err := uc.CreateOrGetGame(context.Background(), game.GameType)
-			if err == nil && newGame != nil {
-				// Publish new game available event to the same channel
-				// Clients can reconnect to this new game
-				uc.redisService.PublishEvent(context.Background(), gameID, domain.WebSocketEventNewGameAvailable, map[string]interface{}{
-					"gameId":   newGame.ID.String(),
-					"gameType": string(newGame.GameType),
-				})
-			}
-		}()
-
-		return true, nil
+		return uc.finalizeWinners(ctx, game, winners)
 	} else {
 		// Invalid claim - eliminate only this card; the player's other cards live on.
 		if err := uc.gameRepo.EliminatePlayerCard(ctx, tx, gameID, req.UserID, req.CardID); err != nil {
@@ -870,6 +1068,35 @@ func (uc *GameUseCase) GetGameState(ctx context.Context, gameID uuid.UUID) (*dom
 	}
 
 	return game, drawnNumbers, takenCards, nil
+}
+
+// GetGameWinners returns the winning card(s) of a finished game — each with its
+// prize share and the marked numbers reconstructed from the drawn set via
+// auto-daub. There may be several (co-winners who split the pot). Used to render
+// the post-game winner card(s), including for clients that connect after the
+// transient live winner event. Returns an empty slice for games with no winner.
+func (uc *GameUseCase) GetGameWinners(ctx context.Context, gameID uuid.UUID) ([]domain.GameWinner, error) {
+	rows, err := uc.gameRepo.FindWinningCards(ctx, gameID)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return []domain.GameWinner{}, nil
+	}
+
+	// Reconstruct each winner's marks from the drawn set (nil-safe if the draw
+	// history is no longer cached — the card still renders, just unhighlighted).
+	drawnSet, _ := uc.drawnNumberSet(ctx, gameID)
+
+	winners := make([]domain.GameWinner, 0, len(rows))
+	for _, w := range rows {
+		out := *w
+		if card := bingo.GenerateCard(w.CardID); card != nil {
+			out.MarkedNumbers = autoDaubMarks(card, drawnSet)
+		}
+		winners = append(winners, out)
+	}
+	return winners, nil
 }
 
 // GetPlayerInGame checks if a player is in a game (for WebSocket validation)
