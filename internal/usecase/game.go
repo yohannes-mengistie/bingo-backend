@@ -317,7 +317,15 @@ func (uc *GameUseCase) LeaveGame(ctx context.Context, gameID uuid.UUID, req doma
 		return errors.New("game is no longer active")
 	}
 
-	// Note: Players can leave during DRAWING phase, but won't get a refund
+	// Once the draw has started, stakes are committed: leaving is refused. A
+	// mid-draw leave gives no refund AND would recompute (shrink) the prize pool
+	// for the remaining players, so it's pure downside / a griefing vector.
+	// Cards play automatically to the end — a player who navigates away stays in.
+	if game.State == domain.GameStateDrawing {
+		return errors.New("cannot leave after the game has started")
+	}
+
+	// Only WAITING/COUNTDOWN remain here, so every leave at this point is refundable.
 	refundable := game.State == domain.GameStateWaiting || game.State == domain.GameStateCountdown
 	if refundable {
 		// Lock the wallet once for all of this user's refunds.
