@@ -148,8 +148,10 @@ const WebSocketInitialStateTimeout = 5 * time.Second
 
 // User Constants
 
-// DefaultUserBalance is the default balance for new users
-const DefaultUserBalance = 5.0
+// DefaultUserBalance is the welcome credit given to a new user's wallet on
+// signup. It must cover at least one regular game (BetAmountRegular) so a new
+// player can play immediately without depositing first.
+const DefaultUserBalance = 10.0
 
 // MaxReferralCodeGenerationAttempts is the maximum number of attempts to generate a unique referral code
 const MaxReferralCodeGenerationAttempts = 10
