@@ -21,6 +21,7 @@ type UserRepository interface {
 	UpdateRole(ctx context.Context, id uuid.UUID, role string) error
 	SetAdminCredentialsByID(ctx context.Context, id uuid.UUID, hashedPassword string) error
 	SetBanned(ctx context.Context, id uuid.UUID, banned bool) error
+	Delete(ctx context.Context, id uuid.UUID) error
 	CountAll(ctx context.Context) (int, error)
 }
 

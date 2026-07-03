@@ -272,6 +272,7 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			admin.POST("/users/:user_id/ban", userHandler.BanUser)
 			admin.POST("/users/:user_id/unban", userHandler.UnbanUser)
 			admin.POST("/users/:user_id/adjust-balance", walletHandler.AdjustBalance)
+			admin.DELETE("/users/:user_id", userHandler.DeleteUser)
 
 			// Dashboard stats
 			stats := admin.Group("/stats")

@@ -410,6 +410,21 @@ func (r *userRepository) SetBanned(ctx context.Context, id uuid.UUID, banned boo
 	return nil
 }
 
+// Delete permanently removes a user. Foreign keys with ON DELETE CASCADE
+// (wallets, transactions, game_players) remove the user's attached rows, and
+// games.winner_id is set NULL — so no orphan rows are left behind.
+func (r *userRepository) Delete(ctx context.Context, id uuid.UUID) error {
+	result, err := r.db.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete user: %w", err)
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
+}
+
 // CountAll counts all users
 func (r *userRepository) CountAll(ctx context.Context) (int, error) {
 	query := `SELECT COUNT(*) FROM users`

@@ -342,3 +342,33 @@ func (h *UserHandler) setBanned(c *gin.Context, banned bool) {
 	}
 	c.JSON(http.StatusOK, gin.H{"message": msg, "banned": banned})
 }
+
+// DeleteUser handles DELETE /admin/users/:user_id — permanently remove a user
+// and their attached wallet/transactions/game rows (via FK cascade).
+func (h *UserHandler) DeleteUser(c *gin.Context) {
+	userID, err := uuid.Parse(c.Param("user_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
+	// Guard against an admin deleting their own account.
+	if actingID, ok := middleware.GetUserID(c); ok && actingID == userID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "You cannot delete your own account"})
+		return
+	}
+
+	if err := h.userUseCase.DeleteUser(c.Request.Context(), userID); err != nil {
+		status := http.StatusInternalServerError
+		switch err.Error() {
+		case "user not found":
+			status = http.StatusNotFound
+		case "cannot delete an admin account; demote it first":
+			status = http.StatusForbidden
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "User deleted"})
+}

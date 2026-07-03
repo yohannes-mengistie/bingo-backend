@@ -151,6 +151,21 @@ func (uc *UserUseCase) SetUserBanned(ctx context.Context, userID uuid.UUID, bann
 	return uc.userRepo.SetBanned(ctx, userID, banned)
 }
 
+// DeleteUser permanently removes a user and (via FK cascade) their wallet,
+// transactions, and game participation (admin action). Admin accounts are
+// refused as a foot-gun guard — demote to a regular user first if you really
+// mean to remove one.
+func (uc *UserUseCase) DeleteUser(ctx context.Context, userID uuid.UUID) error {
+	user, err := uc.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return errors.New("user not found")
+	}
+	if user.Role == "admin" {
+		return errors.New("cannot delete an admin account; demote it first")
+	}
+	return uc.userRepo.Delete(ctx, userID)
+}
+
 // MakeAdmin promotes a user to admin and sets their dashboard password
 // (admin action). The password is hashed before storage.
 func (uc *UserUseCase) MakeAdmin(ctx context.Context, userID uuid.UUID, password string) error {
