@@ -123,6 +123,7 @@ func (uc *WalletUseCase) Deposit(ctx context.Context, req domain.DepositRequest)
 	transaction := &domain.Transaction{
 		UserID:          req.UserID,
 		Type:            domain.TransactionTypeDeposit,
+		Category:        domain.TransactionCategoryDeposit,
 		Amount:          creditAmount,
 		Status:          domain.TransactionStatusPending,
 		TransactionType: &transactionType,

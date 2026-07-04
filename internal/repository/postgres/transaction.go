@@ -23,8 +23,8 @@ func NewTransactionRepository(db *sql.DB) domain.TransactionRepository {
 // Create inserts a new transaction into the database
 func (r *transactionRepository) Create(ctx context.Context, tx *sql.Tx, transaction *domain.Transaction) error {
 	query := `
-		INSERT INTO transactions (id, user_id, type, amount, status, transaction_type, transaction_id, reference, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO transactions (id, user_id, type, category, amount, status, transaction_type, transaction_id, reference, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`
 
 	now := time.Now()
@@ -32,6 +32,13 @@ func (r *transactionRepository) Create(ctx context.Context, tx *sql.Tx, transact
 
 	if transaction.ID == uuid.Nil {
 		transaction.ID = uuid.New()
+	}
+
+	// Empty category maps to NULL so it never trips the CHECK constraint. In
+	// practice every creation path sets a category; this only guards legacy code.
+	var category any
+	if transaction.Category != "" {
+		category = string(transaction.Category)
 	}
 
 	var err error
@@ -42,6 +49,7 @@ func (r *transactionRepository) Create(ctx context.Context, tx *sql.Tx, transact
 			transaction.ID,
 			transaction.UserID,
 			transaction.Type,
+			category,
 			transaction.Amount,
 			transaction.Status,
 			transaction.TransactionType,
@@ -56,6 +64,7 @@ func (r *transactionRepository) Create(ctx context.Context, tx *sql.Tx, transact
 			transaction.ID,
 			transaction.UserID,
 			transaction.Type,
+			category,
 			transaction.Amount,
 			transaction.Status,
 			transaction.TransactionType,
@@ -75,12 +84,13 @@ func (r *transactionRepository) Create(ctx context.Context, tx *sql.Tx, transact
 // FindByID finds a transaction by ID
 func (r *transactionRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Transaction, error) {
 	query := `
-		SELECT id, user_id, type, amount, status, transaction_type, transaction_id, reference, created_at
+		SELECT id, user_id, type, category, amount, status, transaction_type, transaction_id, reference, created_at
 		FROM transactions
 		WHERE id = $1
 	`
 
 	transaction := &domain.Transaction{}
+	var category sql.NullString
 	var transactionType sql.NullString
 	var transactionID sql.NullString
 	var reference sql.NullString
@@ -89,6 +99,7 @@ func (r *transactionRepository) FindByID(ctx context.Context, id uuid.UUID) (*do
 		&transaction.ID,
 		&transaction.UserID,
 		&transaction.Type,
+		&category,
 		&transaction.Amount,
 		&transaction.Status,
 		&transactionType,
@@ -104,6 +115,9 @@ func (r *transactionRepository) FindByID(ctx context.Context, id uuid.UUID) (*do
 		return nil, fmt.Errorf("failed to find transaction: %w", err)
 	}
 
+	if category.Valid {
+		transaction.Category = domain.TransactionCategory(category.String)
+	}
 	if transactionType.Valid {
 		pm := domain.PaymentMethod(transactionType.String)
 		transaction.TransactionType = &pm
@@ -121,7 +135,7 @@ func (r *transactionRepository) FindByID(ctx context.Context, id uuid.UUID) (*do
 // FindByUserID finds transactions by user ID
 func (r *transactionRepository) FindByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*domain.Transaction, error) {
 	query := `
-		SELECT id, user_id, type, amount, status, transaction_type, transaction_id, reference, created_at
+		SELECT id, user_id, type, category, amount, status, transaction_type, transaction_id, reference, created_at
 		FROM transactions
 		WHERE user_id = $1
 		ORDER BY created_at DESC
@@ -137,6 +151,7 @@ func (r *transactionRepository) FindByUserID(ctx context.Context, userID uuid.UU
 	var transactions []*domain.Transaction
 	for rows.Next() {
 		transaction := &domain.Transaction{}
+		var category sql.NullString
 		var transactionType sql.NullString
 		var transactionID sql.NullString
 		var reference sql.NullString
@@ -145,6 +160,7 @@ func (r *transactionRepository) FindByUserID(ctx context.Context, userID uuid.UU
 			&transaction.ID,
 			&transaction.UserID,
 			&transaction.Type,
+			&category,
 			&transaction.Amount,
 			&transaction.Status,
 			&transactionType,
@@ -156,6 +172,9 @@ func (r *transactionRepository) FindByUserID(ctx context.Context, userID uuid.UU
 			return nil, fmt.Errorf("failed to scan transaction: %w", err)
 		}
 
+		if category.Valid {
+			transaction.Category = domain.TransactionCategory(category.String)
+		}
 		if transactionType.Valid {
 			pm := domain.PaymentMethod(transactionType.String)
 			transaction.TransactionType = &pm
@@ -181,7 +200,7 @@ func (r *transactionRepository) FindByUserID(ctx context.Context, userID uuid.UU
 // Excludes game-related transactions (GAME_BET, GAME_REFUND, GAME_PRIZE)
 func (r *transactionRepository) FindByUserIDAndType(ctx context.Context, userID uuid.UUID, transactionType domain.TransactionType, limit int) ([]*domain.Transaction, error) {
 	query := `
-		SELECT id, user_id, type, amount, status, transaction_type, transaction_id, reference, created_at
+		SELECT id, user_id, type, category, amount, status, transaction_type, transaction_id, reference, created_at
 		FROM transactions
 		WHERE user_id = $1 
 		  AND type = $2
@@ -208,7 +227,7 @@ func (r *transactionRepository) FindByUserIDAndTypes(ctx context.Context, userID
 
 	// Build query with IN clause
 	query := `
-		SELECT id, user_id, type, amount, status, transaction_type, transaction_id, reference, created_at
+		SELECT id, user_id, type, category, amount, status, transaction_type, transaction_id, reference, created_at
 		FROM transactions
 		WHERE user_id = $1 
 		  AND type = ANY($2)
@@ -237,6 +256,7 @@ func (r *transactionRepository) scanTransactions(rows *sql.Rows) ([]*domain.Tran
 	var transactions []*domain.Transaction
 	for rows.Next() {
 		transaction := &domain.Transaction{}
+		var category sql.NullString
 		var transactionType sql.NullString
 		var transactionID sql.NullString
 		var reference sql.NullString
@@ -245,6 +265,7 @@ func (r *transactionRepository) scanTransactions(rows *sql.Rows) ([]*domain.Tran
 			&transaction.ID,
 			&transaction.UserID,
 			&transaction.Type,
+			&category,
 			&transaction.Amount,
 			&transaction.Status,
 			&transactionType,
@@ -256,6 +277,9 @@ func (r *transactionRepository) scanTransactions(rows *sql.Rows) ([]*domain.Tran
 			return nil, fmt.Errorf("failed to scan transaction: %w", err)
 		}
 
+		if category.Valid {
+			transaction.Category = domain.TransactionCategory(category.String)
+		}
 		if transactionType.Valid {
 			pm := domain.PaymentMethod(transactionType.String)
 			transaction.TransactionType = &pm
@@ -280,7 +304,7 @@ func (r *transactionRepository) scanTransactions(rows *sql.Rows) ([]*domain.Tran
 // FindByStatusAndType finds transactions by status and type
 func (r *transactionRepository) FindByStatusAndType(ctx context.Context, status domain.TransactionStatus, transactionType domain.TransactionType, limit, offset int) ([]*domain.Transaction, error) {
 	query := `
-		SELECT id, user_id, type, amount, status, transaction_type, transaction_id, reference, created_at
+		SELECT id, user_id, type, category, amount, status, transaction_type, transaction_id, reference, created_at
 		FROM transactions
 		WHERE status = $1 AND type = $2
 		ORDER BY created_at DESC
@@ -299,7 +323,7 @@ func (r *transactionRepository) FindByStatusAndType(ctx context.Context, status 
 // FindByStatus finds transactions by status
 func (r *transactionRepository) FindByStatus(ctx context.Context, status domain.TransactionStatus, limit, offset int) ([]*domain.Transaction, error) {
 	query := `
-		SELECT id, user_id, type, amount, status, transaction_type, transaction_id, reference, created_at
+		SELECT id, user_id, type, category, amount, status, transaction_type, transaction_id, reference, created_at
 		FROM transactions
 		WHERE status = $1
 		ORDER BY created_at DESC
@@ -322,7 +346,7 @@ func (r *transactionRepository) FindByTypes(ctx context.Context, transactionType
 	}
 
 	query := `
-		SELECT id, user_id, type, amount, status, transaction_type, transaction_id, reference, created_at
+		SELECT id, user_id, type, category, amount, status, transaction_type, transaction_id, reference, created_at
 		FROM transactions
 		WHERE type = ANY($1)
 		ORDER BY created_at DESC
@@ -346,7 +370,7 @@ func (r *transactionRepository) FindByTypes(ctx context.Context, transactionType
 // FindAll finds all transactions with pagination
 func (r *transactionRepository) FindAll(ctx context.Context, limit, offset int) ([]*domain.Transaction, error) {
 	query := `
-		SELECT id, user_id, type, amount, status, transaction_type, transaction_id, reference, created_at
+		SELECT id, user_id, type, category, amount, status, transaction_type, transaction_id, reference, created_at
 		FROM transactions
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2

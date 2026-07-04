@@ -34,6 +34,9 @@ CREATE TABLE transactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     type VARCHAR(20) NOT NULL CHECK (type IN ('deposit', 'withdraw', 'transfer_in', 'transfer_out')),
+    -- Business meaning of the movement, independent of direction (type). Lets the
+    -- admin UI show "Winnings"/"Refund"/"Deposit" instead of a bare "deposit".
+    category VARCHAR(20) CHECK (category IN ('deposit', 'withdrawal', 'bet', 'winnings', 'refund', 'transfer_in', 'transfer_out', 'admin_credit', 'admin_debit')),
     amount DECIMAL(10, 2) NOT NULL CHECK (amount > 0),
     status VARCHAR(20) NOT NULL CHECK (status IN ('pending', 'completed', 'failed', 'cancelled')),
     transaction_type VARCHAR(20) CHECK (transaction_type IN ('CBE', 'Telebirr')),

@@ -56,8 +56,10 @@ func (s *TransactionService) AdjustBalance(ctx context.Context, userID uuid.UUID
 	}
 
 	txType := domain.TransactionTypeDeposit
+	category := domain.TransactionCategoryAdminCredit
 	if amount < 0 {
 		txType = domain.TransactionTypeWithdraw
+		category = domain.TransactionCategoryAdminDebit
 	}
 	note := reason
 	if note == "" {
@@ -66,6 +68,7 @@ func (s *TransactionService) AdjustBalance(ctx context.Context, userID uuid.UUID
 	record := &domain.Transaction{
 		UserID:    userID,
 		Type:      txType,
+		Category:  category,
 		Amount:    absFloat(amount),
 		Status:    domain.TransactionStatusCompleted,
 		Reference: &note,
@@ -394,6 +397,7 @@ func (s *TransactionService) ProcessWithdrawal(ctx context.Context, userID uuid.
 	transaction := &domain.Transaction{
 		UserID:          userID,
 		Type:            domain.TransactionTypeWithdraw,
+		Category:        domain.TransactionCategoryWithdrawal,
 		Amount:          amount,
 		Status:          domain.TransactionStatusPending,
 		TransactionType: &accountType,
@@ -462,6 +466,7 @@ func (s *TransactionService) ProcessTransfer(ctx context.Context, senderID, rece
 	senderTransaction := &domain.Transaction{
 		UserID:    senderID,
 		Type:      domain.TransactionTypeTransferOut,
+		Category:  domain.TransactionCategoryTransferOut,
 		Amount:    amount,
 		Status:    domain.TransactionStatusCompleted,
 		Reference: &receiverIDStr,
@@ -476,6 +481,7 @@ func (s *TransactionService) ProcessTransfer(ctx context.Context, senderID, rece
 	receiverTransaction := &domain.Transaction{
 		UserID:    receiverID,
 		Type:      domain.TransactionTypeTransferIn,
+		Category:  domain.TransactionCategoryTransferIn,
 		Amount:    amount,
 		Status:    domain.TransactionStatusCompleted,
 		Reference: &senderIDStr,

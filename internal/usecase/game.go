@@ -195,6 +195,7 @@ func (uc *GameUseCase) JoinGame(ctx context.Context, gameID uuid.UUID, req domai
 	transaction := &domain.Transaction{
 		UserID:    req.UserID,
 		Type:      domain.TransactionTypeWithdraw, // Bet is treated as withdrawal
+		Category:  domain.TransactionCategoryBet,  // ...but its business meaning is a game stake
 		Amount:    game.BetAmount,
 		Status:    domain.TransactionStatusCompleted, // Bet is immediately deducted
 		Reference: &gameBetRef,                       // Mark as game bet to exclude from withdrawal history
@@ -349,6 +350,7 @@ func (uc *GameUseCase) LeaveGame(ctx context.Context, gameID uuid.UUID, req doma
 			transaction := &domain.Transaction{
 				UserID:    req.UserID,
 				Type:      domain.TransactionTypeDeposit, // Refund is treated as deposit
+				Category:  domain.TransactionCategoryRefund,
 				Amount:    game.BetAmount,
 				Status:    domain.TransactionStatusCompleted,
 				Reference: &gameRefundRef, // Mark as game refund to exclude from deposit history
@@ -816,7 +818,8 @@ func (uc *GameUseCase) finalizeWinners(ctx context.Context, game *domain.Game, w
 		// from deposit history).
 		if err := uc.transactionRepo.Create(ctx, tx, &domain.Transaction{
 			UserID:    w.UserID,
-			Type:      domain.TransactionTypeDeposit,
+			Type:      domain.TransactionTypeDeposit, // Prize is treated as deposit
+			Category:  domain.TransactionCategoryWinnings,
 			Amount:    amount,
 			Status:    domain.TransactionStatusCompleted,
 			Reference: &gamePrizeRef,
@@ -1008,6 +1011,7 @@ func (uc *GameUseCase) ClaimBingo(ctx context.Context, gameID uuid.UUID, req dom
 					refundTx := &domain.Transaction{
 						UserID:    p.UserID,
 						Type:      domain.TransactionTypeDeposit,
+						Category:  domain.TransactionCategoryRefund,
 						Amount:    game.BetAmount,
 						Status:    domain.TransactionStatusCompleted,
 						Reference: &gameRefundRef, // Mark as game refund
@@ -1252,6 +1256,7 @@ func (uc *GameUseCase) cancelGameAndRefund(ctx context.Context, gameID uuid.UUID
 		refundTx := &domain.Transaction{
 			UserID:    p.UserID,
 			Type:      domain.TransactionTypeDeposit, // Refund is treated as a deposit
+			Category:  domain.TransactionCategoryRefund,
 			Amount:    game.BetAmount,
 			Status:    domain.TransactionStatusCompleted,
 			Reference: &refundRef, // Mark as game refund to exclude from deposit history

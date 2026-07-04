@@ -24,6 +24,24 @@ const (
 	TransactionTypeTransferOut TransactionType = "transfer_out"
 )
 
+// TransactionCategory records what a money movement actually WAS, independent of
+// its balance direction (Type). Type only says deposit/withdraw, so a game prize,
+// a stake refund and an admin credit all share Type == deposit; Category is what
+// lets the admin UI tell them apart ("Winnings" vs "Deposit" vs "Refund").
+type TransactionCategory string
+
+const (
+	TransactionCategoryDeposit     TransactionCategory = "deposit"      // real money in (e.g. Telebirr top-up)
+	TransactionCategoryWithdrawal  TransactionCategory = "withdrawal"   // real money out (payout to phone)
+	TransactionCategoryBet         TransactionCategory = "bet"          // stake placed on a game card
+	TransactionCategoryWinnings    TransactionCategory = "winnings"     // prize paid to a game winner
+	TransactionCategoryRefund      TransactionCategory = "refund"       // stake returned (left/cancelled game)
+	TransactionCategoryTransferIn  TransactionCategory = "transfer_in"  // received from another player
+	TransactionCategoryTransferOut TransactionCategory = "transfer_out" // sent to another player
+	TransactionCategoryAdminCredit TransactionCategory = "admin_credit" // manual balance increase by an admin
+	TransactionCategoryAdminDebit  TransactionCategory = "admin_debit"  // manual balance decrease by an admin
+)
+
 // TransactionStatus represents the status of a transaction
 type TransactionStatus string
 
@@ -60,15 +78,16 @@ type PaymentVerifier interface {
 
 // Transaction represents a transaction entity in the domain
 type Transaction struct {
-	ID              uuid.UUID         `json:"id" db:"id"`
-	UserID          uuid.UUID         `json:"user_id" db:"user_id"`
-	Type            TransactionType   `json:"type" db:"type"`
-	Amount          float64           `json:"amount" db:"amount"`
-	Status          TransactionStatus `json:"status" db:"status"`
-	TransactionType *PaymentMethod    `json:"transaction_type,omitempty" db:"transaction_type"`
-	TransactionID   *string           `json:"transaction_id,omitempty" db:"transaction_id"`
-	Reference       *string           `json:"reference,omitempty" db:"reference"`
-	CreatedAt       time.Time         `json:"created_at" db:"created_at"`
+	ID              uuid.UUID           `json:"id" db:"id"`
+	UserID          uuid.UUID           `json:"user_id" db:"user_id"`
+	Type            TransactionType     `json:"type" db:"type"`
+	Category        TransactionCategory `json:"category,omitempty" db:"category"`
+	Amount          float64             `json:"amount" db:"amount"`
+	Status          TransactionStatus   `json:"status" db:"status"`
+	TransactionType *PaymentMethod      `json:"transaction_type,omitempty" db:"transaction_type"`
+	TransactionID   *string             `json:"transaction_id,omitempty" db:"transaction_id"`
+	Reference       *string             `json:"reference,omitempty" db:"reference"`
+	CreatedAt       time.Time           `json:"created_at" db:"created_at"`
 }
 
 // DepositRequest represents the data needed to create a deposit.
