@@ -878,7 +878,11 @@ func (r *gameRepository) FindGamesByUserID(ctx context.Context, userID uuid.UUID
 				-- Fall back to games.winner_id for historical games finished before
 				-- per-card winner tracking existed (is_winner/prize_won not backfilled):
 				-- there the winner took the whole pool.
-				(bool_or(gp.is_winner) OVER (PARTITION BY g.id) OR g.winner_id = $1) AS user_won,
+				-- COALESCE to FALSE: for a live game winner_id is NULL, so the
+				-- winner_id = $1 comparison is NULL and the whole OR collapses to
+				-- NULL, which then fails to scan into the Go bool. An unfinished
+				-- game simply has no winner.
+				COALESCE(bool_or(gp.is_winner) OVER (PARTITION BY g.id) OR g.winner_id = $1, FALSE) AS user_won,
 				CASE
 					WHEN bool_or(gp.is_winner) OVER (PARTITION BY g.id)
 						THEN COALESCE(SUM(gp.prize_won) OVER (PARTITION BY g.id), 0)
@@ -1008,7 +1012,11 @@ func (r *gameRepository) FindActiveGameByUserID(ctx context.Context, userID uuid
 				g.finished_at, g.created_at, g.updated_at,
 				gp.card_id, gp.is_eliminated, gp.joined_at, gp.left_at,
 				COUNT(*) OVER (PARTITION BY g.id) AS cards_held,
-				(bool_or(gp.is_winner) OVER (PARTITION BY g.id) OR g.winner_id = $1) AS user_won,
+				-- COALESCE to FALSE: for a live game winner_id is NULL, so the
+				-- winner_id = $1 comparison is NULL and the whole OR collapses to
+				-- NULL, which then fails to scan into the Go bool. An unfinished
+				-- game simply has no winner.
+				COALESCE(bool_or(gp.is_winner) OVER (PARTITION BY g.id) OR g.winner_id = $1, FALSE) AS user_won,
 				CASE
 					WHEN bool_or(gp.is_winner) OVER (PARTITION BY g.id)
 						THEN COALESCE(SUM(gp.prize_won) OVER (PARTITION BY g.id), 0)
