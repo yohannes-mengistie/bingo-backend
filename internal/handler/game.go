@@ -370,6 +370,26 @@ func (h *GameHandler) GetMyGameHistory(c *gin.Context) {
 	})
 }
 
+// GetMyActiveGame handles GET /me/active-game — the live game the authenticated
+// user is currently in (WAITING/COUNTDOWN/DRAWING and still holding cards), so a
+// player who navigated away mid-game can jump back into the draw. Returns
+// {"game": null} when the user isn't in any live game.
+func (h *GameHandler) GetMyActiveGame(c *gin.Context) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
+
+	game, err := h.gameUseCase.GetActiveGame(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch active game"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"game": game})
+}
+
 // GetMyPlayerInGame handles GET /me/games/:gameId — whether the authenticated
 // user is in the given game (returns the player record or 404).
 func (h *GameHandler) GetMyPlayerInGame(c *gin.Context) {

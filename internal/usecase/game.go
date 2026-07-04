@@ -1305,6 +1305,17 @@ func (uc *GameUseCase) GetRecentWinners(ctx context.Context, limit int) ([]*doma
 	return winners, nil
 }
 
+// GetActiveGame returns the live game the user is currently in (still holding
+// cards, state WAITING/COUNTDOWN/DRAWING), or nil if they're not in one. Lets a
+// player who navigated away mid-game find and rejoin it.
+func (uc *GameUseCase) GetActiveGame(ctx context.Context, userID uuid.UUID) (*domain.GameHistoryEntry, error) {
+	game, err := uc.gameRepo.FindActiveGameByUserID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get active game: %w", err)
+	}
+	return game, nil
+}
+
 // GetGameHistory returns the game history for a user
 func (uc *GameUseCase) GetGameHistory(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*domain.GameHistoryEntry, error) {
 	if limit <= 0 {

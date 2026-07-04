@@ -122,6 +122,10 @@ type GameRepository interface {
 	GetTakenCards(ctx context.Context, gameID uuid.UUID) ([]int, error)
 	SaveDrawnNumber(ctx context.Context, gameID uuid.UUID, letter string, number int) error
 	FindGamesByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*GameHistoryEntry, error)
+	// FindActiveGameByUserID returns the live game (WAITING/COUNTDOWN/DRAWING)
+	// the user still holds cards in, or nil if none. Powers the "return to live
+	// game" reconnect after the player navigates away mid-game.
+	FindActiveGameByUserID(ctx context.Context, userID uuid.UUID) (*GameHistoryEntry, error)
 	CountGamesByType(ctx context.Context) (map[GameType]int, error)
 	GetTotalHouseCut(ctx context.Context) (float64, error)
 	// FindRecentWinners returns the most recently finished games that had a

@@ -900,6 +900,14 @@ func (r *gameRepository) FindGamesByUserID(ctx context.Context, userID uuid.UUID
 	}
 	defer rows.Close()
 
+	return scanGameHistoryRows(rows)
+}
+
+// scanGameHistoryRows scans rows produced by the game-history projection (see
+// FindGamesByUserID) into GameHistoryEntry values. Both the paginated history
+// and the single active-game lookup select the same columns, so they share
+// this scanner.
+func scanGameHistoryRows(rows *sql.Rows) ([]*domain.GameHistoryEntry, error) {
 	entries := []*domain.GameHistoryEntry{}
 	for rows.Next() {
 		entry := &domain.GameHistoryEntry{
@@ -972,6 +980,70 @@ func (r *gameRepository) FindGamesByUserID(ctx context.Context, userID uuid.UUID
 	}
 
 	return entries, nil
+}
+
+// FindActiveGameByUserID returns the game the user is currently playing in: one
+// they still hold at least one live card in (left_at IS NULL and not eliminated)
+// whose state is not yet terminal (WAITING, COUNTDOWN or DRAWING). Returns
+// (nil, nil) when the user isn't in any live game. If somehow in more than one,
+// the most recently joined is returned so the "return to live game" button lands
+// on the newest.
+//
+// Elimination is per card, so a player holding several cards stays "in a live
+// game" until every one of their cards is eliminated. Because the WHERE filters
+// out left and eliminated cards, CardsHeld here counts only the cards the player
+// still has in play.
+func (r *gameRepository) FindActiveGameByUserID(ctx context.Context, userID uuid.UUID) (*domain.GameHistoryEntry, error) {
+	query := `
+		SELECT
+			id, game_type, state, bet_amount, min_players, player_count,
+			prize_pool, house_cut, winner_id, countdown_ends, started_at,
+			finished_at, created_at, updated_at,
+			card_id, cards_held, is_eliminated, joined_at, left_at,
+			user_won, win_amount
+		FROM (
+			SELECT DISTINCT ON (g.id)
+				g.id, g.game_type, g.state, g.bet_amount, g.min_players, g.player_count,
+				g.prize_pool, g.house_cut, g.winner_id, g.countdown_ends, g.started_at,
+				g.finished_at, g.created_at, g.updated_at,
+				gp.card_id, gp.is_eliminated, gp.joined_at, gp.left_at,
+				COUNT(*) OVER (PARTITION BY g.id) AS cards_held,
+				(bool_or(gp.is_winner) OVER (PARTITION BY g.id) OR g.winner_id = $1) AS user_won,
+				CASE
+					WHEN bool_or(gp.is_winner) OVER (PARTITION BY g.id)
+						THEN COALESCE(SUM(gp.prize_won) OVER (PARTITION BY g.id), 0)
+					WHEN g.winner_id = $1 THEN g.prize_pool
+					ELSE 0
+				END AS win_amount
+			FROM game_players gp
+			INNER JOIN games g ON gp.game_id = g.id
+			WHERE gp.user_id = $1
+				AND gp.left_at IS NULL
+				-- Only count cards still in play. A player may hold several cards;
+				-- as long as ONE survives the game is still returnable. The pill
+				-- vanishes only once every card the player holds is eliminated.
+				AND gp.is_eliminated = FALSE
+				AND g.state IN ('WAITING', 'COUNTDOWN', 'DRAWING')
+			ORDER BY g.id, gp.joined_at DESC
+		) sub
+		ORDER BY joined_at DESC
+		LIMIT 1
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find active game for user: %w", err)
+	}
+	defer rows.Close()
+
+	entries, err := scanGameHistoryRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	return entries[0], nil
 }
 
 // CountGamesByType counts games by type (only completed games: FINISHED or CLOSED)

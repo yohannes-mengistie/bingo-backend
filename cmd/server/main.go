@@ -225,6 +225,7 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			authed.POST("/wallet/transfer", walletHandler.Transfer)
 
 			// Games (self)
+			authed.GET("/me/active-game", gameHandler.GetMyActiveGame)
 			authed.GET("/me/games", gameHandler.GetMyGameHistory)
 			authed.GET("/me/games/:gameId", gameHandler.GetMyPlayerInGame)
 			authed.GET("/me/games/:gameId/cards", gameHandler.GetMyCardsInGame)
