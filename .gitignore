@@ -24,6 +24,9 @@ go.work
 .env
 .env.local
 
+# Secrets (contains live bot token / webhook secret)
+set_webhook.sh
+
 # IDE
 .idea/
 .vscode/

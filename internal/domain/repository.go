@@ -102,8 +102,10 @@ type GameRepository interface {
 	FindWinningCards(ctx context.Context, gameID uuid.UUID) ([]*GameWinner, error)
 	AddPlayer(ctx context.Context, tx *sql.Tx, player *GamePlayer) error
 	// RemovePlayerCard marks one specific card (game_id, user_id, card_id) as
-	// left. A player may hold several cards, so leaving is per-card.
-	RemovePlayerCard(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID, cardID int) error
+	// left. A player may hold several cards, so leaving is per-card. It returns
+	// the number of rows actually transitioned (0 if the card was already left),
+	// so callers only refund a stake that genuinely moved out of the game.
+	RemovePlayerCard(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID, cardID int) (int64, error)
 	// FindPlayer returns any one active card row for the user (used to test
 	// membership / reconnect). Prefer FindPlayersByUser when all cards matter.
 	FindPlayer(ctx context.Context, gameID, userID uuid.UUID) (*GamePlayer, error)

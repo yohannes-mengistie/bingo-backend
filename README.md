@@ -1853,7 +1853,7 @@ There are two ways to create an admin user:
 
 2. **Update the user** in the database:
    ```bash
-   psql "postgresql://postgres:XRQDwPdAWIbQqOvTInaTcpKDbwuvnkri@shuttle.proxy.rlwy.net:54624/railway" -c "UPDATE users SET role = 'admin', password = 'YOUR_HASHED_PASSWORD_HERE' WHERE telegram_id = YOUR_TELEGRAM_ID;"
+   psql "$DATABASE_URL" -c "UPDATE users SET role = 'admin', password = 'YOUR_HASHED_PASSWORD_HERE' WHERE telegram_id = YOUR_TELEGRAM_ID;"
    ```
    Replace:
    - `YOUR_HASHED_PASSWORD_HERE` with the hash from step 1
@@ -1888,7 +1888,7 @@ go run scripts/create_admin.go mySecurePassword123
 # Output: $2a$10$l2ns2tObNnMy.whUTzi21e7u1xuJH0nEFitkI/eqUSO0Bmul/bEji
 
 # 2. Update user (replace 123456789 with actual telegram_id)
-psql "postgresql://postgres:XRQDwPdAWIbQqOvTInaTcpKDbwuvnkri@shuttle.proxy.rlwy.net:54624/railway" -c "UPDATE users SET role = 'admin', password = '\$2a\$10\$l2ns2tObNnMy.whUTzi21e7u1xuJH0nEFitkI/eqUSO0Bmul/bEji' WHERE telegram_id = 123456789;"
+psql "$DATABASE_URL" -c "UPDATE users SET role = 'admin', password = '\$2a\$10\$l2ns2tObNnMy.whUTzi21e7u1xuJH0nEFitkI/eqUSO0Bmul/bEji' WHERE telegram_id = 123456789;"
 ```
 
 **Note:** When using `psql`, escape the `$` signs in the password hash by using `\$`.

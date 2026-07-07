@@ -387,13 +387,19 @@ func (r *transactionRepository) FindAll(ctx context.Context, limit, offset int) 
 
 // UpdateStatus updates the status of a transaction
 func (r *transactionRepository) UpdateStatus(ctx context.Context, tx *sql.Tx, id uuid.UUID, status domain.TransactionStatus) error {
+	// Guard the transition on the row still being 'pending'. Every caller moves a
+	// transaction out of pending exactly once; without this, two concurrent
+	// approves/rejects/cancels (admin double-click, client retry) would each pass
+	// the stale pre-check and each mutate the wallet, double-crediting/refunding.
+	// With the guard the loser updates 0 rows, errors here, and its whole tx —
+	// including the balance change — rolls back.
 	query := `
 		UPDATE transactions
 		SET status = $2
-		WHERE id = $1
+		WHERE id = $1 AND status = $3
 	`
 
-	result, err := tx.ExecContext(ctx, query, id, status)
+	result, err := tx.ExecContext(ctx, query, id, status, domain.TransactionStatusPending)
 	if err != nil {
 		return fmt.Errorf("failed to update transaction status: %w", err)
 	}
@@ -404,7 +410,7 @@ func (r *transactionRepository) UpdateStatus(ctx context.Context, tx *sql.Tx, id
 	}
 
 	if rowsAffected == 0 {
-		return fmt.Errorf("transaction not found")
+		return fmt.Errorf("transaction not pending (already processed or not found)")
 	}
 
 	return nil

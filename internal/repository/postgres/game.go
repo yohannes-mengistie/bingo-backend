@@ -542,7 +542,7 @@ func (r *gameRepository) AddPlayer(ctx context.Context, tx *sql.Tx, player *doma
 }
 
 // RemovePlayerCard soft-deletes one specific card row (sets left_at).
-func (r *gameRepository) RemovePlayerCard(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID, cardID int) error {
+func (r *gameRepository) RemovePlayerCard(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID, cardID int) (int64, error) {
 	query := `
 		UPDATE game_players
 		SET left_at = $4
@@ -550,18 +550,19 @@ func (r *gameRepository) RemovePlayerCard(ctx context.Context, tx *sql.Tx, gameI
 	`
 
 	leftAt := time.Now()
+	var res sql.Result
 	var err error
 	if tx != nil {
-		_, err = tx.ExecContext(ctx, query, gameID, userID, cardID, leftAt)
+		res, err = tx.ExecContext(ctx, query, gameID, userID, cardID, leftAt)
 	} else {
-		_, err = r.db.ExecContext(ctx, query, gameID, userID, cardID, leftAt)
+		res, err = r.db.ExecContext(ctx, query, gameID, userID, cardID, leftAt)
 	}
 
 	if err != nil {
-		return fmt.Errorf("failed to remove player card: %w", err)
+		return 0, fmt.Errorf("failed to remove player card: %w", err)
 	}
 
-	return nil
+	return res.RowsAffected()
 }
 
 // FindPlayer finds any one active card row for the user in a game.

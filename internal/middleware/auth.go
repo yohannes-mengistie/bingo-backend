@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"strings"
 
@@ -63,6 +64,32 @@ func AuthMiddleware(jwtService *jwt.Service) gin.HandlerFunc {
 		c.Set(UserIDKey, claims.UserID)
 		c.Set(RoleKey, claims.Role)
 
+		c.Next()
+	}
+}
+
+// InternalSecretMiddleware guards server-to-server ("bot-facing") endpoints that
+// return another user's data by ID. It requires the X-Internal-Api-Secret header
+// to match the configured secret. If no secret is configured it FAILS CLOSED —
+// these endpoints expose other users' balances/PII and must never be reachable
+// anonymously from the public internet.
+func InternalSecretMiddleware(secret string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if secret == "" {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error": "internal endpoints are disabled (INTERNAL_API_SECRET not configured)",
+			})
+			c.Abort()
+			return
+		}
+		got := c.GetHeader("X-Internal-Api-Secret")
+		if subtle.ConstantTimeCompare([]byte(got), []byte(secret)) != 1 {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "invalid or missing internal API secret",
+			})
+			c.Abort()
+			return
+		}
 		c.Next()
 	}
 }

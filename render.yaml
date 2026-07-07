@@ -76,6 +76,11 @@ services:
         value: "24"
       - key: SECRET_CODE           # prompted on first Blueprint create (gates /auth/create-admin)
         sync: false
+      # Shared secret gating the bot-facing /user, /wallet and per-user /games
+      # reads. Set in the dashboard; callers send it as X-Internal-Api-Secret.
+      # If unset, those endpoints are disabled (fail closed).
+      - key: INTERNAL_API_SECRET
+        sync: false
 
       # ---- Telegram ---- (prompted on first create; can be left blank for now
       # and filled in later once you create the bot in @BotFather)
