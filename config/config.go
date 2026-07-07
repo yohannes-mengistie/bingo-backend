@@ -18,6 +18,15 @@ type Config struct {
 	Admin           AdminConfig
 	Telegram        TelegramConfig
 	PaymentVerifier PaymentVerifierConfig
+	Internal        InternalConfig
+}
+
+// InternalConfig gates the server-to-server ("bot-facing") /user, /wallet and
+// per-user /games reads. Callers must present APISecret in the
+// X-Internal-Api-Secret header. When empty, those endpoints are disabled
+// (fail closed) so they can never be reached anonymously from the public net.
+type InternalConfig struct {
+	APISecret string
 }
 
 type ServerConfig struct {
@@ -108,9 +117,29 @@ func Load() (*Config, error) {
 			APIKey:          getEnv("VERIFY_API_KEY", ""),
 			TelebirrAccount: getEnv("VERIFY_TELEBIRR_ACCOUNT", ""),
 		},
+		Internal: InternalConfig{
+			APISecret: getEnv("INTERNAL_API_SECRET", ""),
+		},
+	}
+
+	if err := validateConfig(config); err != nil {
+		return nil, err
 	}
 
 	return config, nil
+}
+
+// validateConfig fails startup (rather than silently running with a known-weak
+// secret) when a security-critical value is missing or left at its placeholder.
+func validateConfig(c *Config) error {
+	s := c.JWT.SecretKey
+	switch {
+	case s == "", s == "your-secret-key-change-in-production", s == "change-me":
+		return fmt.Errorf("JWT_SECRET is unset or still the placeholder; set a strong random value (openssl rand -hex 32)")
+	case len(s) < 32:
+		return fmt.Errorf("JWT_SECRET is too short (%d chars); use at least 32 (openssl rand -hex 32)", len(s))
+	}
+	return nil
 }
 
 // GetDSN returns the PostgreSQL connection string

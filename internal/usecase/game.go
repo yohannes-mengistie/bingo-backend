@@ -337,9 +337,16 @@ func (uc *GameUseCase) LeaveGame(ctx context.Context, gameID uuid.UUID, req doma
 
 	gameRefundRef := "GAME_REFUND"
 	for _, p := range toDrop {
-		// Drop this card.
-		if err := uc.gameRepo.RemovePlayerCard(ctx, tx, gameID, req.UserID, p.CardID); err != nil {
+		// Drop this card. toDrop was read before the game-row lock, so a
+		// concurrent leave may already have dropped it — RemovePlayerCard then
+		// transitions 0 rows and we must NOT refund again (that was the N-refund
+		// money-drain bug).
+		rows, err := uc.gameRepo.RemovePlayerCard(ctx, tx, gameID, req.UserID, p.CardID)
+		if err != nil {
 			return fmt.Errorf("failed to remove card: %w", err)
+		}
+		if rows == 0 {
+			continue
 		}
 
 		// Refund this card's stake (only before the game starts).
@@ -1246,6 +1253,16 @@ func (uc *GameUseCase) cancelGameAndRefund(ctx context.Context, gameID uuid.UUID
 	var refundedAmount float64
 
 	for _, p := range players {
+		// Transition the card out FIRST, and refund only if it actually moved.
+		// If it was already left (0 rows), skip so a stake can't be refunded twice.
+		rows, err := uc.gameRepo.RemovePlayerCard(ctx, tx, gameID, p.UserID, p.CardID)
+		if err != nil {
+			return nil, 0, 0, fmt.Errorf("failed to remove player card: %w", err)
+		}
+		if rows == 0 {
+			continue
+		}
+
 		if _, err := uc.walletRepo.LockForUpdate(ctx, tx, p.UserID); err != nil {
 			return nil, 0, 0, fmt.Errorf("failed to lock wallet for refund: %w", err)
 		}
@@ -1263,11 +1280,6 @@ func (uc *GameUseCase) cancelGameAndRefund(ctx context.Context, gameID uuid.UUID
 		}
 		if err := uc.transactionRepo.Create(ctx, tx, refundTx); err != nil {
 			return nil, 0, 0, fmt.Errorf("failed to record refund: %w", err)
-		}
-
-		// Mark this card as having left so it can't be refunded again.
-		if err := uc.gameRepo.RemovePlayerCard(ctx, tx, gameID, p.UserID, p.CardID); err != nil {
-			return nil, 0, 0, fmt.Errorf("failed to remove player card: %w", err)
 		}
 
 		refundedCount++

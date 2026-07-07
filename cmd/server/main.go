@@ -88,7 +88,7 @@ func main() {
 	telegramHandler := handler.NewTelegramHandler(userUseCase, telegramBot, cfg.Telegram.WebhookSecret, cfg.Telegram.MiniAppURL)
 
 	// Setup router
-	router := setupRouter(userHandler, walletHandler, authHandler, gameHandler, wsHandler, telegramHandler, jwtService)
+	router := setupRouter(userHandler, walletHandler, authHandler, gameHandler, wsHandler, telegramHandler, jwtService, cfg.Internal.APISecret)
 
 	// Create HTTP server
 	srv := &http.Server{
@@ -125,7 +125,7 @@ func main() {
 	log.Println("Server exited")
 }
 
-func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.WalletHandler, authHandler *handler.AuthHandler, gameHandler *handler.GameHandler, wsHandler *handler.WebSocketHandler, telegramHandler *handler.TelegramHandler, jwtService *jwt.Service) *gin.Engine {
+func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.WalletHandler, authHandler *handler.AuthHandler, gameHandler *handler.GameHandler, wsHandler *handler.WebSocketHandler, telegramHandler *handler.TelegramHandler, jwtService *jwt.Service, internalAPISecret string) *gin.Engine {
 	// Set Gin to release mode in production
 	if os.Getenv("GIN_MODE") == "release" {
 		gin.SetMode(gin.ReleaseMode)
@@ -135,7 +135,7 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 
 	// CORS middleware
 	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:5174", "https://bingo-frontend-production-7ee9.up.railway.app", "https://biruh-bingo-admin.vercel.app", "https://biruh-bingo-frontend.vercel.app", "https://winner.up.railway.app", "https://biruh-bingo-admin-production.up.railway.app", "https://biruh-bingo-frontend-production.up.railway.app", "https://bingo-miniapp-gold.vercel.app", "https://bingo-frontend-azure.vercel.app"},
+		AllowOrigins:     []string{"http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:5174", "https://bingo-frontend-production-7ee9.up.railway.app", "https://winner.up.railway.app", "https://bingo-miniapp-gold.vercel.app", "https://bingo-frontend-azure.vercel.app"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Length", "Content-Type", "Authorization", "Upgrade", "Connection", "Sec-WebSocket-Key", "Sec-WebSocket-Version", "Sec-WebSocket-Extensions", "Sec-WebSocket-Protocol"},
 		ExposeHeaders:    []string{"Content-Length", "Upgrade", "Connection", "Sec-WebSocket-Accept"},
@@ -178,8 +178,10 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			auth.POST("/telegram", authHandler.TelegramLogin)   // website: verify Mini App initData -> JWT
 		}
 
-		// Bot-facing user endpoints (server-to-server; called by the trusted Telegram bot)
+		// Bot-facing user endpoints (server-to-server; called by the trusted Telegram bot).
+		// Gated by the internal API secret — they expose other users' data by ID.
 		user := api.Group("/user")
+		user.Use(middleware.InternalSecretMiddleware(internalAPISecret))
 		{
 			user.POST("/register", userHandler.Register)
 			user.GET("/telegram/:telegram_id", userHandler.FindByTelegramID)
@@ -187,8 +189,10 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			user.GET("/referral/:referral_code", userHandler.FindByReferralCode)
 		}
 
-		// Bot-facing wallet reads (server-to-server)
+		// Bot-facing wallet reads (server-to-server). Gated by the internal API
+		// secret — they return any user's balance/ledger by ID.
 		wallet := api.Group("/wallet")
+		wallet.Use(middleware.InternalSecretMiddleware(internalAPISecret))
 		{
 			wallet.GET("/telegram/:telegram_id", walletHandler.GetWalletByTelegramID)
 			wallet.GET("/:user_id", walletHandler.GetWallet)
@@ -202,9 +206,17 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 		{
 			games.GET("", gameHandler.GetGames)
 			games.GET("/recent-winners", gameHandler.GetRecentWinners)
-			games.GET("/user/:user_id/history", gameHandler.GetGameHistory)
 			games.GET("/:gameId/state", gameHandler.GetGameState)
-			games.GET("/:gameId/players/:userId", gameHandler.GetPlayerInGame)
+		}
+
+		// Bot-facing per-user game reads (server-to-server). These leak another
+		// user's game history / card by ID, so they sit behind the internal secret.
+		// Player-facing clients must use the JWT-scoped /me/games endpoints instead.
+		gamesInternal := api.Group("/games")
+		gamesInternal.Use(middleware.InternalSecretMiddleware(internalAPISecret))
+		{
+			gamesInternal.GET("/user/:user_id/history", gameHandler.GetGameHistory)
+			gamesInternal.GET("/:gameId/players/:userId", gameHandler.GetPlayerInGame)
 		}
 
 		// Authenticated website endpoints (JWT required; user_id comes from the token)
