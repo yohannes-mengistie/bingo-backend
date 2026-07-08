@@ -23,8 +23,8 @@ func NewUserRepository(db *sql.DB) domain.UserRepository {
 // Create inserts a new user into the database
 func (r *userRepository) Create(ctx context.Context, tx *sql.Tx, user *domain.User) error {
 	query := `
-		INSERT INTO users (id, telegram_id, first_name, last_name, phone_number, referal_code, role, password, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		INSERT INTO users (id, telegram_id, first_name, last_name, phone_number, referal_code, role, password, is_bot, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`
 
 	now := time.Now()
@@ -53,6 +53,7 @@ func (r *userRepository) Create(ctx context.Context, tx *sql.Tx, user *domain.Us
 			user.ReferalCode,
 			user.Role,
 			user.Password,
+			user.IsBot,
 			user.CreatedAt,
 			user.UpdatedAt,
 		)
@@ -68,6 +69,7 @@ func (r *userRepository) Create(ctx context.Context, tx *sql.Tx, user *domain.Us
 			user.ReferalCode,
 			user.Role,
 			user.Password,
+			user.IsBot,
 			user.CreatedAt,
 			user.UpdatedAt,
 		)
@@ -255,6 +257,7 @@ func (r *userRepository) FindAll(ctx context.Context, limit, offset int) ([]*dom
 	query := `
 		SELECT id, telegram_id, first_name, last_name, phone_number, referal_code, role, banned, password, created_at, updated_at
 		FROM users
+		WHERE is_bot = false
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
 	`
@@ -425,9 +428,10 @@ func (r *userRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// CountAll counts all users
+// CountAll counts all real users (filler bots are excluded so dashboard counts
+// reflect actual accounts, not house-controlled players).
 func (r *userRepository) CountAll(ctx context.Context) (int, error) {
-	query := `SELECT COUNT(*) FROM users`
+	query := `SELECT COUNT(*) FROM users WHERE is_bot = false`
 
 	var count int
 	err := r.db.QueryRowContext(ctx, query).Scan(&count)

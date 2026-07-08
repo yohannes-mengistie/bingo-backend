@@ -19,6 +19,18 @@ type Config struct {
 	Telegram        TelegramConfig
 	PaymentVerifier PaymentVerifierConfig
 	Internal        InternalConfig
+	Bots            BotsConfig
+}
+
+// BotsConfig holds the runtime knobs for the filler-bot subsystem. The actual
+// fill POLICY (enabled, thresholds, target) lives in the DB and is edited from
+// the admin dashboard; these are operational defaults set once at deploy time.
+type BotsConfig struct {
+	Enabled         bool    // run the background auto-filler goroutine at all
+	PoolSize        int     // how many bot accounts to seed on boot
+	WalletFloat     float64 // house money each bot wallet is topped up to (birr)
+	MaxJoinsPerTick int     // bots added per game per sweep (spaces out joins)
+	CheckInterval   int     // seconds between auto-fill sweeps
 }
 
 // InternalConfig gates the server-to-server ("bot-facing") /user, /wallet and
@@ -119,6 +131,13 @@ func Load() (*Config, error) {
 		},
 		Internal: InternalConfig{
 			APISecret: getEnv("INTERNAL_API_SECRET", ""),
+		},
+		Bots: BotsConfig{
+			Enabled:         getEnv("BOTS_ENABLED", "false") == "true",
+			PoolSize:        getEnvInt("BOT_POOL_SIZE", 30),
+			WalletFloat:     float64(getEnvInt("BOT_WALLET_FLOAT", 1000)),
+			MaxJoinsPerTick: getEnvInt("BOT_MAX_JOINS_PER_TICK", 5),
+			CheckInterval:   getEnvInt("BOT_CHECK_INTERVAL_SECONDS", 5),
 		},
 	}
 

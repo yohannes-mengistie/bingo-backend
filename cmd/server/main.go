@@ -62,6 +62,7 @@ func main() {
 	walletRepo := postgres.NewWalletRepository(db)
 	transactionRepo := postgres.NewTransactionRepository(db)
 	gameRepo := postgres.NewGameRepository(db)
+	botRepo := postgres.NewBotRepository(db)
 
 	// Initialize Redis services
 	gameStateService := redisPkg.NewGameStateService(redisClient.GetClient())
@@ -75,12 +76,19 @@ func main() {
 	walletUseCase := usecase.NewWalletUseCase(walletRepo, transactionRepo, userRepo, gameRepo, db, paymentVerifier)
 	authUseCase := usecase.NewAuthUseCase(userRepo, jwtService, cfg.Admin.SecretCode, cfg.Telegram.BotToken)
 	gameUseCase := usecase.NewGameUseCase(gameRepo, walletRepo, transactionRepo, userRepo, db, gameStateService)
+	botUseCase := usecase.NewBotUseCase(botRepo, userRepo, walletRepo, transactionRepo, gameRepo, gameUseCase, db, usecase.BotSettings{
+		PoolSize:        cfg.Bots.PoolSize,
+		WalletFloat:     cfg.Bots.WalletFloat,
+		MaxJoinsPerTick: cfg.Bots.MaxJoinsPerTick,
+		CheckInterval:   time.Duration(cfg.Bots.CheckInterval) * time.Second,
+	})
 
 	// Initialize handlers
 	userHandler := handler.NewUserHandler(userUseCase)
 	walletHandler := handler.NewWalletHandler(walletUseCase)
 	authHandler := handler.NewAuthHandler(authUseCase)
 	gameHandler := handler.NewGameHandler(gameUseCase)
+	botHandler := handler.NewBotHandler(botUseCase)
 	wsHandler := handler.NewWebSocketHandler(redisClient.GetClient(), gameStateService, gameUseCase)
 
 	// Telegram bot: registration gateway + Mini App launcher (webhook-driven).
@@ -88,7 +96,24 @@ func main() {
 	telegramHandler := handler.NewTelegramHandler(userUseCase, telegramBot, cfg.Telegram.WebhookSecret, cfg.Telegram.MiniAppURL)
 
 	// Setup router
-	router := setupRouter(userHandler, walletHandler, authHandler, gameHandler, wsHandler, telegramHandler, jwtService, cfg.Internal.APISecret)
+	router := setupRouter(userHandler, walletHandler, authHandler, gameHandler, botHandler, wsHandler, telegramHandler, jwtService, cfg.Internal.APISecret)
+
+	// Filler bots: seed the pool once, then run the background auto-filler.
+	// Gated by BOTS_ENABLED; the fill POLICY itself is toggled from the admin
+	// dashboard (bot_config), so this only decides whether the machinery runs.
+	botCtx, botCancel := context.WithCancel(context.Background())
+	defer botCancel()
+	if cfg.Bots.Enabled {
+		go func() {
+			seedCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			if err := botUseCase.EnsureBotPool(seedCtx, cfg.Bots.PoolSize); err != nil {
+				log.Printf("Warning: failed to seed bot pool: %v", err)
+			}
+			botUseCase.Run(botCtx)
+		}()
+		log.Printf("Filler bots enabled (pool=%d, float=%.0f)", cfg.Bots.PoolSize, cfg.Bots.WalletFloat)
+	}
 
 	// Create HTTP server
 	srv := &http.Server{
@@ -125,7 +150,7 @@ func main() {
 	log.Println("Server exited")
 }
 
-func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.WalletHandler, authHandler *handler.AuthHandler, gameHandler *handler.GameHandler, wsHandler *handler.WebSocketHandler, telegramHandler *handler.TelegramHandler, jwtService *jwt.Service, internalAPISecret string) *gin.Engine {
+func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.WalletHandler, authHandler *handler.AuthHandler, gameHandler *handler.GameHandler, botHandler *handler.BotHandler, wsHandler *handler.WebSocketHandler, telegramHandler *handler.TelegramHandler, jwtService *jwt.Service, internalAPISecret string) *gin.Engine {
 	// Set Gin to release mode in production
 	if os.Getenv("GIN_MODE") == "release" {
 		gin.SetMode(gin.ReleaseMode)
@@ -299,6 +324,15 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 				games.GET("", gameHandler.AdminListGames)                  // list games (?state=&type=&limit=&offset=)
 				games.GET("/:gameId", gameHandler.AdminGetGame)            // game detail + players
 				games.POST("/:gameId/cancel", gameHandler.AdminCancelGame) // force-cancel + refund stakes
+				games.POST("/:gameId/add-bots", botHandler.AddBots)        // manually inject filler bots
+			}
+
+			// Filler-bot control (auto-fill policy + pool seeding)
+			bots := admin.Group("/bots")
+			{
+				bots.GET("/config", botHandler.GetConfig)    // read auto-fill policy
+				bots.PUT("/config", botHandler.UpdateConfig) // edit auto-fill policy
+				bots.POST("/seed", botHandler.SeedPool)      // (re)create + fund the bot pool
 			}
 
 			// Transaction queries
