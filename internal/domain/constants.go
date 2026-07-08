@@ -141,6 +141,13 @@ const MaxAvailableGamesLimit = 50
 // DrawInterval is the interval between drawing numbers
 const DrawInterval = 3000 * time.Millisecond
 
+// Empty-game cleanup: how often the sweeper runs, and how long an empty
+// WAITING/COUNTDOWN game (0 players) may sit untouched before it is cancelled
+// and dropped from the lobby/active list. The grace period gives a freshly
+// spawned or just-served lobby game time to get its first player.
+const EmptyGameCleanupInterval = 60 * time.Second
+const EmptyGameGracePeriod = 120 * time.Second
+
 // WebSocket Handler Constants
 
 // WebSocketInitialStateTimeout is the timeout for fetching initial state

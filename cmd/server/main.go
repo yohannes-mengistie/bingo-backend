@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/bingo/backend/config"
+	"github.com/bingo/backend/internal/domain"
 	"github.com/bingo/backend/internal/handler"
 	"github.com/bingo/backend/internal/middleware"
 	"github.com/bingo/backend/internal/payment"
@@ -98,11 +99,33 @@ func main() {
 	// Setup router
 	router := setupRouter(userHandler, walletHandler, authHandler, gameHandler, botHandler, wsHandler, telegramHandler, jwtService, cfg.Internal.APISecret)
 
+	// Shared background context for the server's housekeeping goroutines,
+	// cancelled on shutdown.
+	botCtx, botCancel := context.WithCancel(context.Background())
+	defer botCancel()
+
+	// Empty-game sweeper: periodically cancel abandoned/never-joined WAITING
+	// games (0 players) so they drop out of the lobby and admin active list.
+	go func() {
+		ticker := time.NewTicker(domain.EmptyGameCleanupInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-botCtx.Done():
+				return
+			case <-ticker.C:
+				if n, err := gameUseCase.CleanupEmptyGames(botCtx); err != nil {
+					log.Printf("Warning: empty-game cleanup failed: %v", err)
+				} else if n > 0 {
+					log.Printf("Empty-game cleanup: cancelled %d abandoned game(s)", n)
+				}
+			}
+		}
+	}()
+
 	// Filler bots: seed the pool once, then run the background auto-filler.
 	// Gated by BOTS_ENABLED; the fill POLICY itself is toggled from the admin
 	// dashboard (bot_config), so this only decides whether the machinery runs.
-	botCtx, botCancel := context.WithCancel(context.Background())
-	defer botCancel()
 	if cfg.Bots.Enabled {
 		go func() {
 			seedCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)

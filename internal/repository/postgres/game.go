@@ -1143,3 +1143,38 @@ func (r *gameRepository) FindRecentWinners(ctx context.Context, limit int) ([]*d
 
 	return winners, nil
 }
+
+// CancelEmptyStaleGames cancels WAITING/COUNTDOWN games with no active players
+// that haven't been touched since olderThan. Empty games hold no stakes, so no
+// refunds are needed. Returns how many rows were cancelled.
+func (r *gameRepository) CancelEmptyStaleGames(ctx context.Context, olderThan time.Time) (int64, error) {
+	query := `
+		UPDATE games g
+		SET state = 'CANCELLED',
+		    countdown_ends = NULL,
+		    player_count = 0,
+		    prize_pool = 0,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE g.state IN ('WAITING', 'COUNTDOWN')
+		  AND g.updated_at < $1
+		  AND NOT EXISTS (
+		      SELECT 1 FROM game_players gp
+		      WHERE gp.game_id = g.id AND gp.left_at IS NULL
+		  )
+	`
+	res, err := r.db.ExecContext(ctx, query, olderThan)
+	if err != nil {
+		return 0, fmt.Errorf("failed to cancel empty stale games: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// TouchUpdatedAt bumps a game's updated_at, protecting a just-served lobby game
+// from the empty-game sweeper during the brief join window.
+func (r *gameRepository) TouchUpdatedAt(ctx context.Context, id uuid.UUID) error {
+	if _, err := r.db.ExecContext(ctx, `UPDATE games SET updated_at = CURRENT_TIMESTAMP WHERE id = $1`, id); err != nil {
+		return fmt.Errorf("failed to touch game: %w", err)
+	}
+	return nil
+}
