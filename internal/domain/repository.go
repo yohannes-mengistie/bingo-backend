@@ -50,6 +50,11 @@ type TransactionRepository interface {
 	CountByStatusAndType(ctx context.Context, status TransactionStatus, transactionType TransactionType) (int, error)
 	ExistsActiveDepositByTransactionID(ctx context.Context, transactionID string) (bool, error)
 	CountAll(ctx context.Context) (int, error)
+	// RealPlayerGamePnL returns (real-player stakes) − (real-player winnings)
+	// over all completed game transactions, excluding bots. Positive = the house
+	// is ahead; negative = it has paid real players more than they staked (real
+	// cash exposure, e.g. real players winning bot-inflated pools).
+	RealPlayerGamePnL(ctx context.Context) (float64, error)
 }
 
 // GameHistoryEntry represents a game with user's participation details.
