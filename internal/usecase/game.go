@@ -43,6 +43,16 @@ func NewGameUseCase(
 	}
 }
 
+// CleanupEmptyGames cancels WAITING/COUNTDOWN games that have no active players
+// and have sat untouched past the grace period, so abandoned and never-joined
+// lobby games stop cluttering the active list. Empty games carry no stakes, so
+// nothing is refunded. Returns how many were cancelled. Meant to be called on a
+// timer by a background sweeper.
+func (uc *GameUseCase) CleanupEmptyGames(ctx context.Context) (int64, error) {
+	cutoff := time.Now().Add(-domain.EmptyGameGracePeriod)
+	return uc.gameRepo.CancelEmptyStaleGames(ctx, cutoff)
+}
+
 // GetAvailableGames gets available games (WAITING or COUNTDOWN state)
 func (uc *GameUseCase) GetAvailableGames(ctx context.Context, gameType *domain.GameType) ([]*domain.Game, error) {
 	games, err := uc.gameRepo.FindAvailable(ctx, gameType, domain.MaxAvailableGamesLimit)
@@ -63,7 +73,9 @@ func (uc *GameUseCase) CreateOrGetGame(ctx context.Context, gameType domain.Game
 	// Try to find an available game first
 	games, err := uc.gameRepo.FindAvailable(ctx, &gameType, 1)
 	if err == nil && len(games) > 0 {
-		// Return existing game
+		// Reuse the existing game. Bump its updated_at so the empty-game sweeper
+		// can't cancel it out from under a player who is about to join.
+		_ = uc.gameRepo.TouchUpdatedAt(ctx, games[0].ID)
 		return games[0], nil
 	}
 

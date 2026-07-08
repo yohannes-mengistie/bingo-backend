@@ -138,4 +138,12 @@ type GameRepository interface {
 	// FindRecentWinners returns the most recently finished games that had a
 	// winner, with the winner's display name and prize, for the lobby feed.
 	FindRecentWinners(ctx context.Context, limit int) ([]*RecentWinner, error)
+	// CancelEmptyStaleGames cancels every WAITING/COUNTDOWN game that has no
+	// active players and hasn't been touched since `olderThan`. Empty games
+	// carry no stakes, so this is safe (no refunds) and just clears the lobby of
+	// abandoned/auto-spawned games. Returns how many were cancelled.
+	CancelEmptyStaleGames(ctx context.Context, olderThan time.Time) (int64, error)
+	// TouchUpdatedAt bumps a game's updated_at so a just-served lobby game is
+	// protected from the empty-game sweeper during the join window.
+	TouchUpdatedAt(ctx context.Context, id uuid.UUID) error
 }
