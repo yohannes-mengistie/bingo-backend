@@ -450,5 +450,13 @@ func (uc *WalletUseCase) GetDashboardStats(ctx context.Context) (*domain.Dashboa
 	}
 	stats.TotalHouseCut = totalHouseCut
 
+	// Real-player game P&L (stakes − winnings, bots excluded). Negative = real
+	// cash exposure from bot-inflated pools real players won.
+	realPnl, err := uc.transactionRepo.RealPlayerGamePnL(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compute real-player game P&L: %w", err)
+	}
+	stats.RealPlayerGamePnl = realPnl
+
 	return stats, nil
 }

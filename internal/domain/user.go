@@ -63,6 +63,10 @@ type DashboardStats struct {
 	TotalBalance       float64          `json:"total_balance"`
 	GamesByType        map[GameType]int `json:"games_by_type"`
 	TotalHouseCut      float64          `json:"total_house_cut"`
+	// RealPlayerGamePnl = real-player stakes − real-player winnings. Negative
+	// means the house has paid real players more than they staked (real cash
+	// exposure, e.g. real players winning bot-inflated pools).
+	RealPlayerGamePnl float64 `json:"real_player_game_pnl"`
 }
 
 // UserWithWallet represents a user with their wallet information

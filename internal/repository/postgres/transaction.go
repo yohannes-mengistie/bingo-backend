@@ -465,3 +465,24 @@ func (r *transactionRepository) CountAll(ctx context.Context) (int, error) {
 
 	return count, nil
 }
+
+// RealPlayerGamePnL returns real-player stakes minus real-player winnings over
+// all completed game transactions, excluding bots. Positive = house ahead;
+// negative = real cash paid out beyond stakes (exposure).
+func (r *transactionRepository) RealPlayerGamePnL(ctx context.Context) (float64, error) {
+	query := `
+		SELECT
+			COALESCE(SUM(amount) FILTER (WHERE category = 'bet'), 0)
+			- COALESCE(SUM(amount) FILTER (WHERE category = 'winnings'), 0) AS pnl
+		FROM transactions t
+		JOIN users u ON u.id = t.user_id
+		WHERE u.is_bot = false
+		  AND t.status = 'completed'
+		  AND t.category IN ('bet', 'winnings')
+	`
+	var pnl float64
+	if err := r.db.QueryRowContext(ctx, query).Scan(&pnl); err != nil {
+		return 0, fmt.Errorf("failed to compute real-player game P&L: %w", err)
+	}
+	return pnl, nil
+}
