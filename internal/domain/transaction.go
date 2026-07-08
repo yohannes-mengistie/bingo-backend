@@ -40,6 +40,7 @@ const (
 	TransactionCategoryTransferOut TransactionCategory = "transfer_out" // sent to another player
 	TransactionCategoryAdminCredit TransactionCategory = "admin_credit" // manual balance increase by an admin
 	TransactionCategoryAdminDebit  TransactionCategory = "admin_debit"  // manual balance decrease by an admin
+	TransactionCategoryBotFunding  TransactionCategory = "bot_funding"  // house money injected to bankroll a bot wallet
 )
 
 // TransactionStatus represents the status of a transaction

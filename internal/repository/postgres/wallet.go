@@ -176,7 +176,14 @@ func (r *walletRepository) Update(ctx context.Context, wallet *domain.Wallet) er
 
 // GetTotalBalance calculates the sum of all wallet balances
 func (r *walletRepository) GetTotalBalance(ctx context.Context) (float64, error) {
-	query := `SELECT COALESCE(SUM(balance), 0) FROM wallets`
+	// Exclude filler-bot wallets: their balance is house float, not real
+	// player money, and would otherwise inflate the platform's total balance.
+	query := `
+		SELECT COALESCE(SUM(w.balance), 0)
+		FROM wallets w
+		JOIN users u ON u.id = w.user_id
+		WHERE u.is_bot = false
+	`
 
 	var totalBalance float64
 	err := r.db.QueryRowContext(ctx, query).Scan(&totalBalance)

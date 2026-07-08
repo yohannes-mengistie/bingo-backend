@@ -16,6 +16,7 @@ type User struct {
 	ReferalCode string    `json:"referal_code" db:"referal_code"`
 	Role        string    `json:"role" db:"role"`
 	Banned      bool      `json:"banned" db:"banned"`
+	IsBot       bool      `json:"is_bot" db:"is_bot"` // house-controlled filler player, not a real account
 	Password    *string   `json:"-" db:"password"` // Never expose password in JSON
 	CreatedAt   time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
