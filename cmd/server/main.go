@@ -64,6 +64,7 @@ func main() {
 	transactionRepo := postgres.NewTransactionRepository(db)
 	gameRepo := postgres.NewGameRepository(db)
 	botRepo := postgres.NewBotRepository(db)
+	supportRepo := postgres.NewSupportRepository(db)
 
 	// Initialize Redis services
 	gameStateService := redisPkg.NewGameStateService(redisClient.GetClient())
@@ -83,6 +84,7 @@ func main() {
 		MaxJoinsPerTick: cfg.Bots.MaxJoinsPerTick,
 		CheckInterval:   time.Duration(cfg.Bots.CheckInterval) * time.Second,
 	})
+	supportUseCase := usecase.NewSupportUseCase(supportRepo)
 
 	// Initialize handlers
 	userHandler := handler.NewUserHandler(userUseCase)
@@ -90,6 +92,7 @@ func main() {
 	authHandler := handler.NewAuthHandler(authUseCase)
 	gameHandler := handler.NewGameHandler(gameUseCase)
 	botHandler := handler.NewBotHandler(botUseCase)
+	supportHandler := handler.NewSupportHandler(supportUseCase)
 	wsHandler := handler.NewWebSocketHandler(redisClient.GetClient(), gameStateService, gameUseCase)
 
 	// Telegram bot: registration gateway + Mini App launcher (webhook-driven).
@@ -97,7 +100,7 @@ func main() {
 	telegramHandler := handler.NewTelegramHandler(userUseCase, telegramBot, cfg.Telegram.WebhookSecret, cfg.Telegram.MiniAppURL)
 
 	// Setup router
-	router := setupRouter(userHandler, walletHandler, authHandler, gameHandler, botHandler, wsHandler, telegramHandler, jwtService, cfg.Internal.APISecret)
+	router := setupRouter(userHandler, walletHandler, authHandler, gameHandler, botHandler, supportHandler, wsHandler, telegramHandler, jwtService, cfg.Internal.APISecret)
 
 	// Shared background context for the server's housekeeping goroutines,
 	// cancelled on shutdown.
@@ -173,7 +176,7 @@ func main() {
 	log.Println("Server exited")
 }
 
-func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.WalletHandler, authHandler *handler.AuthHandler, gameHandler *handler.GameHandler, botHandler *handler.BotHandler, wsHandler *handler.WebSocketHandler, telegramHandler *handler.TelegramHandler, jwtService *jwt.Service, internalAPISecret string) *gin.Engine {
+func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.WalletHandler, authHandler *handler.AuthHandler, gameHandler *handler.GameHandler, botHandler *handler.BotHandler, supportHandler *handler.SupportHandler, wsHandler *handler.WebSocketHandler, telegramHandler *handler.TelegramHandler, jwtService *jwt.Service, internalAPISecret string) *gin.Engine {
 	// Set Gin to release mode in production
 	if os.Getenv("GIN_MODE") == "release" {
 		gin.SetMode(gin.ReleaseMode)
@@ -292,6 +295,10 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			authed.POST("/games/:gameId/join", gameHandler.JoinGame)
 			authed.POST("/games/:gameId/leave", gameHandler.LeaveGame)
 			authed.POST("/games/:gameId/bingo", gameHandler.ClaimBingo)
+
+			// Report a problem (transaction / gameplay / other) — reaches the
+			// admin dashboard.
+			authed.POST("/support", supportHandler.SubmitReport)
 		}
 
 		// Public card endpoints
@@ -380,6 +387,13 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 
 			// General operations
 			admin.POST("/transactions/:id/cancel", walletHandler.CancelTransaction)
+
+			// Player problem reports (triage queue)
+			support := admin.Group("/support")
+			{
+				support.GET("", supportHandler.ListReports)              // list (?status=open|resolved&limit=&offset=)
+				support.POST("/:id/resolve", supportHandler.ResolveReport) // mark handled
+			}
 		}
 	}
 
