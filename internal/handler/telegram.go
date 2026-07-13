@@ -81,7 +81,7 @@ func (h *TelegramHandler) handleStart(c *gin.Context, msg *telegram.Message) {
 	}
 
 	h.reply(msg.Chat.ID,
-		"Welcome to Habesha Bingo! 🎯\n\nTo create your account, tap the button below to share your phone number.",
+		"Welcome to Habtam Bingo! 🎯\n\nTo create your account, tap the button below to share your phone number.",
 		telegram.ContactRequestKeyboard("📱 Share my phone number"))
 }
 
