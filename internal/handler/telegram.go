@@ -3,7 +3,10 @@ package handler
 import (
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bingo/backend/internal/domain"
 	"github.com/bingo/backend/internal/usecase"
@@ -28,8 +31,40 @@ func NewTelegramHandler(userUseCase *usecase.UserUseCase, bot *telegram.Bot, web
 		userUseCase:   userUseCase,
 		bot:           bot,
 		webhookSecret: webhookSecret,
-		miniAppURL:    miniAppURL,
+		// Bake a per-deploy cache-buster into the Mini App URL. Telegram caches
+		// the web app per-URL and ignores our no-cache headers, so without a
+		// changing query string players keep seeing the previous build after a
+		// deploy. Resolved once at startup (stable within a deploy, so repeated
+		// opens still hit Telegram's cache; changes on the next deploy).
+		miniAppURL: withCacheVersion(miniAppURL, miniAppCacheVersion()),
 	}
+}
+
+// miniAppCacheVersion returns a token that changes on every deploy. On Render
+// that's the deployed commit (RENDER_GIT_COMMIT); locally it falls back to the
+// process start time, so a restart still busts the cache.
+func miniAppCacheVersion() string {
+	if c := os.Getenv("RENDER_GIT_COMMIT"); c != "" {
+		if len(c) > 8 {
+			c = c[:8]
+		}
+		return c
+	}
+	return strconv.FormatInt(time.Now().Unix(), 10)
+}
+
+// withCacheVersion appends ?v=<version> (or &v= when the URL already has a
+// query) so Telegram treats each deploy's URL as new. A blank base or version
+// is returned unchanged.
+func withCacheVersion(rawURL, version string) string {
+	if rawURL == "" || version == "" {
+		return rawURL
+	}
+	sep := "?"
+	if strings.Contains(rawURL, "?") {
+		sep = "&"
+	}
+	return rawURL + sep + "v=" + version
 }
 
 // Webhook handles POST /telegram/webhook — the endpoint registered with
