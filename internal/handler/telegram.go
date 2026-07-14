@@ -116,7 +116,7 @@ func (h *TelegramHandler) handleStart(c *gin.Context, msg *telegram.Message) {
 	}
 
 	h.reply(msg.Chat.ID,
-		"Welcome to Habtam Bingo! 🎯\n\nTo create your account, tap the button below to share your phone number.",
+		"Welcome to Edl Bingo! · እንኳን ወደ እድል ቢንጎ በደህና መጡ! 🎯\n\nTo create your account, tap the button below to share your phone number.",
 		telegram.ContactRequestKeyboard("📱 Share my phone number"))
 }
 
