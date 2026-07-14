@@ -154,6 +154,71 @@ func TestIntegration_Reservation_ChargeAtStart(t *testing.T) {
 	t.Log("commit OK: both charged 10, DRAWING, pool 16")
 }
 
+// Full flow through the REAL use case: two players reserve (no charge), the
+// countdown ends (everyone charged, game starts), the winner's line is drawn,
+// auto-bingo resolves the game, and the pot is paid out. Asserts wallet balances
+// at every step.
+func TestIntegration_Reservation_EndToEnd(t *testing.T) {
+	h := newHarness(t)
+	defer h.cleanup()
+	ctx := context.Background()
+
+	winner := h.seedUser("E2E-Win", 61)
+	loser := h.seedUser("E2E-Lose", 62)
+	h.setBalance(winner, 50)
+	h.setBalance(loser, 50)
+	gameID := h.seedWaitingGame() // REGULAR, bet 10, house_cut 0.2
+
+	// 1) Both players RESERVE a card via the real join path — no charge yet.
+	if _, err := h.uc.JoinGame(ctx, gameID, domain.JoinGameRequest{UserID: winner, CardID: 1}); err != nil {
+		t.Fatalf("winner reserve: %v", err)
+	}
+	if _, err := h.uc.JoinGame(ctx, gameID, domain.JoinGameRequest{UserID: loser, CardID: 2}); err != nil {
+		t.Fatalf("loser reserve: %v", err)
+	}
+	if h.balance(winner) != 50 || h.balance(loser) != 50 {
+		t.Fatalf("reserve must not charge: winner=%v loser=%v", h.balance(winner), h.balance(loser))
+	}
+	if g := h.gameState(gameID); g.PlayerCount != 2 {
+		t.Fatalf("expected 2 players after reservations, got %d", g.PlayerCount)
+	}
+	t.Log("step 1 OK: both reserved, no charge, 2 players")
+
+	// 2) Countdown ends → commit charges everyone and drawing starts.
+	h.forceCountdown(gameID, 2, 16)
+	h.uc.startDrawing(ctx, gameID)
+	if h.balance(winner) != 40 || h.balance(loser) != 40 {
+		t.Fatalf("commit must charge each 10: winner=%v loser=%v", h.balance(winner), h.balance(loser))
+	}
+	g := h.gameState(gameID)
+	if g.State != domain.GameStateDrawing {
+		t.Fatalf("expected DRAWING, got %s", g.State)
+	}
+	if g.PrizePool != 16 {
+		t.Fatalf("prize pool want 16 got %v", g.PrizePool)
+	}
+	t.Log("step 2 OK: both charged 10, DRAWING, pool 16")
+
+	// 3) Draw the winner's top row → auto-bingo resolves the game.
+	h.drawTopRow(gameID, 1)
+	if !h.uc.checkAutoBingo(ctx, gameID, h.gameState(gameID)) {
+		t.Fatalf("expected auto-bingo to resolve")
+	}
+
+	// 4) Winner paid the full pot; loser stays down their stake.
+	gf := h.gameState(gameID)
+	if gf.State != domain.GameStateFinished {
+		t.Fatalf("expected FINISHED, got %s", gf.State)
+	}
+	if b := h.balance(winner); b != 56 { // 50 - 10 stake + 16 pot
+		t.Fatalf("winner balance want 56 got %v", b)
+	}
+	if b := h.balance(loser); b != 40 { // 50 - 10 stake
+		t.Fatalf("loser balance want 40 got %v", b)
+	}
+	t.Log("E2E OK: reserve(0) -> charge(10 each) -> draw -> winner +16 (bal 56), loser 40")
+}
+
 // A reserver who can no longer cover their cards at commit is dropped without a
 // charge; if that leaves too few players the game reverts to WAITING.
 func TestIntegration_Reservation_DropUnfundedAtStart(t *testing.T) {
