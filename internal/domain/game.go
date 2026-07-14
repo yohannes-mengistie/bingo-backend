@@ -86,6 +86,9 @@ type GamePlayer struct {
 	GameID       uuid.UUID  `json:"game_id" db:"game_id"`
 	UserID       uuid.UUID  `json:"user_id" db:"user_id"`
 	CardID       int        `json:"card_id" db:"card_id"` // 1-200
+	// Paid is false while a card is only reserved during the pre-game window and
+	// flips to true when the countdown ends and the stake is actually charged.
+	Paid         bool       `json:"paid" db:"paid"`
 	IsEliminated bool       `json:"is_eliminated" db:"is_eliminated"`
 	IsWinner     bool       `json:"is_winner" db:"is_winner"`
 	PrizeWon     float64    `json:"prize_won" db:"prize_won"`

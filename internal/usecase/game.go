@@ -192,37 +192,24 @@ func (uc *GameUseCase) JoinGame(ctx context.Context, gameID uuid.UUID, req domai
 		return nil, fmt.Errorf("maximum %d cards per game", domain.MaxCardsPerPlayer)
 	}
 
-	// Check balance (one card = one bet)
-	if wallet.Balance < game.BetAmount {
+	// Reservation model: the stake is NOT charged now. Picking a card only
+	// reserves it during the pre-game window; every reserved card is charged
+	// together when the countdown ends and the game actually starts (see
+	// commitReservations in startDrawing). We still verify the wallet can cover
+	// ALL of this player's reserved cards, so nobody reserves cards they can't
+	// pay for and blocks them from others. existingCardCount excludes the card
+	// being added, so the +1 accounts for it.
+	if wallet.Balance < float64(existingCardCount+1)*game.BetAmount {
 		return nil, errors.New("insufficient balance")
 	}
 
-	// Deduct bet amount
-	if err := uc.walletRepo.UpdateBalance(ctx, tx, req.UserID, -game.BetAmount); err != nil {
-		return nil, fmt.Errorf("failed to deduct bet: %w", err)
-	}
-
-	// Create transaction record
-	gameBetRef := "GAME_BET"
-	transaction := &domain.Transaction{
-		UserID:    req.UserID,
-		Type:      domain.TransactionTypeWithdraw, // Bet is treated as withdrawal
-		Category:  domain.TransactionCategoryBet,  // ...but its business meaning is a game stake
-		Amount:    game.BetAmount,
-		Status:    domain.TransactionStatusCompleted, // Bet is immediately deducted
-		Reference: &gameBetRef,                       // Mark as game bet to exclude from withdrawal history
-	}
-
-	if err := uc.transactionRepo.Create(ctx, tx, transaction); err != nil {
-		return nil, fmt.Errorf("failed to create transaction: %w", err)
-	}
-
-	// Add player
+	// Add the card as a pending (unpaid) reservation.
 	player := &domain.GamePlayer{
 		ID:           uuid.New(),
 		GameID:       gameID,
 		UserID:       req.UserID,
 		CardID:       req.CardID,
+		Paid:         false,
 		IsEliminated: false,
 	}
 
@@ -338,9 +325,18 @@ func (uc *GameUseCase) LeaveGame(ctx context.Context, gameID uuid.UUID, req doma
 		return errors.New("cannot leave after the game has started")
 	}
 
-	// Only WAITING/COUNTDOWN remain here, so every leave at this point is refundable.
-	refundable := game.State == domain.GameStateWaiting || game.State == domain.GameStateCountdown
-	if refundable {
+	// Refund only cards that were actually charged. Reserved (unpaid) cards moved
+	// no money, so leaving before the countdown-end charge just releases them.
+	// (A paid card can still exist in a WAITING game if it reverted after a
+	// reserver failed to pay at commit — that one refunds.)
+	anyPaid := false
+	for _, p := range toDrop {
+		if p.Paid {
+			anyPaid = true
+			break
+		}
+	}
+	if anyPaid {
 		// Lock the wallet once for all of this user's refunds.
 		if _, err := uc.walletRepo.LockForUpdate(ctx, tx, req.UserID); err != nil {
 			return fmt.Errorf("wallet not found: %w", err)
@@ -361,8 +357,8 @@ func (uc *GameUseCase) LeaveGame(ctx context.Context, gameID uuid.UUID, req doma
 			continue
 		}
 
-		// Refund this card's stake (only before the game starts).
-		if refundable {
+		// Refund this card's stake only if it was actually charged.
+		if p.Paid {
 			if err := uc.walletRepo.UpdateBalance(ctx, tx, req.UserID, game.BetAmount); err != nil {
 				return fmt.Errorf("failed to refund: %w", err)
 			}
@@ -530,37 +526,136 @@ func (uc *GameUseCase) startCountdown(ctx context.Context, gameID uuid.UUID) {
 	uc.startDrawing(ctx, gameID)
 }
 
-// startDrawing starts the drawing phase
+// startDrawing charges all reservations, then transitions COUNTDOWN → DRAWING.
+//
+// The whole commit runs under the game-row lock: concurrent joins/leaves block
+// until we finish and then see DRAWING (join rejected) or the recomputed
+// counters, so no reservation slips in mid-charge and no counter update is lost.
 func (uc *GameUseCase) startDrawing(ctx context.Context, gameID uuid.UUID) {
-	// Transition COUNTDOWN → DRAWING under the game-row lock and re-read, so a
-	// late join finishing during the last tick of the countdown can't have its
-	// counter update clobbered by a stale full-row write here.
 	tx, err := uc.db.BeginTx(ctx, nil)
 	if err != nil {
 		return
 	}
+	defer tx.Rollback() // no-op after a successful Commit below
+
 	game, err := uc.gameRepo.LockForUpdate(ctx, tx, gameID)
 	if err != nil || game.State != domain.GameStateCountdown {
-		tx.Rollback()
+		return
+	}
+
+	active, err := uc.gameRepo.GetActivePlayersTx(ctx, tx, gameID)
+	if err != nil {
+		return
+	}
+
+	// Charge each player for their reserved (unpaid) cards, all at once. A player
+	// who can no longer cover their reservations has those cards dropped (they
+	// were never charged, so there is nothing to refund).
+	unpaidByUser := map[uuid.UUID]int{}
+	for _, p := range active {
+		if !p.Paid {
+			unpaidByUser[p.UserID]++
+		}
+	}
+
+	gameBetRef := "GAME_BET"
+	var droppedCards []int
+	for userID, count := range unpaidByUser {
+		wallet, err := uc.walletRepo.LockForUpdate(ctx, tx, userID)
+		if err != nil {
+			return
+		}
+		cost := float64(count) * game.BetAmount
+		if wallet.Balance < cost {
+			// Can't pay: release all of this player's reserved cards.
+			for _, p := range active {
+				if p.UserID == userID && !p.Paid {
+					if _, err := uc.gameRepo.RemovePlayerCard(ctx, tx, gameID, userID, p.CardID); err != nil {
+						return
+					}
+					droppedCards = append(droppedCards, p.CardID)
+				}
+			}
+			continue
+		}
+		// Deduct the total stake and record one bet transaction per card.
+		if err := uc.walletRepo.UpdateBalance(ctx, tx, userID, -cost); err != nil {
+			return
+		}
+		for i := 0; i < count; i++ {
+			betTx := &domain.Transaction{
+				UserID:    userID,
+				Type:      domain.TransactionTypeWithdraw,
+				Category:  domain.TransactionCategoryBet,
+				Amount:    game.BetAmount,
+				Status:    domain.TransactionStatusCompleted,
+				Reference: &gameBetRef,
+			}
+			if err := uc.transactionRepo.Create(ctx, tx, betTx); err != nil {
+				return
+			}
+		}
+		if _, err := uc.gameRepo.MarkUserCardsPaidTx(ctx, tx, gameID, userID); err != nil {
+			return
+		}
+	}
+
+	// Recompute the live counters from the paid cards that remain.
+	paidPlayers, err := uc.gameRepo.GetActivePlayersTx(ctx, tx, gameID)
+	if err != nil {
+		return
+	}
+	distinct := make(map[uuid.UUID]bool, len(paidPlayers))
+	for _, p := range paidPlayers {
+		distinct[p.UserID] = true
+	}
+	game.PlayerCount = len(distinct)
+	game.PrizePool = float64(len(paidPlayers)) * game.BetAmount * (1 - game.HouseCut)
+
+	// Not enough paying players (e.g. a reserver couldn't cover their cards at
+	// commit): don't start. Revert to WAITING and keep whoever did pay; the
+	// countdown restarts when another player joins. Their paid cards stay charged
+	// and play next round — same as a countdown that drops below the minimum.
+	if len(distinct) < domain.MinPlayers {
+		game.State = domain.GameStateWaiting
+		game.CountdownEnds = nil
+		if err := uc.gameRepo.UpdateTx(ctx, tx, game); err != nil {
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			return
+		}
+		uc.redisService.ClearCountdown(ctx, gameID)
+		for _, cardID := range droppedCards {
+			uc.redisService.RemoveTakenCard(ctx, gameID, cardID)
+		}
+		uc.redisService.SaveGameState(ctx, game)
+		uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventGameStatus, map[string]interface{}{
+			"status":       string(domain.GameStateWaiting),
+			"prize_pool":   game.PrizePool,
+			"player_count": game.PlayerCount,
+		})
 		return
 	}
 
 	game.State = domain.GameStateDrawing
 	now := time.Now()
 	game.StartedAt = &now
-
 	if err := uc.gameRepo.UpdateTx(ctx, tx, game); err != nil {
-		tx.Rollback()
 		return
 	}
 	if err := tx.Commit(); err != nil {
 		return
 	}
 
+	for _, cardID := range droppedCards {
+		uc.redisService.RemoveTakenCard(ctx, gameID, cardID)
+	}
 	uc.redisService.SaveGameState(ctx, game)
-
 	uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventGameStatus, map[string]interface{}{
-		"status": string(domain.GameStateDrawing),
+		"status":       string(domain.GameStateDrawing),
+		"prize_pool":   game.PrizePool,
+		"player_count": game.PlayerCount,
 	})
 
 	// Start drawing numbers periodically
@@ -1272,6 +1367,11 @@ func (uc *GameUseCase) cancelGameAndRefund(ctx context.Context, gameID uuid.UUID
 			return nil, 0, 0, fmt.Errorf("failed to remove player card: %w", err)
 		}
 		if rows == 0 {
+			continue
+		}
+
+		// Reserved (unpaid) cards moved no money — release them without a refund.
+		if !p.Paid {
 			continue
 		}
 

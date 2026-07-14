@@ -414,7 +414,7 @@ func (r *gameRepository) UpdateTx(ctx context.Context, tx *sql.Tx, game *domain.
 // inside an existing transaction.
 func (r *gameRepository) GetActivePlayersTx(ctx context.Context, tx *sql.Tx, gameID uuid.UUID) ([]*domain.GamePlayer, error) {
 	query := `
-		SELECT id, game_id, user_id, card_id, is_eliminated, joined_at, left_at
+		SELECT id, game_id, user_id, card_id, paid, is_eliminated, joined_at, left_at
 		FROM game_players
 		WHERE game_id = $1 AND left_at IS NULL
 	`
@@ -433,6 +433,7 @@ func (r *gameRepository) GetActivePlayersTx(ctx context.Context, tx *sql.Tx, gam
 			&player.GameID,
 			&player.UserID,
 			&player.CardID,
+			&player.Paid,
 			&player.IsEliminated,
 			&player.JoinedAt,
 			&player.LeftAt,
@@ -533,16 +534,16 @@ func (r *gameRepository) AddPlayer(ctx context.Context, tx *sql.Tx, player *doma
 	// Reactivate a previously-left row for this exact card, if any.
 	updateQuery := `
 		UPDATE game_players
-		SET user_id = $1, is_eliminated = $2, joined_at = $3, left_at = NULL
-		WHERE game_id = $4 AND card_id = $5 AND left_at IS NOT NULL
+		SET user_id = $1, paid = $2, is_eliminated = $3, joined_at = $4, left_at = NULL
+		WHERE game_id = $5 AND card_id = $6 AND left_at IS NOT NULL
 	`
 
 	var err error
 	var result sql.Result
 	if tx != nil {
-		result, err = tx.ExecContext(ctx, updateQuery, player.UserID, player.IsEliminated, player.JoinedAt, player.GameID, player.CardID)
+		result, err = tx.ExecContext(ctx, updateQuery, player.UserID, player.Paid, player.IsEliminated, player.JoinedAt, player.GameID, player.CardID)
 	} else {
-		result, err = r.db.ExecContext(ctx, updateQuery, player.UserID, player.IsEliminated, player.JoinedAt, player.GameID, player.CardID)
+		result, err = r.db.ExecContext(ctx, updateQuery, player.UserID, player.Paid, player.IsEliminated, player.JoinedAt, player.GameID, player.CardID)
 	}
 
 	if err != nil {
@@ -557,14 +558,14 @@ func (r *gameRepository) AddPlayer(ctx context.Context, tx *sql.Tx, player *doma
 	// If no left row was reactivated, insert a fresh card row.
 	if rowsAffected == 0 {
 		insertQuery := `
-			INSERT INTO game_players (id, game_id, user_id, card_id, is_eliminated, joined_at)
-			VALUES ($1, $2, $3, $4, $5, $6)
+			INSERT INTO game_players (id, game_id, user_id, card_id, paid, is_eliminated, joined_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
 		`
 
 		if tx != nil {
-			_, err = tx.ExecContext(ctx, insertQuery, player.ID, player.GameID, player.UserID, player.CardID, player.IsEliminated, player.JoinedAt)
+			_, err = tx.ExecContext(ctx, insertQuery, player.ID, player.GameID, player.UserID, player.CardID, player.Paid, player.IsEliminated, player.JoinedAt)
 		} else {
-			_, err = r.db.ExecContext(ctx, insertQuery, player.ID, player.GameID, player.UserID, player.CardID, player.IsEliminated, player.JoinedAt)
+			_, err = r.db.ExecContext(ctx, insertQuery, player.ID, player.GameID, player.UserID, player.CardID, player.Paid, player.IsEliminated, player.JoinedAt)
 		}
 
 		if err != nil {
@@ -573,6 +574,21 @@ func (r *gameRepository) AddPlayer(ctx context.Context, tx *sql.Tx, player *doma
 	}
 
 	return nil
+}
+
+// MarkUserCardsPaidTx flips all of a user's active reserved (unpaid) cards in a
+// game to paid, returning how many rows changed. Used when the countdown ends
+// and reservations are charged.
+func (r *gameRepository) MarkUserCardsPaidTx(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID) (int64, error) {
+	res, err := tx.ExecContext(ctx, `
+		UPDATE game_players
+		SET paid = true
+		WHERE game_id = $1 AND user_id = $2 AND left_at IS NULL AND paid = false
+	`, gameID, userID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to mark cards paid: %w", err)
+	}
+	return res.RowsAffected()
 }
 
 // RemovePlayerCard soft-deletes one specific card row (sets left_at).
@@ -633,7 +649,7 @@ func (r *gameRepository) FindPlayer(ctx context.Context, gameID, userID uuid.UUI
 // FindPlayersByUser returns all of a user's active card rows in a game.
 func (r *gameRepository) FindPlayersByUser(ctx context.Context, gameID, userID uuid.UUID) ([]*domain.GamePlayer, error) {
 	query := `
-		SELECT id, game_id, user_id, card_id, is_eliminated, joined_at, left_at
+		SELECT id, game_id, user_id, card_id, paid, is_eliminated, joined_at, left_at
 		FROM game_players
 		WHERE game_id = $1 AND user_id = $2 AND left_at IS NULL
 		ORDER BY joined_at
@@ -653,6 +669,7 @@ func (r *gameRepository) FindPlayersByUser(ctx context.Context, gameID, userID u
 			&player.GameID,
 			&player.UserID,
 			&player.CardID,
+			&player.Paid,
 			&player.IsEliminated,
 			&player.JoinedAt,
 			&player.LeftAt,
