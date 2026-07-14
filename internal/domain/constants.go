@@ -11,7 +11,7 @@ const MinPlayers = 2
 const HouseCut = 0.2
 
 // CountdownDuration is the duration of the countdown before a game starts
-const CountdownDuration = 60 * time.Second
+const CountdownDuration = 40 * time.Second
 
 // CountdownTickerInterval is the interval at which countdown updates are sent
 const CountdownTickerInterval = 1 * time.Second
