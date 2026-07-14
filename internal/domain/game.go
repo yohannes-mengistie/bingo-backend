@@ -71,6 +71,7 @@ type Game struct {
 	PlayerCount   int        `json:"player_count" db:"player_count"`
 	PrizePool     float64    `json:"prize_pool" db:"prize_pool"`
 	HouseCut      float64    `json:"house_cut" db:"house_cut"`
+	RoundCode     string     `json:"round_code" db:"round_code"`
 	WinnerID      *uuid.UUID `json:"winner_id,omitempty" db:"winner_id"`
 	CountdownEnds *time.Time `json:"countdown_ends,omitempty" db:"countdown_ends"`
 	StartedAt     *time.Time `json:"started_at,omitempty" db:"started_at"`

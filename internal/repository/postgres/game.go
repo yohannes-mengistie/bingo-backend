@@ -19,18 +19,43 @@ func NewGameRepository(db *sql.DB) domain.GameRepository {
 	return &gameRepository{db: db}
 }
 
-// Create creates a new game
-func (r *gameRepository) Create(ctx context.Context, game *domain.Game) error {
-	query := `
-		INSERT INTO games (id, game_type, state, bet_amount, min_players, player_count, prize_pool, house_cut, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-	`
+// eatZone is Ethiopian time (EAT, UTC+3, no DST). Used to decide which calendar
+// day a game belongs to for its human-readable round code.
+var eatZone = time.FixedZone("EAT", 3*60*60)
 
+// Create creates a new game, assigning a human-readable daily round code
+// (e.g. "0714-03") atomically so concurrent creates never collide.
+func (r *gameRepository) Create(ctx context.Context, game *domain.Game) error {
 	now := time.Now()
 	game.CreatedAt = now
 	game.UpdatedAt = now
 
-	_, err := r.db.ExecContext(ctx, query,
+	nowEAT := now.In(eatZone)
+	gameDay := nowEAT.Format("2006-01-02") // day bucket; the sequence resets each EAT day
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Hand out the next sequence for today atomically.
+	var seq int
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO daily_game_counter (game_day, last_seq)
+		VALUES ($1, 1)
+		ON CONFLICT (game_day) DO UPDATE SET last_seq = daily_game_counter.last_seq + 1
+		RETURNING last_seq
+	`, gameDay).Scan(&seq)
+	if err != nil {
+		return fmt.Errorf("failed to allocate round code: %w", err)
+	}
+	game.RoundCode = fmt.Sprintf("%d", seq) // just the daily count, e.g. "3"
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO games (id, game_type, state, bet_amount, min_players, player_count, prize_pool, house_cut, round_code, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`,
 		game.ID,
 		game.GameType,
 		game.State,
@@ -39,27 +64,28 @@ func (r *gameRepository) Create(ctx context.Context, game *domain.Game) error {
 		game.PlayerCount,
 		game.PrizePool,
 		game.HouseCut,
+		game.RoundCode,
 		game.CreatedAt,
 		game.UpdatedAt,
 	)
-
 	if err != nil {
 		return fmt.Errorf("failed to create game: %w", err)
 	}
 
-	return nil
+	return tx.Commit()
 }
 
 // FindByID finds a game by ID
 func (r *gameRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Game, error) {
 	query := `
-		SELECT id, game_type, state, bet_amount, min_players, player_count, prize_pool, house_cut,
+		SELECT id, game_type, state, bet_amount, min_players, player_count, prize_pool, house_cut, round_code,
 		       winner_id, countdown_ends, started_at, finished_at, created_at, updated_at
 		FROM games
 		WHERE id = $1
 	`
 
 	game := &domain.Game{}
+	var roundCode sql.NullString
 	var winnerID sql.NullString
 	var countdownEnds sql.NullTime
 	var startedAt sql.NullTime
@@ -74,6 +100,7 @@ func (r *gameRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Ga
 		&game.PlayerCount,
 		&game.PrizePool,
 		&game.HouseCut,
+		&roundCode,
 		&winnerID,
 		&countdownEnds,
 		&startedAt,
@@ -90,6 +117,7 @@ func (r *gameRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Ga
 	}
 
 	// Handle nullable fields
+	game.RoundCode = roundCode.String
 	if winnerID.Valid {
 		parsedID, err := uuid.Parse(winnerID.String)
 		if err != nil {
@@ -113,7 +141,7 @@ func (r *gameRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Ga
 // FindAvailable finds available games (WAITING or COUNTDOWN state)
 func (r *gameRepository) FindAvailable(ctx context.Context, gameType *domain.GameType, limit int) ([]*domain.Game, error) {
 	query := `
-		SELECT id, game_type, state, bet_amount, min_players, player_count, prize_pool, house_cut,
+		SELECT id, game_type, state, bet_amount, min_players, player_count, prize_pool, house_cut, round_code,
 		       winner_id, countdown_ends, started_at, finished_at, created_at, updated_at
 		FROM games
 		WHERE state IN ('WAITING', 'COUNTDOWN')
@@ -144,6 +172,7 @@ func (r *gameRepository) FindAvailable(ctx context.Context, gameType *domain.Gam
 	games := []*domain.Game{}
 	for rows.Next() {
 		game := &domain.Game{}
+		var roundCode sql.NullString
 		var winnerID sql.NullString
 		var countdownEnds sql.NullTime
 		var startedAt sql.NullTime
@@ -158,6 +187,7 @@ func (r *gameRepository) FindAvailable(ctx context.Context, gameType *domain.Gam
 			&game.PlayerCount,
 			&game.PrizePool,
 			&game.HouseCut,
+			&roundCode,
 			&winnerID,
 			&countdownEnds,
 			&startedAt,
@@ -170,6 +200,7 @@ func (r *gameRepository) FindAvailable(ctx context.Context, gameType *domain.Gam
 		}
 
 		// Handle nullable fields
+		game.RoundCode = roundCode.String
 		if winnerID.Valid {
 			parsedID, err := uuid.Parse(winnerID.String)
 			if err != nil {
@@ -202,6 +233,7 @@ func (r *gameRepository) FindAvailable(ctx context.Context, gameType *domain.Gam
 // handling the nullable columns. The column order must match the SELECT below.
 func scanGame(scan func(dest ...interface{}) error) (*domain.Game, error) {
 	game := &domain.Game{}
+	var roundCode sql.NullString
 	var winnerID sql.NullString
 	var countdownEnds sql.NullTime
 	var startedAt sql.NullTime
@@ -216,6 +248,7 @@ func scanGame(scan func(dest ...interface{}) error) (*domain.Game, error) {
 		&game.PlayerCount,
 		&game.PrizePool,
 		&game.HouseCut,
+		&roundCode,
 		&winnerID,
 		&countdownEnds,
 		&startedAt,
@@ -226,6 +259,7 @@ func scanGame(scan func(dest ...interface{}) error) (*domain.Game, error) {
 		return nil, err
 	}
 
+	game.RoundCode = roundCode.String
 	if winnerID.Valid {
 		parsedID, err := uuid.Parse(winnerID.String)
 		if err != nil {
@@ -249,7 +283,7 @@ func scanGame(scan func(dest ...interface{}) error) (*domain.Game, error) {
 // FindAll returns games filtered by optional state and type, newest first.
 func (r *gameRepository) FindAll(ctx context.Context, state *domain.GameState, gameType *domain.GameType, limit, offset int) ([]*domain.Game, error) {
 	query := `
-		SELECT id, game_type, state, bet_amount, min_players, player_count, prize_pool, house_cut,
+		SELECT id, game_type, state, bet_amount, min_players, player_count, prize_pool, house_cut, round_code,
 		       winner_id, countdown_ends, started_at, finished_at, created_at, updated_at
 		FROM games
 		WHERE 1=1
@@ -322,7 +356,7 @@ func (r *gameRepository) CountAll(ctx context.Context, state *domain.GameState, 
 // LockForUpdate locks a game row FOR UPDATE inside a transaction.
 func (r *gameRepository) LockForUpdate(ctx context.Context, tx *sql.Tx, id uuid.UUID) (*domain.Game, error) {
 	query := `
-		SELECT id, game_type, state, bet_amount, min_players, player_count, prize_pool, house_cut,
+		SELECT id, game_type, state, bet_amount, min_players, player_count, prize_pool, house_cut, round_code,
 		       winner_id, countdown_ends, started_at, finished_at, created_at, updated_at
 		FROM games
 		WHERE id = $1
