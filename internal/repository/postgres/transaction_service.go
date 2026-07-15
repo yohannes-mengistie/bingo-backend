@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/bingo/backend/internal/domain"
 	"github.com/google/uuid"
@@ -382,10 +383,36 @@ func (s *TransactionService) ProcessWithdrawal(ctx context.Context, userID uuid.
 		return nil, fmt.Errorf("insufficient balance")
 	}
 
-	// Check if remaining balance would be less than 10
+	// Remaining balance floor: the player must keep at least this much.
 	remainingBalance := wallet.Balance - amount
-	if remainingBalance < 10 {
-		return nil, fmt.Errorf("withdrawal not allowed: remaining balance must be at least 10")
+	if remainingBalance < domain.MinBalanceAfterWithdrawal {
+		return nil, fmt.Errorf("withdrawal not allowed: remaining balance must be at least %.0f", domain.MinBalanceAfterWithdrawal)
+	}
+
+	// Enforce the per-day withdrawal cap (Ethiopian calendar day). Count
+	// withdrawals that still hold money — pending or completed; rejected/cancelled
+	// ones were refunded, so they don't count against the cap.
+	eat := time.FixedZone("EAT", 3*60*60)
+	nowEAT := time.Now().In(eat)
+	dayStart := time.Date(nowEAT.Year(), nowEAT.Month(), nowEAT.Day(), 0, 0, 0, 0, eat).UTC()
+	var todayTotal float64
+	dailyQuery := `
+		SELECT COALESCE(SUM(amount), 0)
+		FROM transactions
+		WHERE user_id = $1
+		  AND type = $2
+		  AND status IN ($3, $4)
+		  AND created_at >= $5
+	`
+	if err := tx.QueryRowContext(ctx, dailyQuery, userID,
+		domain.TransactionTypeWithdraw,
+		domain.TransactionStatusPending, domain.TransactionStatusCompleted,
+		dayStart,
+	).Scan(&todayTotal); err != nil {
+		return nil, fmt.Errorf("failed to check daily withdrawal total: %w", err)
+	}
+	if todayTotal+amount > domain.MaxDailyWithdrawal {
+		return nil, fmt.Errorf("daily withdrawal limit reached: up to %.0f birr per day", domain.MaxDailyWithdrawal)
 	}
 
 	// Subtract balance immediately

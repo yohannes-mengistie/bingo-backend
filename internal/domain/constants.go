@@ -34,6 +34,12 @@ const MaxCardsPerPlayer = 4
 // MinWithdrawalAmount is the smallest withdrawal a player may request (birr).
 const MinWithdrawalAmount = 10.0
 
+// MaxDailyWithdrawal caps total withdrawals per Ethiopian calendar day (birr).
+const MaxDailyWithdrawal = 2000.0
+
+// MinBalanceAfterWithdrawal is the balance a player must keep after withdrawing.
+const MinBalanceAfterWithdrawal = 50.0
+
 // CardGridSize is the size of the bingo card grid (5x5)
 const CardGridSize = 5
 
