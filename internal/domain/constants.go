@@ -22,10 +22,10 @@ const CountdownTickerInterval = 1 * time.Second
 const MinCardID = 1
 
 // MaxCardID is the maximum valid card ID
-const MaxCardID = 200
+const MaxCardID = 500
 
 // TotalCards is the total number of available bingo cards
-const TotalCards = 200
+const TotalCards = 500
 
 // MaxCardsPerPlayer is the maximum number of cards a single player may hold in
 // one game. Each card costs one full bet (e.g. 4 cards on a 10-birr table = 40).

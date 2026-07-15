@@ -85,7 +85,7 @@ type GamePlayer struct {
 	ID           uuid.UUID  `json:"id" db:"id"`
 	GameID       uuid.UUID  `json:"game_id" db:"game_id"`
 	UserID       uuid.UUID  `json:"user_id" db:"user_id"`
-	CardID       int        `json:"card_id" db:"card_id"` // 1-200
+	CardID       int        `json:"card_id" db:"card_id"` // 1-500
 	// Paid is false while a card is only reserved during the pre-game window and
 	// flips to true when the countdown ends and the stake is actually charged.
 	Paid         bool       `json:"paid" db:"paid"`
@@ -98,7 +98,7 @@ type GamePlayer struct {
 
 // BingoCard represents a 5x5 bingo card
 type BingoCard struct {
-	ID      int       `json:"id"`      // 1-200
+	ID      int       `json:"id"`      // 1-500
 	Numbers [5][5]int `json:"numbers"` // 5x5 grid
 }
 
@@ -113,7 +113,7 @@ type DrawnNumber struct {
 // UserID is populated from the authenticated JWT, not the request body.
 type JoinGameRequest struct {
 	UserID uuid.UUID `json:"-"`
-	CardID int       `json:"card_id" binding:"required,min=1,max=200"` // min=MinCardID, max=MaxCardID (see constants.go)
+	CardID int       `json:"card_id" binding:"required,min=1,max=500"` // min=MinCardID, max=MaxCardID (see constants.go)
 }
 
 // LeaveGameRequest represents the request to leave a game.
@@ -130,7 +130,7 @@ type LeaveGameRequest struct {
 // CardID identifies which of the player's cards the claim is for.
 type ClaimBingoRequest struct {
 	UserID        uuid.UUID `json:"-"`
-	CardID        int       `json:"card_id" binding:"required,min=1,max=200"` // which card to claim on
+	CardID        int       `json:"card_id" binding:"required,min=1,max=500"` // which card to claim on
 	MarkedNumbers []int     `json:"marked_numbers" binding:"required"`        // marked positions (0-24)
 }
 
