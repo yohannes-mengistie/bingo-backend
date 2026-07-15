@@ -1,11 +1,9 @@
 // Command gencards regenerates the fixed bingo card tables for BOTH repos from a
 // single source, so the Go backend and the TS frontend can never drift.
 //
-//   - Card IDs 1..200 are PRESERVED exactly (read from the current backend table
-//     via bingo.GenerateCard, i.e. the post-fix layout the server actually uses).
-//   - Card IDs 201..TOTAL are freshly generated: deterministic (fixed seed),
-//     valid (correct column ranges, unique per column, FREE center) and distinct
-//     from every other card.
+//   - All card IDs 1..TOTAL are freshly generated: deterministic (fixed seed),
+//     valid (correct column ranges, unique per column, FREE center) and with a
+//     UNIQUE set of 24 numbers — no two cards share the same numbers at all.
 //
 // It writes:
 //   - pkg/bingo/carddata_gen.go        (Go: cardData500 [TOTAL][5][5]int, [row][col])
@@ -18,19 +16,28 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"sort"
 	"strings"
-
-	"github.com/bingo/backend/pkg/bingo"
 )
 
 const total = 500
 
-func sig(c [5][5]int) string {
-	var b strings.Builder
+// numSetSig is the canonical signature of a card's 24 numbers (order-independent,
+// FREE center excluded). Deduping on this guarantees no two cards share the same
+// set of numbers — a strictly stronger uniqueness than distinct layout.
+func numSetSig(c [5][5]int) string {
+	vals := make([]int, 0, 24)
 	for r := 0; r < 5; r++ {
 		for col := 0; col < 5; col++ {
-			fmt.Fprintf(&b, "%d,", c[r][col])
+			if c[r][col] != 0 {
+				vals = append(vals, c[r][col])
+			}
 		}
+	}
+	sort.Ints(vals)
+	var b strings.Builder
+	for _, v := range vals {
+		fmt.Fprintf(&b, "%d,", v)
 	}
 	return b.String()
 }
@@ -60,24 +67,14 @@ func genCard(r *rand.Rand) [5][5]int {
 }
 
 func main() {
+	// Generate all TOTAL cards fresh: each valid and with a UNIQUE set of numbers
+	// (no two cards share the same 24 numbers). Deterministic via the fixed seed.
 	all := make([][5][5]int, 0, total)
 	seen := map[string]bool{}
-
-	// 1..200 preserved exactly from the existing table.
-	for id := 1; id <= 200; id++ {
-		c := bingo.GenerateCard(id)
-		if c == nil {
-			panic(fmt.Sprintf("existing card %d missing", id))
-		}
-		all = append(all, c.Numbers)
-		seen[sig(c.Numbers)] = true
-	}
-
-	// 201..total: deterministic, distinct, valid.
 	r := rand.New(rand.NewSource(20240717))
 	for len(all) < total {
 		c := genCard(r)
-		s := sig(c)
+		s := numSetSig(c)
 		if seen[s] {
 			continue
 		}
