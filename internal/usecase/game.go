@@ -63,6 +63,22 @@ func (uc *GameUseCase) GetAvailableGames(ctx context.Context, gameType *domain.G
 	return games, nil
 }
 
+// GetInProgressGame returns the game of this type that is currently being drawn
+// (DRAWING), or nil if none. Used so the lobby can route a late / non-playing
+// user to spectate the live round instead of starting a second game — one game
+// per table at a time.
+func (uc *GameUseCase) GetInProgressGame(ctx context.Context, gameType domain.GameType) (*domain.Game, error) {
+	state := domain.GameStateDrawing
+	games, err := uc.gameRepo.FindAll(ctx, &state, &gameType, 1, 0)
+	if err != nil {
+		return nil, err
+	}
+	if len(games) == 0 {
+		return nil, nil
+	}
+	return games[0], nil
+}
+
 // CreateOrGetGame creates a new game or returns an existing available game
 func (uc *GameUseCase) CreateOrGetGame(ctx context.Context, gameType domain.GameType) (*domain.Game, error) {
 	// Reject unsupported tiers (only REGULAR and VIP are offered)

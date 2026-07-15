@@ -48,18 +48,25 @@ func (h *GameHandler) GetGames(c *gin.Context) {
 		return
 	}
 
-	// If filtering by game type and no games found, create one
+	// If filtering by game type and no JOINABLE (WAITING/COUNTDOWN) game exists:
 	if req.GameType != nil && len(games) == 0 {
-		game, err := h.gameUseCase.CreateOrGetGame(c.Request.Context(), *req.GameType)
-		if err != nil {
-			fmt.Printf("[GetGames] Error creating/getting game (type: %v): %v\n", *req.GameType, err)
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error":   "Failed to create or get game",
-				"details": err.Error(),
-			})
-			return
+		// One game per table at a time. If a round of this type is already being
+		// drawn, return that DRAWING game so the client spectates it — do NOT
+		// start a second game. Only when nothing is running do we create the next.
+		if inProgress, _ := h.gameUseCase.GetInProgressGame(c.Request.Context(), *req.GameType); inProgress != nil {
+			games = []*domain.Game{inProgress}
+		} else {
+			game, err := h.gameUseCase.CreateOrGetGame(c.Request.Context(), *req.GameType)
+			if err != nil {
+				fmt.Printf("[GetGames] Error creating/getting game (type: %v): %v\n", *req.GameType, err)
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"error":   "Failed to create or get game",
+					"details": err.Error(),
+				})
+				return
+			}
+			games = []*domain.Game{game}
 		}
-		games = []*domain.Game{game}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
