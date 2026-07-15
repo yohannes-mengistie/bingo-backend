@@ -107,4 +107,4 @@ services:
       # other account are rejected, so a valid receipt for money sent elsewhere
       # cannot be claimed. Must match VITE_TELEBIRR_NUMBER in the miniapp.
       - key: VERIFY_TELEBIRR_ACCOUNT
-        value: "0997709691"
+        value: "0999357708"
