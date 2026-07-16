@@ -680,6 +680,11 @@ func (uc *GameUseCase) startDrawing(ctx context.Context, gameID uuid.UUID) {
 
 // drawNumbers draws numbers periodically
 func (uc *GameUseCase) drawNumbers(ctx context.Context, gameID uuid.UUID) {
+	// Grace before the first number so players redirecting from the picker
+	// have their game socket connected and hear the first call live (see
+	// domain.FirstDrawDelay).
+	time.Sleep(domain.FirstDrawDelay)
+
 	ticker := time.NewTicker(domain.DrawInterval)
 	defer ticker.Stop()
 

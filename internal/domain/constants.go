@@ -147,6 +147,15 @@ const MaxAvailableGamesLimit = 50
 // DrawInterval is the interval between drawing numbers
 const DrawInterval = 3000 * time.Millisecond
 
+// FirstDrawDelay is EXTRA grace before the first number of a round, on top of
+// the initial DrawInterval tick. Clients redirect from the card picker into
+// the game room around the moment the countdown ends; the redirect + React
+// mount + WebSocket handshake can take a few seconds on slow connections, and
+// a number drawn before the socket is up appears on the board silently — the
+// player finds it "already drawn" and its voice call never plays. First call
+// lands at FirstDrawDelay + DrawInterval (~5s) after the round starts.
+const FirstDrawDelay = 2000 * time.Millisecond
+
 // Empty-game cleanup: how often the sweeper runs, and how long an empty
 // WAITING/COUNTDOWN game (0 players) may sit untouched before it is cancelled
 // and dropped from the lobby/active list. The grace period gives a freshly
