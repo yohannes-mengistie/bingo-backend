@@ -1,11 +1,14 @@
 package handler
 
 import (
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bingo/backend/internal/domain"
@@ -13,6 +16,7 @@ import (
 	"github.com/bingo/backend/pkg/telegram"
 	"github.com/bingo/backend/pkg/utils"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // TelegramHandler handles Telegram bot webhook updates. The bot is the only way
@@ -20,18 +24,30 @@ import (
 // is the registration gateway in front of the Mini App.
 type TelegramHandler struct {
 	userUseCase   *usecase.UserUseCase
+	promoRepo     domain.PromoRepository
 	bot           *telegram.Bot
 	webhookSecret string
 	miniAppBase   string // Mini App origin, no trailing slash
 	appVersion    string // per-deploy cache-buster (see appURL)
+
+	// promoWaiting marks chats whose NEXT message should be treated as a
+	// promo-code attempt (set when the user taps the promo menu button).
+	// In-memory is fine: worst case after a restart the user just taps the
+	// button again. Entries expire after promoWaitTTL.
+	promoMu      sync.Mutex
+	promoWaiting map[int64]time.Time
 }
 
+// promoWaitTTL is how long a "send me your promo code" prompt stays armed.
+const promoWaitTTL = 5 * time.Minute
+
 // NewTelegramHandler creates a new Telegram webhook handler.
-func NewTelegramHandler(userUseCase *usecase.UserUseCase, bot *telegram.Bot, webhookSecret, miniAppURL string) *TelegramHandler {
+func NewTelegramHandler(userUseCase *usecase.UserUseCase, promoRepo domain.PromoRepository, bot *telegram.Bot, webhookSecret, miniAppURL string) *TelegramHandler {
 	base := strings.TrimRight(miniAppURL, "/")
 	version := miniAppCacheVersion()
 	return &TelegramHandler{
 		userUseCase:   userUseCase,
+		promoRepo:     promoRepo,
 		bot:           bot,
 		webhookSecret: webhookSecret,
 		// appURL bakes a per-deploy cache-buster into every Mini App URL.
@@ -40,9 +56,29 @@ func NewTelegramHandler(userUseCase *usecase.UserUseCase, bot *telegram.Bot, web
 		// previous build after a deploy. Resolved once at startup (stable
 		// within a deploy, so repeated opens still hit Telegram's cache;
 		// changes on the next deploy).
-		miniAppBase: base,
-		appVersion:  version,
+		miniAppBase:  base,
+		appVersion:   version,
+		promoWaiting: make(map[int64]time.Time),
 	}
+}
+
+// armPromo marks chatID so its next message is read as a promo code.
+func (h *TelegramHandler) armPromo(chatID int64) {
+	h.promoMu.Lock()
+	defer h.promoMu.Unlock()
+	h.promoWaiting[chatID] = time.Now().Add(promoWaitTTL)
+}
+
+// disarmPromo reports whether chatID was armed (and clears it).
+func (h *TelegramHandler) disarmPromo(chatID int64) bool {
+	h.promoMu.Lock()
+	defer h.promoMu.Unlock()
+	deadline, ok := h.promoWaiting[chatID]
+	if !ok {
+		return false
+	}
+	delete(h.promoWaiting, chatID)
+	return time.Now().Before(deadline)
 }
 
 // appURL builds a deep link into the Mini App (e.g. appURL("/wallet")) with
@@ -166,10 +202,18 @@ func (h *TelegramHandler) handleMenuText(c *gin.Context, msg *telegram.Message) 
 		return
 	}
 
-	switch strings.TrimSpace(msg.Text) {
+	// A tap on the promo button arms the chat: the NEXT message is the code.
+	text := strings.TrimSpace(msg.Text)
+	if text != btnPromo && h.disarmPromo(msg.Chat.ID) {
+		h.redeemPromo(c, msg, user.ID, text)
+		return
+	}
+
+	switch text {
 	case btnPromo:
+		h.armPromo(msg.Chat.ID)
 		h.reply(msg.Chat.ID,
-			"🎁 የፕሮሞ ኮድ ስርዓት በቅርቡ ይጀምራል! ዝማኔዎችን ይከታተሉ።\n\nPromo codes are coming soon — stay tuned!",
+			"🎁 የፕሮሞ ኮድዎን አሁን ይላኩ 👇\n\nSend your promo code now 👇",
 			nil)
 	case btnHelp:
 		h.reply(msg.Chat.ID,
@@ -197,6 +241,34 @@ func (h *TelegramHandler) handleMenuText(c *gin.Context, msg *telegram.Message) 
 		h.reply(msg.Chat.ID,
 			"እባክዎ ከታች ካለው ምናሌ ይምረጡ 👇\nPlease choose from the menu below 👇",
 			h.mainMenu())
+	}
+}
+
+// redeemPromo applies a promo code sent after the promo button was tapped and
+// answers every outcome distinctly (in Amharic + English).
+func (h *TelegramHandler) redeemPromo(c *gin.Context, msg *telegram.Message, userID uuid.UUID, code string) {
+	if h.promoRepo == nil {
+		h.reply(msg.Chat.ID, "🎁 የፕሮሞ ኮድ ስርዓት በአሁኑ ጊዜ አይገኝም። / Promo codes are currently unavailable.", h.mainMenu())
+		return
+	}
+
+	amount, err := h.promoRepo.Redeem(c.Request.Context(), code, userID)
+	switch {
+	case err == nil:
+		h.reply(msg.Chat.ID,
+			fmt.Sprintf("🎉 እንኳን ደስ አለዎት! %.0f ብር ቦነስ ወደ ቦርሳዎ ተጨምሯል።\n\nCongratulations! A %.0f birr bonus was added to your wallet. 💰", amount, amount),
+			h.mainMenu())
+	case errors.Is(err, domain.ErrPromoAlreadyRedeemed):
+		h.reply(msg.Chat.ID, "ℹ️ ይህን ኮድ ከዚህ በፊት ተጠቅመዋል።\nYou have already used this code.", h.mainMenu())
+	case errors.Is(err, domain.ErrPromoExpired), errors.Is(err, domain.ErrPromoInactive):
+		h.reply(msg.Chat.ID, "⌛ ይቅርታ፣ የዚህ ኮድ ጊዜ አልፎበታል።\nSorry, this code is no longer valid.", h.mainMenu())
+	case errors.Is(err, domain.ErrPromoExhausted):
+		h.reply(msg.Chat.ID, "😔 ይቅርታ፣ የዚህ ኮድ ተጠቃሚዎች ብዛት ተሟልቷል።\nSorry, this code has reached its redemption limit.", h.mainMenu())
+	case errors.Is(err, domain.ErrPromoNotFound):
+		h.reply(msg.Chat.ID, "❌ ኮዱ አልተገኘም። እባክዎ በትክክል መጻፉን ያረጋግጡና «"+btnPromo+"»ን ነክተው እንደገና ይሞክሩ።\nCode not found — check the spelling and try again.", h.mainMenu())
+	default:
+		log.Printf("[telegram] promo redeem failed for user %s: %v", userID, err)
+		h.reply(msg.Chat.ID, "⚠️ የሆነ ችግር ተፈጥሯል፣ እባክዎ ቆየት ብለው ይሞክሩ።\nSomething went wrong — please try again later.", h.mainMenu())
 	}
 }
 

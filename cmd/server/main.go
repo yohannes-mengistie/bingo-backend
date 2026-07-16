@@ -95,12 +95,16 @@ func main() {
 	supportHandler := handler.NewSupportHandler(supportUseCase)
 	wsHandler := handler.NewWebSocketHandler(redisClient.GetClient(), gameStateService, gameUseCase)
 
+	// Promo codes: created by admins, redeemed through the bot menu.
+	promoRepo := postgres.NewPromoRepository(db, walletRepo, transactionRepo)
+	promoHandler := handler.NewPromoHandler(promoRepo)
+
 	// Telegram bot: registration gateway + Mini App launcher (webhook-driven).
 	telegramBot := telegram.NewBot(cfg.Telegram.BotToken)
-	telegramHandler := handler.NewTelegramHandler(userUseCase, telegramBot, cfg.Telegram.WebhookSecret, cfg.Telegram.MiniAppURL)
+	telegramHandler := handler.NewTelegramHandler(userUseCase, promoRepo, telegramBot, cfg.Telegram.WebhookSecret, cfg.Telegram.MiniAppURL)
 
 	// Setup router
-	router := setupRouter(userHandler, walletHandler, authHandler, gameHandler, botHandler, supportHandler, wsHandler, telegramHandler, jwtService, cfg.Internal.APISecret)
+	router := setupRouter(userHandler, walletHandler, authHandler, gameHandler, botHandler, supportHandler, wsHandler, telegramHandler, promoHandler, jwtService, cfg.Internal.APISecret)
 
 	// Shared background context for the server's housekeeping goroutines,
 	// cancelled on shutdown.
@@ -176,7 +180,7 @@ func main() {
 	log.Println("Server exited")
 }
 
-func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.WalletHandler, authHandler *handler.AuthHandler, gameHandler *handler.GameHandler, botHandler *handler.BotHandler, supportHandler *handler.SupportHandler, wsHandler *handler.WebSocketHandler, telegramHandler *handler.TelegramHandler, jwtService *jwt.Service, internalAPISecret string) *gin.Engine {
+func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.WalletHandler, authHandler *handler.AuthHandler, gameHandler *handler.GameHandler, botHandler *handler.BotHandler, supportHandler *handler.SupportHandler, wsHandler *handler.WebSocketHandler, telegramHandler *handler.TelegramHandler, promoHandler *handler.PromoHandler, jwtService *jwt.Service, internalAPISecret string) *gin.Engine {
 	// Set Gin to release mode in production
 	if os.Getenv("GIN_MODE") == "release" {
 		gin.SetMode(gin.ReleaseMode)
@@ -346,6 +350,15 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			stats := admin.Group("/stats")
 			{
 				stats.GET("/dashboard", walletHandler.GetDashboardStats)
+			}
+
+			// Promo codes (redeemed by players through the bot menu)
+			promos := admin.Group("/promo-codes")
+			{
+				promos.GET("", promoHandler.List)
+				promos.POST("", promoHandler.Create)
+				promos.POST("/:code/activate", promoHandler.SetActive(true))
+				promos.POST("/:code/deactivate", promoHandler.SetActive(false))
 			}
 
 			// Game management
