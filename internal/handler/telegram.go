@@ -170,26 +170,36 @@ const (
 )
 
 // mainMenu is the persistent reply keyboard (the button grid pinned above the
-// system keyboard). Play/Deposit/Withdraw/Invite/Profile open the Mini App
-// straight onto the matching screen; the rest are answered in chat.
+// system keyboard). All buttons are PLAIN text buttons: Telegram does not pass
+// initData to Mini Apps launched from a reply-keyboard web_app button, so the
+// app could not authenticate the user ("open inside Telegram" guard). Instead
+// each tap is answered instantly with an INLINE web_app button (which does
+// carry initData) that opens the Mini App on the matching screen.
 func (h *TelegramHandler) mainMenu() *telegram.ReplyMarkup {
-	app := func(text, path string) telegram.KeyboardButton {
-		return telegram.KeyboardButton{Text: text, WebApp: &telegram.WebAppInfo{URL: h.appURL(path)}}
-	}
 	txt := func(text string) telegram.KeyboardButton {
 		return telegram.KeyboardButton{Text: text}
 	}
 	return &telegram.ReplyMarkup{
 		Keyboard: [][]telegram.KeyboardButton{
-			{app(btnPlay, "/"), txt(btnPromo)},
-			{app(btnDeposit, "/wallet"), app(btnWithdraw, "/wallet")},
-			{app(btnInvite, "/referral"), app(btnProfile, "/profile")},
+			{txt(btnPlay), txt(btnPromo)},
+			{txt(btnDeposit), txt(btnWithdraw)},
+			{txt(btnInvite), txt(btnProfile)},
 			{txt(btnHelp), txt(btnLanguage)},
 			{txt(btnAgent)},
 		},
 		ResizeKeyboard: true,
 		IsPersistent:   true,
 	}
+}
+
+// appButton replies with one inline web_app button that opens the Mini App at
+// path — the only launch method from chat that authenticates the user.
+func (h *TelegramHandler) appButton(chatID int64, text, buttonLabel, path string) {
+	h.reply(chatID, text, &telegram.ReplyMarkup{
+		InlineKeyboard: [][]telegram.InlineKeyboardButton{{
+			{Text: buttonLabel, WebApp: &telegram.WebAppInfo{URL: h.appURL(path)}},
+		}},
+	})
 }
 
 // handleMenuText routes taps on the plain (non-web_app) menu buttons, and
@@ -210,6 +220,16 @@ func (h *TelegramHandler) handleMenuText(c *gin.Context, msg *telegram.Message) 
 	}
 
 	switch text {
+	case btnPlay:
+		h.appButton(msg.Chat.ID, "🎮 ለመጫወት ከታች ይንኩ 👇", "🎮 ቢንጎ ተጫወት / Play", "/")
+	case btnDeposit:
+		h.appButton(msg.Chat.ID, "💰 ገንዘብ ለማስገባት ከታች ይንኩ 👇", "💰 ቦርሳ ክፈት / Open Wallet", "/wallet")
+	case btnWithdraw:
+		h.appButton(msg.Chat.ID, "💸 ገንዘብ ለማውጣት ከታች ይንኩ 👇", "💸 ቦርሳ ክፈት / Open Wallet", "/wallet")
+	case btnInvite:
+		h.appButton(msg.Chat.ID, "🔗 ጓደኞችዎን ጋብዘው ቦነስ ያግኙ 👇", "🔗 ጋብዝ & አግኝ / Invite", "/referral")
+	case btnProfile:
+		h.appButton(msg.Chat.ID, "👤 ፕሮፋይልዎን እና ሂሳብዎን ለማየት ከታች ይንኩ 👇", "👤 ፕሮፋይል / Profile", "/profile")
 	case btnPromo:
 		h.armPromo(msg.Chat.ID)
 		h.reply(msg.Chat.ID,
