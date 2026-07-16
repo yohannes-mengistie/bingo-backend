@@ -188,9 +188,20 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 
 	router := gin.New()
 
-	// CORS middleware
+	// CORS middleware. ALLOWED_ORIGINS (comma-separated) overrides the default
+	// allowlist, so moving the frontends to a new host is an env change, not a
+	// code change.
+	allowOrigins := []string{"http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:5174", "https://bingo-frontend-production-7ee9.up.railway.app", "https://winner.up.railway.app", "https://bingo-miniapp-gold.vercel.app", "https://bingo-frontend-azure.vercel.app"}
+	if env := os.Getenv("ALLOWED_ORIGINS"); env != "" {
+		allowOrigins = allowOrigins[:0]
+		for _, o := range strings.Split(env, ",") {
+			if o = strings.TrimSpace(o); o != "" {
+				allowOrigins = append(allowOrigins, o)
+			}
+		}
+	}
 	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:5174", "https://bingo-frontend-production-7ee9.up.railway.app", "https://winner.up.railway.app", "https://bingo-miniapp-gold.vercel.app", "https://bingo-frontend-azure.vercel.app"},
+		AllowOrigins:     allowOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Length", "Content-Type", "Authorization", "Upgrade", "Connection", "Sec-WebSocket-Key", "Sec-WebSocket-Version", "Sec-WebSocket-Extensions", "Sec-WebSocket-Protocol"},
 		ExposeHeaders:    []string{"Content-Length", "Upgrade", "Connection", "Sec-WebSocket-Accept"},
