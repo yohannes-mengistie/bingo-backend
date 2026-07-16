@@ -46,8 +46,9 @@ func (h *WalletHandler) Deposit(c *gin.Context) {
 	if err != nil {
 		statusCode := http.StatusInternalServerError
 		if err.Error() == "amount must be greater than 0" ||
-			err.Error() == "transaction_type must be Telebirr" ||
+			err.Error() == "transaction_type must be one of Telebirr, CBEBirr, Mpesa" ||
 			err.Error() == "transaction_id is required" ||
+			err.Error() == "a valid phone is required for Mpesa" ||
 			err.Error() == "payment provider does not match transaction_type" {
 			statusCode = http.StatusBadRequest
 		} else if strings.HasPrefix(err.Error(), "payment verification failed:") ||
@@ -99,8 +100,8 @@ func (h *WalletHandler) Withdraw(c *gin.Context) {
 	if err != nil {
 		statusCode := http.StatusInternalServerError
 		if err.Error() == "amount must be greater than 0" ||
-			err.Error() == "account_type must be Telebirr" ||
-			err.Error() == "withdrawal account must be a valid Ethiopian Telebirr number" ||
+			err.Error() == "account_type must be one of Telebirr, CBEBirr, Mpesa" ||
+			err.Error() == "withdrawal account must be a valid Ethiopian phone number" ||
 			strings.HasPrefix(err.Error(), "minimum withdrawal") ||
 			strings.HasPrefix(err.Error(), "no verified phone number") {
 			statusCode = http.StatusBadRequest

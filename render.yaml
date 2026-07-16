@@ -108,3 +108,16 @@ services:
       # cannot be claimed. Must match VITE_TELEBIRR_NUMBER in the miniapp.
       - key: VERIFY_TELEBIRR_ACCOUNT
         value: "0999357708"
+      # House CBE Birr number and M-Pesa number, same account-binding role as
+      # VERIFY_TELEBIRR_ACCOUNT for their methods. Must match VITE_CBEBIRR_NUMBER
+      # / VITE_MPESA_NUMBER in the miniapp. Binding is MANDATORY for auto-approval:
+      # while a method's house number is blank, its deposits are never
+      # auto-credited — they queue for manual admin approval instead. CBE Birr
+      # additionally NEEDS its number to look receipts up at all (the verifier
+      # fetches CBE Birr receipts by receiver phone).
+      # CBE Birr number not yet registered — deposits queue for manual admin
+      # approval until this is set in the dashboard (or given a value here).
+      - key: VERIFY_CBEBIRR_ACCOUNT
+        sync: false
+      - key: VERIFY_MPESA_ACCOUNT
+        value: "0710132230"

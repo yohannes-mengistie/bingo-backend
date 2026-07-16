@@ -14,6 +14,7 @@ import (
 
 	"github.com/bingo/backend/config"
 	"github.com/bingo/backend/internal/domain"
+	"github.com/bingo/backend/pkg/utils"
 )
 
 var numberPattern = regexp.MustCompile(`[-+]?\d+(\.\d+)?`)
@@ -21,11 +22,12 @@ var numberPattern = regexp.MustCompile(`[-+]?\d+(\.\d+)?`)
 type Verifier struct {
 	baseURL string
 	apiKey  string
-	// telebirrAccount holds the digits of the house Telebirr number; when set,
-	// receipts credited to a different account are rejected. Empty disables the
-	// check.
-	telebirrAccount string
-	client          *http.Client
+	// houseAccounts holds, per payment method, the digits of the house account
+	// deposits must be credited to. When a method has a non-empty entry, receipts
+	// credited to a different account are rejected; an empty/absent entry disables
+	// the check for that method.
+	houseAccounts map[domain.PaymentMethod]string
+	client        *http.Client
 }
 
 // NewVerifier returns a configured verifier, or a nil domain.PaymentVerifier
@@ -42,39 +44,90 @@ func NewVerifier(cfg config.PaymentVerifierConfig) domain.PaymentVerifier {
 		baseURL = "https://verifyapi.leulzenebe.pro"
 	}
 
+	houseAccounts := map[domain.PaymentMethod]string{}
+	if acct := onlyDigits(cfg.TelebirrAccount); acct != "" {
+		houseAccounts[domain.PaymentMethodTelebirr] = acct
+	}
+	if acct := onlyDigits(cfg.CBEBirrAccount); acct != "" {
+		houseAccounts[domain.PaymentMethodCBEBirr] = acct
+	}
+	if acct := onlyDigits(cfg.MpesaAccount); acct != "" {
+		houseAccounts[domain.PaymentMethodMpesa] = acct
+	}
+
 	return &Verifier{
-		baseURL:         baseURL,
-		apiKey:          cfg.APIKey,
-		telebirrAccount: onlyDigits(cfg.TelebirrAccount),
+		baseURL:       baseURL,
+		apiKey:        cfg.APIKey,
+		houseAccounts: houseAccounts,
 		client: &http.Client{
 			Timeout: 20 * time.Second,
 		},
 	}
 }
 
-func (v *Verifier) Verify(ctx context.Context, method domain.PaymentMethod, reference string) (*domain.PaymentVerificationResult, error) {
+func (v *Verifier) Verify(ctx context.Context, req domain.PaymentVerificationRequest) (*domain.PaymentVerificationResult, error) {
 	if v == nil {
 		return nil, errors.New("payment verifier is not configured")
 	}
-	if method != domain.PaymentMethodTelebirr {
+	if !domain.IsSupportedPaymentMethod(req.Method) {
 		return nil, errors.New("unsupported payment method")
 	}
 
-	payload := map[string]string{"reference": strings.TrimSpace(reference)}
+	reference := strings.TrimSpace(req.Reference)
+
+	// Telebirr goes through the universal /verify endpoint, which auto-detects
+	// the provider from the reference. CBE Birr and M-Pesa each have a dedicated
+	// endpoint (the universal one does not auto-detect them) with a
+	// {receiptNumber, phoneNumber} request shape:
+	//   - CBE Birr receipts are looked up by the RECEIVER's phone — which for a
+	//     deposit is always the house CBE Birr number, taken from config rather
+	//     than the player (this also inherently pins the lookup to receipts
+	//     paid to us).
+	//   - M-Pesa receipts are looked up by the PAYER's phone, supplied by the
+	//     player with the deposit request.
+	endpoint := "/verify"
+	payload := map[string]string{"reference": reference}
+	switch req.Method {
+	case domain.PaymentMethodCBEBirr:
+		house := v.houseAccounts[domain.PaymentMethodCBEBirr]
+		if house == "" {
+			// Without the house number we cannot even look the receipt up —
+			// fall back to manual admin review, never auto-credit.
+			return nil, fmt.Errorf("%w: no house account configured for CBEBirr, deposit needs manual review", domain.ErrVerifierUnavailable)
+		}
+		endpoint = "/verify-cbebirr"
+		payload = map[string]string{
+			"receiptNumber": reference,
+			"phoneNumber":   utils.CanonicalEthiopianPhone(house),
+		}
+	case domain.PaymentMethodMpesa:
+		phone := strings.TrimSpace(req.Phone)
+		if phone == "" {
+			// The usecase validates this before calling; guard anyway so a
+			// receipt is never sent to the verifier without the field its
+			// lookup requires — fall back to manual review.
+			return nil, fmt.Errorf("%w: M-Pesa verification requires the payer's phone, deposit needs manual review", domain.ErrVerifierUnavailable)
+		}
+		endpoint = "/verify-mpesa"
+		payload = map[string]string{
+			"receiptNumber": reference,
+			"phoneNumber":   utils.CanonicalEthiopianPhone(phone),
+		}
+	}
 
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode verifier request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, v.baseURL+"/verify", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, v.baseURL+endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to build verifier request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", v.apiKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("x-api-key", v.apiKey)
 
-	resp, err := v.client.Do(req)
+	resp, err := v.client.Do(httpReq)
 	if err != nil {
 		// Network failure, timeout, DNS, connection refused — infrastructure,
 		// not a verdict on the receipt. Let the caller fall back to manual review.
@@ -111,8 +164,15 @@ func (v *Verifier) Verify(ctx context.Context, method domain.PaymentMethod, refe
 	if success, ok := boolValue(data["success"]); ok && !success {
 		return nil, fmt.Errorf("receipt was not verified: %s", responseMessage(data))
 	}
+	// Some endpoints (e.g. /verify-cbebirr) return the receipt fields flat at
+	// the top level instead of wrapped in {success, provider, data: {...}}.
+	// Fall back to reading the root as the data object so the status, credited
+	// account and amount lookups below work for both shapes.
+	if len(data) == 0 {
+		data = decoded
+	}
 
-	provider := normalizeProvider(stringValue(decoded["provider"]), method)
+	provider := normalizeProvider(stringValue(decoded["provider"]), req.Method)
 	if provider == "" {
 		return nil, errors.New("verifier response did not include a supported provider")
 	}
@@ -124,12 +184,33 @@ func (v *Verifier) Verify(ctx context.Context, method domain.PaymentMethod, refe
 
 	// Account binding: ensure the receipt was actually credited to the house
 	// account, not to some third party. Receipts mask the middle digits
-	// (e.g. "2519****9691"), so we compare the visible trailing digits.
-	if v.telebirrAccount != "" {
-		credited := firstString(data, "creditedPartyAccountNo", "creditedAccountNo", "creditedPartyAccount", "receiverAccount")
-		if !accountMatches(v.telebirrAccount, credited) {
-			return nil, fmt.Errorf("receipt was paid to a different account (%s), not the house account", credited)
-		}
+	// (e.g. "2519****9691"), so we compare the visible trailing digits. The
+	// house account is looked up per resolved provider.
+	//
+	// Binding is MANDATORY for auto-approval: a valid receipt only proves money
+	// moved somewhere, not that it reached us. So when we cannot prove the
+	// credited party is the house — either the method has no configured house
+	// account, or the response doesn't reveal the credited account — we return
+	// ErrVerifierUnavailable so the deposit falls back to pending manual admin
+	// review instead of being auto-credited (or wrongly rejected).
+	houseAccount := v.houseAccounts[provider]
+	if houseAccount == "" {
+		return nil, fmt.Errorf("%w: no house account configured for %s, deposit needs manual review", domain.ErrVerifierUnavailable, provider)
+	}
+	// NOTE: "sender" must never be in this list — for a deposit it is the
+	// PAYER, and a payer-side digit match would bind the receipt to the wrong
+	// party. "receiver" is the documented M-Pesa field; when it carries only a
+	// holder name (no digits) the hasAccountDigits guard below sends the
+	// deposit to manual review rather than auto-crediting.
+	credited := firstString(data,
+		"creditedPartyAccountNo", "creditedAccountNo", "creditedPartyAccount",
+		"creditAccount", "receiverAccount", "receiverPhone", "receiver",
+		"payeeAccount", "to")
+	if !hasAccountDigits(credited) {
+		return nil, fmt.Errorf("%w: verifier response did not reveal the credited account, deposit needs manual review", domain.ErrVerifierUnavailable)
+	}
+	if !accountMatches(houseAccount, credited) {
+		return nil, fmt.Errorf("receipt was paid to a different account (%s), not the house account", credited)
 	}
 
 	amount, err := responseAmount(decoded, data)
@@ -199,9 +280,14 @@ func parseAmount(value any) (float64, bool) {
 
 func normalizeProvider(value string, fallback domain.PaymentMethod) domain.PaymentMethod {
 	normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(value), " ", ""))
+	normalized = strings.ReplaceAll(normalized, "-", "")
 	switch normalized {
 	case "telebirr", "telebirrmobilemoney":
 		return domain.PaymentMethodTelebirr
+	case "cbebirr":
+		return domain.PaymentMethodCBEBirr
+	case "mpesa", "safaricommpesa":
+		return domain.PaymentMethodMpesa
 	case "":
 		return fallback
 	}
@@ -221,26 +307,41 @@ func isTransientStatus(code int) bool {
 	return code >= 500
 }
 
-// accountMatches reports whether a (possibly masked) credited account from a
-// receipt belongs to the configured house account. Receipts reveal only the
-// trailing digits, so we require at least the last 4 visible digits to be a
-// suffix of the house account's digits.
+var digitRuns = regexp.MustCompile(`\d+`)
+
+// accountMatches reports whether a credited account/phone from a receipt
+// belongs to the configured house account. Credited values come in several
+// shapes across providers:
+//
+//	"2519****9691"                  masked — only leading/trailing digits visible
+//	"251912345678 - FULL NAME"      CBE Birr — full phone followed by the holder name
+//
+// So we consider every digit run in the string. A run matches when it is a
+// suffix of the house digits (masked case, ≥4 digits so "20" in a date can't
+// match), or when both are full phone numbers whose Ethiopian 9-digit national
+// significant numbers agree (handles 09XXXXXXXX vs 2519XXXXXXXX prefix forms).
 func accountMatches(houseDigits, credited string) bool {
-	tail := trailingDigits(credited)
-	if len(tail) < 4 || len(tail) > len(houseDigits) {
-		return false
+	for _, run := range digitRuns.FindAllString(credited, -1) {
+		if len(run) >= 4 && len(run) <= len(houseDigits) && strings.HasSuffix(houseDigits, run) {
+			return true
+		}
+		if len(run) >= 9 && len(houseDigits) >= 9 && run[len(run)-9:] == houseDigits[len(houseDigits)-9:] {
+			return true
+		}
 	}
-	return strings.HasSuffix(houseDigits, tail)
+	return false
 }
 
-// trailingDigits returns the run of digits at the end of s, stopping at the
-// first non-digit (so the masked "****" in "2519****9691" is excluded).
-func trailingDigits(s string) string {
-	i := len(s)
-	for i > 0 && s[i-1] >= '0' && s[i-1] <= '9' {
-		i--
+// hasAccountDigits reports whether s reveals enough of an account (any digit
+// run of 4+) for accountMatches to give a meaningful verdict; anything less
+// means the response did not disclose the credited account.
+func hasAccountDigits(s string) bool {
+	for _, run := range digitRuns.FindAllString(s, -1) {
+		if len(run) >= 4 {
+			return true
+		}
 	}
-	return s[i:]
+	return false
 }
 
 // onlyDigits strips everything but 0-9 from s.

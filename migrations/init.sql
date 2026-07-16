@@ -39,7 +39,7 @@ CREATE TABLE transactions (
     category VARCHAR(20) CHECK (category IN ('deposit', 'withdrawal', 'bet', 'winnings', 'refund', 'transfer_in', 'transfer_out', 'admin_credit', 'admin_debit')),
     amount DECIMAL(10, 2) NOT NULL CHECK (amount > 0),
     status VARCHAR(20) NOT NULL CHECK (status IN ('pending', 'completed', 'failed', 'cancelled')),
-    transaction_type VARCHAR(20) CHECK (transaction_type IN ('CBE', 'Telebirr')),
+    transaction_type VARCHAR(20) CHECK (transaction_type IN ('Telebirr', 'CBEBirr', 'Mpesa')),
     transaction_id TEXT,
     reference VARCHAR(255),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -110,9 +110,11 @@ CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status);
 CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions(type);
 CREATE INDEX IF NOT EXISTS idx_transactions_created_at ON transactions(created_at);
 
--- Anti-fraud: a payment reference can back only one active (pending/completed) deposit.
+-- Anti-fraud: a payment reference can back only one active (pending/completed)
+-- deposit. Case-insensitive (UPPER) because the external verifier tolerates
+-- case variants of the same receipt reference (see migration 025).
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_deposit_transaction_id
-ON transactions (transaction_id)
+ON transactions (UPPER(transaction_id))
 WHERE type = 'deposit' AND status IN ('pending', 'completed') AND transaction_id IS NOT NULL;
 
 -- Create function to update updated_at timestamp

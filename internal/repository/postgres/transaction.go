@@ -421,11 +421,14 @@ func (r *transactionRepository) UpdateStatus(ctx context.Context, tx *sql.Tx, id
 // player reusing a receipt. Rejected/cancelled deposits are excluded so a
 // mistakenly-rejected reference can legitimately be resubmitted.
 func (r *transactionRepository) ExistsActiveDepositByTransactionID(ctx context.Context, transactionID string) (bool, error) {
+	// UPPER() on both sides makes the check case-insensitive so historical rows
+	// stored before references were canonicalized to uppercase (see
+	// WalletUseCase.Deposit) still block their case-variants from being reused.
 	query := `
 		SELECT EXISTS (
 			SELECT 1 FROM transactions
 			WHERE type = 'deposit'
-			  AND transaction_id = $1
+			  AND UPPER(transaction_id) = UPPER($1)
 			  AND status IN ('pending', 'completed')
 		)
 	`

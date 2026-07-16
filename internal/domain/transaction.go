@@ -58,11 +58,34 @@ type PaymentMethod string
 
 const (
 	PaymentMethodTelebirr PaymentMethod = "Telebirr"
+	PaymentMethodCBEBirr  PaymentMethod = "CBEBirr"
+	PaymentMethodMpesa    PaymentMethod = "Mpesa"
 )
 
-// Note: CBE is no longer an accepted payment method. Historical transactions
+// Note: bank CBE ("CBE") is not an accepted payment method; the house accepts
+// CBE Birr (CBE's phone-based mobile money) instead. Historical transactions
 // may still carry transaction_type = "CBE" in the database; that value reads
 // back fine as a plain string but can no longer be submitted.
+
+// SupportedPaymentMethods lists the methods a player may use for deposits and
+// withdrawals — all phone-based mobile money. Verification of each is delegated
+// to the external verifier (verify.leul.et). Keep this in sync with the
+// transaction_type DB CHECK constraint (migrations/026_cbebirr_transaction_type.sql).
+var SupportedPaymentMethods = []PaymentMethod{
+	PaymentMethodTelebirr,
+	PaymentMethodCBEBirr,
+	PaymentMethodMpesa,
+}
+
+// IsSupportedPaymentMethod reports whether m is an accepted payment method.
+func IsSupportedPaymentMethod(m PaymentMethod) bool {
+	for _, s := range SupportedPaymentMethods {
+		if m == s {
+			return true
+		}
+	}
+	return false
+}
 
 // PaymentVerificationResult contains normalized data returned by an external
 // payment verifier.
@@ -73,8 +96,22 @@ type PaymentVerificationResult struct {
 	Status    string        `json:"status,omitempty"`
 }
 
+// PaymentVerificationRequest carries everything the external verifier needs to
+// look up a receipt. Reference is always required (for CBE Birr it is the
+// receipt number); Phone is a method-specific extra:
+//   - M-Pesa requires Phone (the payer's M-Pesa phone number).
+//   - CBE Birr looks receipts up by the RECEIVER's phone, which is the house
+//     CBE Birr number — the verifier supplies it from config, so nothing extra
+//     is needed from the player.
+//   - Telebirr needs nothing extra.
+type PaymentVerificationRequest struct {
+	Method    PaymentMethod
+	Reference string
+	Phone     string
+}
+
 type PaymentVerifier interface {
-	Verify(ctx context.Context, method PaymentMethod, reference string) (*PaymentVerificationResult, error)
+	Verify(ctx context.Context, req PaymentVerificationRequest) (*PaymentVerificationResult, error)
 }
 
 // Transaction represents a transaction entity in the domain
@@ -93,11 +130,16 @@ type Transaction struct {
 
 // DepositRequest represents the data needed to create a deposit.
 // UserID is populated from the authenticated JWT, not the request body.
+//
+// Phone is a method-specific extra forwarded to the verifier: the payer's
+// M-Pesa number, required for M-Pesa. It is ignored for Telebirr and CBE Birr
+// (CBE Birr receipts are looked up by the house number from config).
 type DepositRequest struct {
 	UserID          uuid.UUID     `json:"-"`
 	Amount          float64       `json:"amount" binding:"required,gt=0"`
 	TransactionType PaymentMethod `json:"transaction_type" binding:"required"`
 	TransactionID   string        `json:"transaction_id" binding:"required"`
+	Phone           string        `json:"phone"`
 }
 
 // WithdrawRequest represents the data needed to create a withdrawal.

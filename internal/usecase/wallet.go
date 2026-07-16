@@ -57,13 +57,27 @@ func (uc *WalletUseCase) Deposit(ctx context.Context, req domain.DepositRequest)
 		return nil, errors.New("amount must be greater than 0")
 	}
 
-	if req.TransactionType != domain.PaymentMethodTelebirr {
-		return nil, errors.New("transaction_type must be Telebirr")
+	if !domain.IsSupportedPaymentMethod(req.TransactionType) {
+		return nil, errors.New("transaction_type must be one of Telebirr, CBEBirr, Mpesa")
 	}
 
-	req.TransactionID = strings.TrimSpace(req.TransactionID)
+	// Canonicalize the payment reference to uppercase. Provider references
+	// (Telebirr/CBE/M-Pesa) are uppercase alphanumeric, and the external
+	// verifier tolerates case variants — without this, "ce626ejrns" and
+	// "CE626EJRNS" would slip past the duplicate check as two different
+	// receipts and the same payment could be credited twice.
+	req.TransactionID = strings.ToUpper(strings.TrimSpace(req.TransactionID))
 	if req.TransactionID == "" {
 		return nil, errors.New("transaction_id is required")
+	}
+
+	// Method-specific extra the verifier needs to look up the receipt: M-Pesa
+	// requires the payer's phone. (CBE Birr receipts are looked up by the house
+	// number from config; Telebirr needs the reference only.) Validate up front
+	// so a receipt is never sent to the verifier without the field it requires.
+	req.Phone = strings.TrimSpace(req.Phone)
+	if req.TransactionType == domain.PaymentMethodMpesa && !utils.IsEthiopianMobile(req.Phone) {
+		return nil, errors.New("a valid phone is required for Mpesa")
 	}
 
 	// Verify user exists
@@ -90,7 +104,11 @@ func (uc *WalletUseCase) Deposit(ctx context.Context, req domain.DepositRequest)
 	verified := false
 	creditAmount := req.Amount
 	if uc.paymentVerifier != nil {
-		verification, err := uc.paymentVerifier.Verify(ctx, req.TransactionType, req.TransactionID)
+		verification, err := uc.paymentVerifier.Verify(ctx, domain.PaymentVerificationRequest{
+			Method:    req.TransactionType,
+			Reference: req.TransactionID,
+			Phone:     req.Phone,
+		})
 		switch {
 		case err == nil:
 			if verification.Provider != req.TransactionType {
@@ -162,8 +180,8 @@ func (uc *WalletUseCase) Withdraw(ctx context.Context, req domain.WithdrawReques
 	}
 
 	// Validate account type
-	if req.AccountType != domain.PaymentMethodTelebirr {
-		return nil, errors.New("account_type must be Telebirr")
+	if !domain.IsSupportedPaymentMethod(req.AccountType) {
+		return nil, errors.New("account_type must be one of Telebirr, CBEBirr, Mpesa")
 	}
 
 	// Verify user exists
@@ -172,20 +190,21 @@ func (uc *WalletUseCase) Withdraw(ctx context.Context, req domain.WithdrawReques
 		return nil, errors.New("user not found")
 	}
 
-	// Determine the payout destination. By default it is the user's verified
-	// registration phone (a real Ethiopian mobile shared with the bot). If the
-	// player supplies a different Telebirr number — because their Telebirr is on
-	// another phone — we accept it, but only after validating it is a real
-	// Ethiopian mobile, so a payout can never go to a garbage/typo'd account.
+	// Determine the payout destination. All supported methods (Telebirr, CBE
+	// Birr, M-Pesa) are phone-based mobile money. By default the payout goes to
+	// the user's verified registration phone (a real Ethiopian mobile shared
+	// with the bot); if the player supplies a different number — because their
+	// wallet is on another phone — we accept it only after validating it is a
+	// real Ethiopian mobile, so a payout can never go to a typo'd account.
 	var payoutAccount string
 	if supplied := strings.TrimSpace(req.AccountNumber); supplied != "" {
 		if !utils.IsEthiopianMobile(supplied) {
-			return nil, errors.New("withdrawal account must be a valid Ethiopian Telebirr number")
+			return nil, errors.New("withdrawal account must be a valid Ethiopian phone number")
 		}
 		payoutAccount = utils.CanonicalEthiopianPhone(supplied)
 	} else {
 		if !utils.IsEthiopianMobile(user.PhoneNumber) {
-			return nil, errors.New("no verified phone number on file; provide a Telebirr number to withdraw to")
+			return nil, errors.New("no verified phone number on file; provide a phone number to withdraw to")
 		}
 		payoutAccount = utils.CanonicalEthiopianPhone(user.PhoneNumber)
 	}
