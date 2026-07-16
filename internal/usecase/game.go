@@ -890,6 +890,12 @@ func (uc *GameUseCase) winnerDisplayName(ctx context.Context, userID uuid.UUID) 
 	return name
 }
 
+// GetUserWinnings returns the user's summed prize money — today (Ethiopian
+// time) and all time. Backs the WIN stat on the card picker.
+func (uc *GameUseCase) GetUserWinnings(ctx context.Context, userID uuid.UUID) (today float64, total float64, err error) {
+	return uc.gameRepo.GetUserWinnings(ctx, userID)
+}
+
 // finalizeWinners closes the game and splits the prize pool evenly across every
 // winning card. It is the single winner-resolution path shared by manual bingo
 // claims and automatic bingo detection.

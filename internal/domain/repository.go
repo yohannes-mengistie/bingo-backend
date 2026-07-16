@@ -105,6 +105,10 @@ type GameRepository interface {
 	// with its owner's name and prize share, ordered deterministically (earliest
 	// joiner, then card ID). Empty for games with no winner.
 	FindWinningCards(ctx context.Context, gameID uuid.UUID) ([]*GameWinner, error)
+	// GetUserWinnings returns how much the user has won today (Ethiopian time)
+	// and in total, summed across their winning cards. Backs the WIN stat on
+	// the card picker.
+	GetUserWinnings(ctx context.Context, userID uuid.UUID) (today float64, total float64, err error)
 	AddPlayer(ctx context.Context, tx *sql.Tx, player *GamePlayer) error
 	// MarkUserCardsPaidTx flips a user's reserved (unpaid) active cards to paid
 	// when the countdown ends and their stake is charged. Returns rows changed.

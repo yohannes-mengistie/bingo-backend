@@ -827,6 +827,41 @@ func (r *gameRepository) MarkCardWinner(ctx context.Context, tx *sql.Tx, gameID,
 // and prize share, ordered by join time then card ID (matching the order used
 // when the pot was split). MarkedNumbers is left for the caller to reconstruct
 // from the drawn set.
+// GetUserWinnings sums the user's prize shares across winning cards — today
+// (Ethiopian time, since games are played on Addis wall-clock days) and all
+// time. Games finished BEFORE per-card winner tracking (migration 017) have
+// winner_id but no flagged cards, so those fall back to the full prize pool —
+// the same fallback FindGamesByUserID uses for history rows.
+func (r *gameRepository) GetUserWinnings(ctx context.Context, userID uuid.UUID) (float64, float64, error) {
+	query := `
+		WITH wins AS (
+			SELECT gp.prize_won AS prize, g.finished_at
+			FROM game_players gp
+			JOIN games g ON g.id = gp.game_id
+			WHERE gp.user_id = $1 AND gp.is_winner AND g.state = 'FINISHED'
+			UNION ALL
+			SELECT g.prize_pool AS prize, g.finished_at
+			FROM games g
+			WHERE g.winner_id = $1 AND g.state = 'FINISHED'
+			  AND NOT EXISTS (
+				SELECT 1 FROM game_players gp2 WHERE gp2.game_id = g.id AND gp2.is_winner
+			  )
+		)
+		SELECT
+			COALESCE(SUM(prize) FILTER (
+				WHERE (finished_at AT TIME ZONE 'UTC' AT TIME ZONE 'Africa/Addis_Ababa')::date
+					= (now() AT TIME ZONE 'Africa/Addis_Ababa')::date
+			), 0),
+			COALESCE(SUM(prize), 0)
+		FROM wins
+	`
+	var today, total float64
+	if err := r.db.QueryRowContext(ctx, query, userID).Scan(&today, &total); err != nil {
+		return 0, 0, fmt.Errorf("failed to sum winnings: %w", err)
+	}
+	return today, total, nil
+}
+
 func (r *gameRepository) FindWinningCards(ctx context.Context, gameID uuid.UUID) ([]*domain.GameWinner, error) {
 	query := `
 		SELECT gp.user_id, gp.card_id, gp.prize_won, u.first_name, u.last_name

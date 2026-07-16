@@ -294,6 +294,7 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			// Games (self)
 			authed.GET("/me/active-game", gameHandler.GetMyActiveGame)
 			authed.GET("/me/games", gameHandler.GetMyGameHistory)
+			authed.GET("/me/winnings", gameHandler.GetMyWinnings)
 			authed.GET("/me/games/:gameId", gameHandler.GetMyPlayerInGame)
 			authed.GET("/me/games/:gameId/cards", gameHandler.GetMyCardsInGame)
 			authed.POST("/games/:gameId/join", gameHandler.JoinGame)

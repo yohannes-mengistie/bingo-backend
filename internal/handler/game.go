@@ -342,6 +342,24 @@ func (h *GameHandler) GetCardData(c *gin.Context) {
 	})
 }
 
+// GetMyWinnings handles GET /me/winnings — the authenticated user's summed
+// prize money, today (Ethiopian time) and all time. Backs the WIN stat on the
+// card picker.
+func (h *GameHandler) GetMyWinnings(c *gin.Context) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
+
+	today, total, err := h.gameUseCase.GetUserWinnings(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load winnings"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"today": today, "total": total})
+}
+
 // GetMyGameHistory handles GET /me/games — the authenticated user's game history.
 func (h *GameHandler) GetMyGameHistory(c *gin.Context) {
 	userID, ok := middleware.GetUserID(c)
