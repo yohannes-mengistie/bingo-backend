@@ -71,15 +71,6 @@ func (uc *WalletUseCase) Deposit(ctx context.Context, req domain.DepositRequest)
 		return nil, errors.New("transaction_id is required")
 	}
 
-	// Method-specific extra the verifier needs to look up the receipt: M-Pesa
-	// requires the payer's phone. (CBE Birr receipts are looked up by the house
-	// number from config; Telebirr needs the reference only.) Validate up front
-	// so a receipt is never sent to the verifier without the field it requires.
-	req.Phone = strings.TrimSpace(req.Phone)
-	if req.TransactionType == domain.PaymentMethodMpesa && !utils.IsEthiopianMobile(req.Phone) {
-		return nil, errors.New("a valid phone is required for Mpesa")
-	}
-
 	// Verify user exists
 	_, err := uc.userRepo.FindByID(ctx, req.UserID)
 	if err != nil {
@@ -107,7 +98,6 @@ func (uc *WalletUseCase) Deposit(ctx context.Context, req domain.DepositRequest)
 		verification, err := uc.paymentVerifier.Verify(ctx, domain.PaymentVerificationRequest{
 			Method:    req.TransactionType,
 			Reference: req.TransactionID,
-			Phone:     req.Phone,
 		})
 		switch {
 		case err == nil:

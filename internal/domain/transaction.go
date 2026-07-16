@@ -97,17 +97,13 @@ type PaymentVerificationResult struct {
 }
 
 // PaymentVerificationRequest carries everything the external verifier needs to
-// look up a receipt. Reference is always required (for CBE Birr it is the
-// receipt number); Phone is a method-specific extra:
-//   - M-Pesa requires Phone (the payer's M-Pesa phone number).
-//   - CBE Birr looks receipts up by the RECEIVER's phone, which is the house
-//     CBE Birr number — the verifier supplies it from config, so nothing extra
-//     is needed from the player.
-//   - Telebirr needs nothing extra.
+// look up a receipt: the method and its reference (for CBE Birr and M-Pesa the
+// receipt number). CBE Birr and M-Pesa lookups additionally need a phone
+// involved in the transaction — the verifier supplies the house number of the
+// method from config, so nothing extra is required from the player.
 type PaymentVerificationRequest struct {
 	Method    PaymentMethod
 	Reference string
-	Phone     string
 }
 
 type PaymentVerifier interface {
@@ -130,16 +126,11 @@ type Transaction struct {
 
 // DepositRequest represents the data needed to create a deposit.
 // UserID is populated from the authenticated JWT, not the request body.
-//
-// Phone is a method-specific extra forwarded to the verifier: the payer's
-// M-Pesa number, required for M-Pesa. It is ignored for Telebirr and CBE Birr
-// (CBE Birr receipts are looked up by the house number from config).
 type DepositRequest struct {
 	UserID          uuid.UUID     `json:"-"`
 	Amount          float64       `json:"amount" binding:"required,gt=0"`
 	TransactionType PaymentMethod `json:"transaction_type" binding:"required"`
 	TransactionID   string        `json:"transaction_id" binding:"required"`
-	Phone           string        `json:"phone"`
 }
 
 // WithdrawRequest represents the data needed to create a withdrawal.

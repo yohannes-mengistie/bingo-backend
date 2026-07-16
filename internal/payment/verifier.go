@@ -78,40 +78,24 @@ func (v *Verifier) Verify(ctx context.Context, req domain.PaymentVerificationReq
 	// Telebirr goes through the universal /verify endpoint, which auto-detects
 	// the provider from the reference. CBE Birr and M-Pesa each have a dedicated
 	// endpoint (the universal one does not auto-detect them) with a
-	// {receiptNumber, phoneNumber} request shape:
-	//   - CBE Birr receipts are looked up by the RECEIVER's phone — which for a
-	//     deposit is always the house CBE Birr number, taken from config rather
-	//     than the player (this also inherently pins the lookup to receipts
-	//     paid to us).
-	//   - M-Pesa receipts are looked up by the PAYER's phone, supplied by the
-	//     player with the deposit request.
+	// {receiptNumber, phoneNumber} request shape, where phoneNumber is a phone
+	// involved in the transaction. We always supply the HOUSE number of the
+	// method — for a deposit the house is the receiver, so nothing extra is
+	// needed from the player, and the lookup is inherently pinned to receipts
+	// the house participated in.
 	endpoint := "/verify"
 	payload := map[string]string{"reference": reference}
-	switch req.Method {
-	case domain.PaymentMethodCBEBirr:
-		house := v.houseAccounts[domain.PaymentMethodCBEBirr]
+	if req.Method == domain.PaymentMethodCBEBirr || req.Method == domain.PaymentMethodMpesa {
+		house := v.houseAccounts[req.Method]
 		if house == "" {
 			// Without the house number we cannot even look the receipt up —
 			// fall back to manual admin review, never auto-credit.
-			return nil, fmt.Errorf("%w: no house account configured for CBEBirr, deposit needs manual review", domain.ErrVerifierUnavailable)
+			return nil, fmt.Errorf("%w: no house account configured for %s, deposit needs manual review", domain.ErrVerifierUnavailable, req.Method)
 		}
-		endpoint = "/verify-cbebirr"
+		endpoint = "/verify-" + strings.ToLower(string(req.Method))
 		payload = map[string]string{
 			"receiptNumber": reference,
 			"phoneNumber":   utils.CanonicalEthiopianPhone(house),
-		}
-	case domain.PaymentMethodMpesa:
-		phone := strings.TrimSpace(req.Phone)
-		if phone == "" {
-			// The usecase validates this before calling; guard anyway so a
-			// receipt is never sent to the verifier without the field its
-			// lookup requires — fall back to manual review.
-			return nil, fmt.Errorf("%w: M-Pesa verification requires the payer's phone, deposit needs manual review", domain.ErrVerifierUnavailable)
-		}
-		endpoint = "/verify-mpesa"
-		payload = map[string]string{
-			"receiptNumber": reference,
-			"phoneNumber":   utils.CanonicalEthiopianPhone(phone),
 		}
 	}
 

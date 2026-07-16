@@ -48,7 +48,6 @@ func (h *WalletHandler) Deposit(c *gin.Context) {
 		if err.Error() == "amount must be greater than 0" ||
 			err.Error() == "transaction_type must be one of Telebirr, CBEBirr, Mpesa" ||
 			err.Error() == "transaction_id is required" ||
-			err.Error() == "a valid phone is required for Mpesa" ||
 			err.Error() == "payment provider does not match transaction_type" {
 			statusCode = http.StatusBadRequest
 		} else if strings.HasPrefix(err.Error(), "payment verification failed:") ||

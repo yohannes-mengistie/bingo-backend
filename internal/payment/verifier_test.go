@@ -196,10 +196,11 @@ func TestVerifierCBEBirrRejectsWrongReceiver(t *testing.T) {
 
 // M-Pesa verification goes to the dedicated /verify-mpesa endpoint (the
 // universal /verify does not auto-detect M-Pesa) with {receiptNumber,
-// phoneNumber} where phoneNumber is the PAYER's phone in canonical 251 form.
-// The documented response is {success, data: {receiptNumber, transactionDate,
-// amount, sender, receiver, status}} with no provider field, so the provider
-// falls back to the requested method.
+// phoneNumber} where phoneNumber is the HOUSE M-Pesa number in canonical 251
+// form (the house is the receiver of a deposit, so nothing is needed from the
+// player beyond the receipt number). The documented response is {success,
+// data: {receiptNumber, transactionDate, amount, sender, receiver, status}}
+// with no provider field, so the provider falls back to the requested method.
 func TestVerifierMpesa(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/verify-mpesa" {
@@ -212,8 +213,8 @@ func TestVerifierMpesa(t *testing.T) {
 		if payload["receiptNumber"] != "SGH12ABCD3" {
 			t.Fatalf("receiptNumber = %q, want SGH12ABCD3", payload["receiptNumber"])
 		}
-		if payload["phoneNumber"] != "251712345678" {
-			t.Fatalf("phoneNumber = %q, want canonical payer phone 251712345678", payload["phoneNumber"])
+		if payload["phoneNumber"] != "251712341122" {
+			t.Fatalf("phoneNumber = %q, want canonical house number 251712341122", payload["phoneNumber"])
 		}
 		if _, ok := payload["reference"]; ok {
 			t.Fatalf("mpesa request should use receiptNumber, not reference")
@@ -234,11 +235,11 @@ func TestVerifierMpesa(t *testing.T) {
 	}))
 	defer server.Close()
 
+	// House number configured in local form; canonicalized for the lookup.
 	verifier := NewVerifier(config.PaymentVerifierConfig{BaseURL: server.URL, APIKey: "test-key", MpesaAccount: "0712341122"})
 	result, err := verifier.Verify(context.Background(), domain.PaymentVerificationRequest{
 		Method:    domain.PaymentMethodMpesa,
 		Reference: "SGH12ABCD3",
-		Phone:     "0712345678", // local form; canonicalized to 251712345678 for the lookup
 	})
 	if err != nil {
 		t.Fatalf("Verify returned error: %v", err)
@@ -279,7 +280,6 @@ func TestVerifierMpesaRejectsWrongReceiver(t *testing.T) {
 	_, err := verifier.Verify(context.Background(), domain.PaymentVerificationRequest{
 		Method:    domain.PaymentMethodMpesa,
 		Reference: "SGH12ABCD3",
-		Phone:     "0712341122",
 	})
 	if err == nil {
 		t.Fatal("receipt credited to a different number should be rejected")
@@ -312,7 +312,19 @@ func TestVerifierMpesaNameOnlyReceiverFallsBackToManual(t *testing.T) {
 	_, err := verifier.Verify(context.Background(), domain.PaymentVerificationRequest{
 		Method:    domain.PaymentMethodMpesa,
 		Reference: "SGH12ABCD3",
-		Phone:     "0712345678",
+	})
+	if !errors.Is(err, domain.ErrVerifierUnavailable) {
+		t.Fatalf("expected manual-review fallback (ErrVerifierUnavailable), got %v", err)
+	}
+}
+
+// Like CBE Birr, an M-Pesa receipt cannot even be looked up without the house
+// number — fall back to manual admin review, never auto-credit.
+func TestVerifierMpesaNoHouseAccountFallsBackToManual(t *testing.T) {
+	verifier := NewVerifier(config.PaymentVerifierConfig{BaseURL: "http://unused.invalid", APIKey: "test-key"})
+	_, err := verifier.Verify(context.Background(), domain.PaymentVerificationRequest{
+		Method:    domain.PaymentMethodMpesa,
+		Reference: "SGH12ABCD3",
 	})
 	if !errors.Is(err, domain.ErrVerifierUnavailable) {
 		t.Fatalf("expected manual-review fallback (ErrVerifierUnavailable), got %v", err)
