@@ -22,22 +22,34 @@ type TelegramHandler struct {
 	userUseCase   *usecase.UserUseCase
 	bot           *telegram.Bot
 	webhookSecret string
-	miniAppURL    string
+	miniAppBase   string // Mini App origin, no trailing slash
+	appVersion    string // per-deploy cache-buster (see appURL)
 }
 
 // NewTelegramHandler creates a new Telegram webhook handler.
 func NewTelegramHandler(userUseCase *usecase.UserUseCase, bot *telegram.Bot, webhookSecret, miniAppURL string) *TelegramHandler {
+	base := strings.TrimRight(miniAppURL, "/")
+	version := miniAppCacheVersion()
 	return &TelegramHandler{
 		userUseCase:   userUseCase,
 		bot:           bot,
 		webhookSecret: webhookSecret,
-		// Bake a per-deploy cache-buster into the Mini App URL. Telegram caches
-		// the web app per-URL and ignores our no-cache headers, so without a
-		// changing query string players keep seeing the previous build after a
-		// deploy. Resolved once at startup (stable within a deploy, so repeated
-		// opens still hit Telegram's cache; changes on the next deploy).
-		miniAppURL: withCacheVersion(miniAppURL, miniAppCacheVersion()),
+		// appURL bakes a per-deploy cache-buster into every Mini App URL.
+		// Telegram caches the web app per-URL and ignores our no-cache
+		// headers, so without a changing query string players keep seeing the
+		// previous build after a deploy. Resolved once at startup (stable
+		// within a deploy, so repeated opens still hit Telegram's cache;
+		// changes on the next deploy).
+		miniAppBase: base,
+		appVersion:  version,
 	}
+}
+
+// appURL builds a deep link into the Mini App (e.g. appURL("/wallet")) with
+// the per-deploy cache-buster attached. The SPA serves every path, so a menu
+// button can land the player directly on the right screen.
+func (h *TelegramHandler) appURL(path string) string {
+	return withCacheVersion(h.miniAppBase+path, h.appVersion)
 }
 
 // miniAppCacheVersion returns a token that changes on every deploy. On Render
@@ -99,19 +111,102 @@ func (h *TelegramHandler) Webhook(c *gin.Context) {
 	case strings.HasPrefix(msg.Text, "/start"):
 		h.handleStart(c, msg)
 	default:
-		h.reply(msg.Chat.ID, "Send /start to begin. 👋", nil)
+		h.handleMenuText(c, msg)
 	}
 
 	c.Status(http.StatusOK)
 }
 
-// handleStart greets the user. If already registered, it shows the Play button
-// straight away; otherwise it asks them to share their phone number.
+// Main-menu button labels — the persistent reply keyboard every registered
+// user sees (mirrors the layout in mainMenu). web_app buttons open the Mini
+// App directly; plain buttons echo their label back as a message and are
+// routed by exact match in handleMenuText.
+const (
+	btnPlay     = "🎮 ቢንጎ ተጫወት"
+	btnPromo    = "🎁 ፕሮሞ ኮድ"
+	btnDeposit  = "💰 ገቢ ለማድረግ"
+	btnWithdraw = "💸 ወጪ ለማድረግ"
+	btnInvite   = "🔗 ጋብዝ & አግኝ"
+	btnProfile  = "👤 ፕሮፋይል & ሂሳብ"
+	btnHelp     = "🆘 እርዳታ"
+	btnLanguage = "🌍 ቋንቋ / Language"
+	btnAgent    = "📢 አጀንት ፕሮሞተር"
+)
+
+// mainMenu is the persistent reply keyboard (the button grid pinned above the
+// system keyboard). Play/Deposit/Withdraw/Invite/Profile open the Mini App
+// straight onto the matching screen; the rest are answered in chat.
+func (h *TelegramHandler) mainMenu() *telegram.ReplyMarkup {
+	app := func(text, path string) telegram.KeyboardButton {
+		return telegram.KeyboardButton{Text: text, WebApp: &telegram.WebAppInfo{URL: h.appURL(path)}}
+	}
+	txt := func(text string) telegram.KeyboardButton {
+		return telegram.KeyboardButton{Text: text}
+	}
+	return &telegram.ReplyMarkup{
+		Keyboard: [][]telegram.KeyboardButton{
+			{app(btnPlay, "/"), txt(btnPromo)},
+			{app(btnDeposit, "/wallet"), app(btnWithdraw, "/wallet")},
+			{app(btnInvite, "/referral"), app(btnProfile, "/profile")},
+			{txt(btnHelp), txt(btnLanguage)},
+			{txt(btnAgent)},
+		},
+		ResizeKeyboard: true,
+		IsPersistent:   true,
+	}
+}
+
+// handleMenuText routes taps on the plain (non-web_app) menu buttons, and
+// falls back to re-showing the menu for anything unrecognized. Unregistered
+// users are funneled into the /start registration flow instead.
+func (h *TelegramHandler) handleMenuText(c *gin.Context, msg *telegram.Message) {
+	user, err := h.userUseCase.FindUserByTelegramID(c.Request.Context(), msg.From.ID)
+	if err != nil || user == nil {
+		h.handleStart(c, msg)
+		return
+	}
+
+	switch strings.TrimSpace(msg.Text) {
+	case btnPromo:
+		h.reply(msg.Chat.ID,
+			"🎁 የፕሮሞ ኮድ ስርዓት በቅርቡ ይጀምራል! ዝማኔዎችን ይከታተሉ።\n\nPromo codes are coming soon — stay tuned!",
+			nil)
+	case btnHelp:
+		h.reply(msg.Chat.ID,
+			"🆘 እርዳታ / Help\n\n"+
+				"🎮 ለመጫወት፦ «"+btnPlay+"» ይንኩ፣ ካርድ ይምረጡ — ጨዋታው ካርታዎን በራስ-ሰር ያደምቃል።\n"+
+				"💰 ገቢ ለማድረግ፦ በቴሌብር ወይም ኤም-ፔሳ ገንዘብ ልከው ደረሰኙን በመተግበሪያው ያስገቡ።\n"+
+				"💸 ወጪ ለማድረግ፦ ከቦርሳ ገጹ ላይ ይጠይቁ።\n\n"+
+				"ችግር ካጋጠመዎ ከታች ያለውን ይንኩ 👇",
+			&telegram.ReplyMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{{
+				{Text: "🛟 ችግር ሪፖርት / Report a problem", WebApp: &telegram.WebAppInfo{URL: h.appURL("/report")}},
+			}}})
+	case btnLanguage:
+		h.reply(msg.Chat.ID,
+			"🌍 ቋንቋ (አማርኛ / English) በመተግበሪያው ውስጥ ከፕሮፋይል ገጽ መቀየር ይችላሉ።\n\nYou can switch the app language from the Profile page.",
+			&telegram.ReplyMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{{
+				{Text: "👤 ፕሮፋይል / Profile", WebApp: &telegram.WebAppInfo{URL: h.appURL("/profile")}},
+			}}})
+	case btnAgent:
+		h.reply(msg.Chat.ID,
+			"📢 አጀንት/ፕሮሞተር ለመሆን ይፈልጋሉ?\n\nበመተግበሪያው ውስጥ «ችግር ሪፖርት» ገጹን ተጠቅመው መልዕክት ይላኩልን — እናገኝዎታለን።",
+			&telegram.ReplyMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{{
+				{Text: "✉️ መልዕክት ላክ / Contact us", WebApp: &telegram.WebAppInfo{URL: h.appURL("/report")}},
+			}}})
+	default:
+		h.reply(msg.Chat.ID,
+			"እባክዎ ከታች ካለው ምናሌ ይምረጡ 👇\nPlease choose from the menu below 👇",
+			h.mainMenu())
+	}
+}
+
+// handleStart greets the user. If already registered, it shows the persistent
+// main menu straight away; otherwise it asks them to share their phone number.
 func (h *TelegramHandler) handleStart(c *gin.Context, msg *telegram.Message) {
 	if user, err := h.userUseCase.FindUserByTelegramID(c.Request.Context(), msg.From.ID); err == nil && user != nil {
 		h.reply(msg.Chat.ID,
-			"Welcome back, "+user.FirstName+"! 🎉 Tap below to play.",
-			telegram.PlayButton("🎮 Play Bingo", h.miniAppURL))
+			"እንኳን ደህና መጡ፣ "+user.FirstName+"! 🎉\nከታች ያለውን ምናሌ ይጠቀሙ 👇\n\nWelcome back! Use the menu below 👇",
+			h.mainMenu())
 		return
 	}
 
@@ -155,8 +250,8 @@ func (h *TelegramHandler) handleContact(c *gin.Context, msg *telegram.Message) {
 	}
 
 	h.reply(msg.Chat.ID,
-		"You're all set! 🎉 Tap below to play.",
-		telegram.PlayButton("🎮 Play Bingo", h.miniAppURL))
+		"ምዝገባዎ ተጠናቋል! 🎉 ከታች ያለውን ምናሌ ይጠቀሙ 👇\n\nYou're all set! Use the menu below 👇",
+		h.mainMenu())
 }
 
 // reply sends a message and logs (but swallows) any send error.

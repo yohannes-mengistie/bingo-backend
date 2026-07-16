@@ -74,12 +74,19 @@ type ReplyMarkup struct {
 	InlineKeyboard  [][]InlineKeyboardButton `json:"inline_keyboard,omitempty"`
 	ResizeKeyboard  bool                     `json:"resize_keyboard,omitempty"`
 	OneTimeKeyboard bool                     `json:"one_time_keyboard,omitempty"`
+	// IsPersistent keeps the custom keyboard always visible (the client shows
+	// it instead of hiding it after one use) — the "bot main menu" pattern.
+	IsPersistent bool `json:"is_persistent,omitempty"`
 }
 
-// KeyboardButton is a button on the custom reply keyboard.
+// KeyboardButton is a button on the custom reply keyboard. Exactly one of the
+// optional fields may be set: RequestContact asks for the user's phone;
+// WebApp opens a Mini App directly (private chats only). A plain button just
+// echoes Text back to the bot as a message.
 type KeyboardButton struct {
-	Text           string `json:"text"`
-	RequestContact bool   `json:"request_contact,omitempty"`
+	Text           string      `json:"text"`
+	RequestContact bool        `json:"request_contact,omitempty"`
+	WebApp         *WebAppInfo `json:"web_app,omitempty"`
 }
 
 // InlineKeyboardButton is a button under the message. WebApp opens a Mini App.
