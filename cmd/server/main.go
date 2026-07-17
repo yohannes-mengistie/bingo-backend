@@ -135,7 +135,11 @@ func main() {
 	// dashboard (bot_config), so this only decides whether the machinery runs.
 	if cfg.Bots.Enabled {
 		go func() {
-			seedCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			// Generous timeout: seeding is sequential (one tx per bot), so a
+			// large pool (e.g. 1000) needs minutes, not seconds. Runs in a
+			// goroutine so it never blocks server startup, and is idempotent —
+			// a partial seed resumes on the next boot.
+			seedCtx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 			defer cancel()
 			if err := botUseCase.EnsureBotPool(seedCtx, cfg.Bots.PoolSize); err != nil {
 				log.Printf("Warning: failed to seed bot pool: %v", err)
