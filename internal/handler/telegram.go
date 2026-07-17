@@ -259,7 +259,7 @@ func (h *TelegramHandler) handleMenuText(c *gin.Context, msg *telegram.Message) 
 			}}})
 	default:
 		h.reply(msg.Chat.ID,
-			"እባክዎ ከታች ካለው ምናሌ ይምረጡ 👇\nPlease choose from the menu below 👇",
+			"እባክዎ ከታች ካለው ማውጫ ይምረጡ 👇\nPlease choose from the menu below 👇",
 			h.mainMenu())
 	}
 }
@@ -297,7 +297,7 @@ func (h *TelegramHandler) redeemPromo(c *gin.Context, msg *telegram.Message, use
 func (h *TelegramHandler) handleStart(c *gin.Context, msg *telegram.Message) {
 	if user, err := h.userUseCase.FindUserByTelegramID(c.Request.Context(), msg.From.ID); err == nil && user != nil {
 		h.reply(msg.Chat.ID,
-			"እንኳን ደህና መጡ፣ "+user.FirstName+"! 🎉\nከታች ያለውን ምናሌ ይጠቀሙ 👇\n\nWelcome back! Use the menu below 👇",
+			"እንኳን ደህና መጡ፣ "+user.FirstName+"! 🎉\nከታች ያለውን ማውጫ ይጠቀሙ 👇\n\nWelcome back! Use the menu below 👇",
 			h.mainMenu())
 		return
 	}
@@ -342,7 +342,7 @@ func (h *TelegramHandler) handleContact(c *gin.Context, msg *telegram.Message) {
 	}
 
 	h.reply(msg.Chat.ID,
-		"ምዝገባዎ ተጠናቋል! 🎉 ከታች ያለውን ምናሌ ይጠቀሙ 👇\n\nYou're all set! Use the menu below 👇",
+		"ምዝገባዎ ተጠናቋል! 🎉 ከታች ያለውን ማውጫ ይጠቀሙ 👇\n\nYou're all set! Use the menu below 👇",
 		h.mainMenu())
 }
 
