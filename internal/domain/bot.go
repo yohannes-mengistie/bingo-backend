@@ -11,7 +11,7 @@ import (
 // automatic filler. It is read every sweep and edited from the admin dashboard.
 type BotConfig struct {
 	Enabled        bool      `json:"enabled" db:"enabled"`                   // master auto-fill switch
-	MinRealPlayers int       `json:"min_real_players" db:"min_real_players"` // only fill games with fewer real players than this
+	MinRealPlayers int       `json:"min_real_players" db:"min_real_players"` // FLOOR: start adding bots once a game has at least this many real players (1 = as soon as one joins). No upper ceiling.
 	TargetBots     int       `json:"target_bots" db:"target_bots"`           // add bots until the game holds this many
 	Tiers          string    `json:"tiers" db:"tiers"`                       // comma-separated game types to fill, e.g. "REGULAR,VIP"
 	UpdatedAt      time.Time `json:"updated_at" db:"updated_at"`

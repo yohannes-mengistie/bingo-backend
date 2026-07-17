@@ -390,7 +390,16 @@ func (uc *BotUseCase) sweep(ctx context.Context) {
 		}
 		for _, game := range games {
 			realPlayers, err := uc.botRepo.CountRealPlayersInGame(ctx, game.ID)
-			if err != nil || realPlayers < 1 || realPlayers >= cfg.MinRealPlayers {
+			// MinRealPlayers is a FLOOR: start adding bots once a game has at
+			// least this many real players (default 1 → fill the moment one
+			// person joins). No upper ceiling — bots always top the game up to
+			// TargetBots regardless of how many real players join. Empty games
+			// (0 real players) are never filled.
+			floor := cfg.MinRealPlayers
+			if floor < 1 {
+				floor = 1
+			}
+			if err != nil || realPlayers < floor {
 				continue
 			}
 			botPlayers, err := uc.botRepo.CountBotsInGame(ctx, game.ID)

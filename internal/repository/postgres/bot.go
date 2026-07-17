@@ -113,7 +113,7 @@ func (r *botRepository) GetConfig(ctx context.Context) (*domain.BotConfig, error
 	if err == sql.ErrNoRows {
 		// Row missing (e.g. migration not yet applied) — fall back to safe
 		// defaults with auto-fill OFF rather than erroring.
-		return &domain.BotConfig{Enabled: false, MinRealPlayers: 20, TargetBots: 30, Tiers: "REGULAR,VIP"}, nil
+		return &domain.BotConfig{Enabled: false, MinRealPlayers: 1, TargetBots: 30, Tiers: "REGULAR,VIP"}, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to read bot config: %w", err)
