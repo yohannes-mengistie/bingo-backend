@@ -298,6 +298,27 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 		})
 	})
 
+	// Echoes how this service resolved the caller's address, and the
+	// forwarding headers it based that on. It returns only metadata the caller
+	// themselves sent, so it discloses nothing about anyone else.
+	//
+	// It exists because getting client-IP resolution wrong is both easy and
+	// invisible: every per-IP rate limit silently becomes one global bucket
+	// shared by every player, which looks like working rate limiting right up
+	// until real users start getting 429s. `resolved_client_ip` must equal the
+	// caller's real public address; if it shows a platform edge address
+	// instead, TRUSTED_PROXIES does not cover that edge.
+	router.GET("/debug/client-ip", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"resolved_client_ip":       c.ClientIP(),
+			"remote_addr":              c.Request.RemoteAddr,
+			"x_forwarded_for":          c.Request.Header.Get("X-Forwarded-For"),
+			"x_real_ip":                c.Request.Header.Get("X-Real-Ip"),
+			"x_envoy_external_address": c.Request.Header.Get("X-Envoy-External-Address"),
+			"trusted_proxies":          resolveTrustedProxies(),
+		})
+	})
+
 	// Telegram bot webhook (set via the Bot API setWebhook method).
 	router.POST("/telegram/webhook", telegramHandler.Webhook)
 
