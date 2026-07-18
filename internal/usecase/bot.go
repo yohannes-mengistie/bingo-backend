@@ -18,9 +18,18 @@ const botTelegramIDBase = -1_000_000_000
 
 // botFirstNames and botLastNames are combined to give filler bots plausible
 // full names. The DB only requires telegram_id / phone / referral_code to be
-// unique, but a room showing seven players called "Abel" is the most visible
-// tell that a lobby is padded — so the display name space has to comfortably
-// exceed the pool size.
+// unique, so names are free to repeat — but they should not.
+//
+// Where bot names actually reach players: NOT the game room, which renders a
+// bare participant count and no roster at all (bingo-frontend
+// src/screens/GameRoom.tsx). They surface through winner_name — the winner
+// overlay and the recent-winners list — built by winnerDisplayName
+// (usecase/game.go) and the recent-winners query (repository/postgres/game.go),
+// both of which emit "First Last" whenever a surname is set. Because bots
+// outnumber real players by design, bots take most wins, so that list is
+// largely bot names: with the old 30-entry first-name-only pool it repeated the
+// same handful of names constantly. The admin game-detail page is the one place
+// a full roster with names is shown.
 //
 // The two lengths are deliberately COPRIME (120 and 49 share no factor), which
 // makes the pair (index%120, index%49) unique for the first 120*49 = 5880 bots

@@ -1,10 +1,12 @@
 -- Give filler bots plausible full names.
 --
--- Bots used to draw from a 30-name first-name-only list, so a padded lobby of
--- 100 showed ~3 players called "Abel" and one of 200 showed ~7 — the clearest
--- signal to a player that a room is not real. internal/usecase/bot.go now pairs
--- a 120-name first list with a 49-name surname list; the lengths are coprime,
--- so (index%120, index%49) is unique for the first 5880 bots.
+-- Bots used to draw from a 30-name first-name-only list. Players never see a
+-- room roster (the game room shows only a participant count), but they do see
+-- bot names in the winner overlay and recent-winners list, which are built from
+-- "first_name last_name" — and since bots take most wins, that list was the
+-- same handful of names on repeat. internal/usecase/bot.go now pairs a 120-name
+-- first list with a 49-name surname list; the lengths are coprime, so
+-- (index%120, index%49) is unique for the first 5880 bots.
 --
 -- This backfills bots that already exist (new ones get named at creation).
 -- It derives each bot's original creation index from its telegram_id rather
