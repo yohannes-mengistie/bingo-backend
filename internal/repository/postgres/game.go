@@ -414,7 +414,7 @@ func (r *gameRepository) UpdateTx(ctx context.Context, tx *sql.Tx, game *domain.
 // inside an existing transaction.
 func (r *gameRepository) GetActivePlayersTx(ctx context.Context, tx *sql.Tx, gameID uuid.UUID) ([]*domain.GamePlayer, error) {
 	query := `
-		SELECT id, game_id, user_id, card_id, paid, is_eliminated, joined_at, left_at
+		SELECT id, game_id, user_id, card_id, paid, is_eliminated, joined_at, left_at, paid_from_bonus, bonus_expires_at
 		FROM game_players
 		WHERE game_id = $1 AND left_at IS NULL
 	`
@@ -437,6 +437,8 @@ func (r *gameRepository) GetActivePlayersTx(ctx context.Context, tx *sql.Tx, gam
 			&player.IsEliminated,
 			&player.JoinedAt,
 			&player.LeftAt,
+			&player.PaidFromBonus,
+			&player.BonusExpiresAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan player: %w", err)
 		}
@@ -591,6 +593,33 @@ func (r *gameRepository) MarkUserCardsPaidTx(ctx context.Context, tx *sql.Tx, ga
 	return res.RowsAffected()
 }
 
+// MarkCardsBonusFundedTx flags `n` of a user's just-paid cards in a game as
+// bought with play-only bonus, stamping the expiry of the grant they consumed.
+//
+// Which specific cards get the flag does not matter — every card in a game
+// costs the same stake — so it takes the n lowest card ids for determinism.
+// What matters is that exactly n carry it, because the refund paths use this
+// flag to decide whether a stake returns as bonus or as withdrawable cash.
+func (r *gameRepository) MarkCardsBonusFundedTx(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID, n int, expiresAt time.Time) (int64, error) {
+	if n <= 0 {
+		return 0, nil
+	}
+	res, err := tx.ExecContext(ctx, `
+		UPDATE game_players
+		SET paid_from_bonus = true, bonus_expires_at = $4
+		WHERE ctid IN (
+			SELECT ctid FROM game_players
+			WHERE game_id = $1 AND user_id = $2 AND left_at IS NULL AND paid_from_bonus = false
+			ORDER BY card_id
+			LIMIT $3
+		)
+	`, gameID, userID, n, expiresAt)
+	if err != nil {
+		return 0, fmt.Errorf("failed to mark cards bonus-funded: %w", err)
+	}
+	return res.RowsAffected()
+}
+
 // RemovePlayerCard soft-deletes one specific card row (sets left_at).
 func (r *gameRepository) RemovePlayerCard(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID, cardID int) (int64, error) {
 	query := `
@@ -649,7 +678,7 @@ func (r *gameRepository) FindPlayer(ctx context.Context, gameID, userID uuid.UUI
 // FindPlayersByUser returns all of a user's active card rows in a game.
 func (r *gameRepository) FindPlayersByUser(ctx context.Context, gameID, userID uuid.UUID) ([]*domain.GamePlayer, error) {
 	query := `
-		SELECT id, game_id, user_id, card_id, paid, is_eliminated, joined_at, left_at
+		SELECT id, game_id, user_id, card_id, paid, is_eliminated, joined_at, left_at, paid_from_bonus, bonus_expires_at
 		FROM game_players
 		WHERE game_id = $1 AND user_id = $2 AND left_at IS NULL
 		ORDER BY joined_at
@@ -673,6 +702,8 @@ func (r *gameRepository) FindPlayersByUser(ctx context.Context, gameID, userID u
 			&player.IsEliminated,
 			&player.JoinedAt,
 			&player.LeftAt,
+			&player.PaidFromBonus,
+			&player.BonusExpiresAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan user card: %w", err)
 		}
@@ -746,7 +777,7 @@ func (r *gameRepository) CountDistinctPlayers(ctx context.Context, gameID uuid.U
 // GetPlayers gets all players in a game
 func (r *gameRepository) GetPlayers(ctx context.Context, gameID uuid.UUID) ([]*domain.GamePlayer, error) {
 	query := `
-		SELECT id, game_id, user_id, card_id, is_eliminated, joined_at, left_at
+		SELECT id, game_id, user_id, card_id, paid, is_eliminated, joined_at, left_at, paid_from_bonus, bonus_expires_at
 		FROM game_players
 		WHERE game_id = $1 AND left_at IS NULL
 	`
@@ -765,9 +796,12 @@ func (r *gameRepository) GetPlayers(ctx context.Context, gameID uuid.UUID) ([]*d
 			&player.GameID,
 			&player.UserID,
 			&player.CardID,
+			&player.Paid,
 			&player.IsEliminated,
 			&player.JoinedAt,
 			&player.LeftAt,
+			&player.PaidFromBonus,
+			&player.BonusExpiresAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan player: %w", err)

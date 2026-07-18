@@ -82,10 +82,10 @@ type Game struct {
 
 // GamePlayer represents a player in a game
 type GamePlayer struct {
-	ID           uuid.UUID  `json:"id" db:"id"`
-	GameID       uuid.UUID  `json:"game_id" db:"game_id"`
-	UserID       uuid.UUID  `json:"user_id" db:"user_id"`
-	CardID       int        `json:"card_id" db:"card_id"` // 1-500
+	ID     uuid.UUID `json:"id" db:"id"`
+	GameID uuid.UUID `json:"game_id" db:"game_id"`
+	UserID uuid.UUID `json:"user_id" db:"user_id"`
+	CardID int       `json:"card_id" db:"card_id"` // 1-500
 	// Paid is false while a card is only reserved during the pre-game window and
 	// flips to true when the countdown ends and the stake is actually charged.
 	Paid         bool       `json:"paid" db:"paid"`
@@ -94,6 +94,13 @@ type GamePlayer struct {
 	PrizeWon     float64    `json:"prize_won" db:"prize_won"`
 	JoinedAt     time.Time  `json:"joined_at" db:"joined_at"`
 	LeftAt       *time.Time `json:"left_at,omitempty" db:"left_at"`
+	// PaidFromBonus marks a card bought with play-only bonus. Refund paths must
+	// return such a stake as bonus, not as withdrawable cash — otherwise
+	// joining a game and leaving would launder bonus into cash.
+	PaidFromBonus bool `json:"paid_from_bonus" db:"paid_from_bonus"`
+	// BonusExpiresAt is the deadline of the grant this card consumed, so a
+	// refund is reinstated under the original deadline rather than a fresh one.
+	BonusExpiresAt *time.Time `json:"bonus_expires_at,omitempty" db:"bonus_expires_at"`
 }
 
 // BingoCard represents a 5x5 bingo card

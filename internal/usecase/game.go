@@ -20,6 +20,7 @@ type GameUseCase struct {
 	walletRepo      domain.WalletRepository
 	transactionRepo domain.TransactionRepository
 	userRepo        domain.UserRepository
+	bonusRepo       domain.BonusRepository
 	db              *sql.DB
 	redisService    *redisGame.GameStateService
 }
@@ -30,6 +31,7 @@ func NewGameUseCase(
 	walletRepo domain.WalletRepository,
 	transactionRepo domain.TransactionRepository,
 	userRepo domain.UserRepository,
+	bonusRepo domain.BonusRepository,
 	db *sql.DB,
 	redisService *redisGame.GameStateService,
 ) *GameUseCase {
@@ -38,9 +40,52 @@ func NewGameUseCase(
 		walletRepo:      walletRepo,
 		transactionRepo: transactionRepo,
 		userRepo:        userRepo,
+		bonusRepo:       bonusRepo,
 		db:              db,
 		redisService:    redisService,
 	}
+}
+
+// refundCardStake returns one card's stake to wherever it came from.
+//
+// A card bought with play-only bonus MUST come back as bonus. Crediting it to
+// the cash balance would convert bonus into withdrawable money simply by
+// joining a game and leaving again — the one leak the free-bet model exists to
+// prevent, and the reason game_players carries paid_from_bonus at all.
+//
+// The bonus is reinstated under its ORIGINAL deadline, so the round trip
+// cannot be used to keep an expiring bonus alive forever. A deadline already
+// past is dropped by the repository rather than resurrected.
+func (uc *GameUseCase) refundCardStake(ctx context.Context, tx *sql.Tx, p *domain.GamePlayer, amount float64, ref *string) error {
+	if p.PaidFromBonus && uc.bonusRepo != nil {
+		// A bonus-funded card always carries its deadline (enforced by a CHECK
+		// constraint). The fallback exists only so a legacy row cannot silently
+		// take the cash branch, which is the branch that leaks.
+		expiry := time.Now().Add(24 * time.Hour)
+		if p.BonusExpiresAt != nil {
+			expiry = *p.BonusExpiresAt
+		}
+		return uc.bonusRepo.Restore(ctx, tx, p.UserID, amount, expiry, "game refund")
+	}
+
+	if _, err := uc.walletRepo.LockForUpdate(ctx, tx, p.UserID); err != nil {
+		return fmt.Errorf("failed to lock wallet for refund: %w", err)
+	}
+	if err := uc.walletRepo.UpdateBalance(ctx, tx, p.UserID, amount); err != nil {
+		return fmt.Errorf("failed to refund stake: %w", err)
+	}
+	refundTx := &domain.Transaction{
+		UserID:    p.UserID,
+		Type:      domain.TransactionTypeDeposit, // Refund is treated as a deposit
+		Category:  domain.TransactionCategoryRefund,
+		Amount:    amount,
+		Status:    domain.TransactionStatusCompleted,
+		Reference: ref, // GAME_REFUND — excluded from cash history
+	}
+	if err := uc.transactionRepo.Create(ctx, tx, refundTx); err != nil {
+		return fmt.Errorf("failed to record refund: %w", err)
+	}
+	return nil
 }
 
 // CleanupEmptyGames cancels WAITING/COUNTDOWN games that have no active players
@@ -373,21 +418,11 @@ func (uc *GameUseCase) LeaveGame(ctx context.Context, gameID uuid.UUID, req doma
 			continue
 		}
 
-		// Refund this card's stake only if it was actually charged.
+		// Refund this card's stake only if it was actually charged, and back to
+		// whichever purse paid for it (bonus stays bonus).
 		if p.Paid {
-			if err := uc.walletRepo.UpdateBalance(ctx, tx, req.UserID, game.BetAmount); err != nil {
-				return fmt.Errorf("failed to refund: %w", err)
-			}
-			transaction := &domain.Transaction{
-				UserID:    req.UserID,
-				Type:      domain.TransactionTypeDeposit, // Refund is treated as deposit
-				Category:  domain.TransactionCategoryRefund,
-				Amount:    game.BetAmount,
-				Status:    domain.TransactionStatusCompleted,
-				Reference: &gameRefundRef, // Mark as game refund to exclude from deposit history
-			}
-			if err := uc.transactionRepo.Create(ctx, tx, transaction); err != nil {
-				return fmt.Errorf("failed to create refund transaction: %w", err)
+			if err := uc.refundCardStake(ctx, tx, p, game.BetAmount, &gameRefundRef); err != nil {
+				return err
 			}
 		}
 	}
@@ -581,9 +616,29 @@ func (uc *GameUseCase) startDrawing(ctx context.Context, gameID uuid.UUID) {
 		if err != nil {
 			return
 		}
-		cost := float64(count) * game.BetAmount
-		if wallet.Balance < cost {
-			// Can't pay: release all of this player's reserved cards.
+		// Play-only bonus pays first, in whole cards. Deciding the split BEFORE
+		// spending anything matters: consuming bonus and only then finding the
+		// player short of cash for the remainder would strand the bonus on a
+		// card they never got. The grant rows are locked by this read, so the
+		// figure cannot move between here and the consume below.
+		bonusCards := 0
+		var bonusExpiry *time.Time
+		if uc.bonusRepo != nil {
+			available, berr := uc.bonusRepo.SpendableForUpdate(ctx, tx, userID)
+			if berr != nil {
+				return
+			}
+			bonusCards = int(available / game.BetAmount)
+			if bonusCards > count {
+				bonusCards = count
+			}
+		}
+
+		cashCards := count - bonusCards
+		cashCost := float64(cashCards) * game.BetAmount
+		if wallet.Balance < cashCost {
+			// Can't pay: release all of this player's reserved cards. No bonus
+			// has been consumed yet, so there is nothing to unwind.
 			for _, p := range active {
 				if p.UserID == userID && !p.Paid {
 					if _, err := uc.gameRepo.RemovePlayerCard(ctx, tx, gameID, userID, p.CardID); err != nil {
@@ -594,15 +649,43 @@ func (uc *GameUseCase) startDrawing(ctx context.Context, gameID uuid.UUID) {
 			}
 			continue
 		}
-		// Deduct the total stake and record one bet transaction per card.
-		if err := uc.walletRepo.UpdateBalance(ctx, tx, userID, -cost); err != nil {
-			return
+
+		if bonusCards > 0 {
+			paid, expiry, berr := uc.bonusRepo.ConsumeForStake(ctx, tx, userID, game.BetAmount, bonusCards)
+			if berr != nil {
+				return
+			}
+			// Defensive: the locked read above should make these agree. If they
+			// ever diverge, charge the difference as cash rather than letting
+			// the player hold cards nobody paid for.
+			bonusCards = paid
+			bonusExpiry = expiry
+			cashCards = count - bonusCards
+			cashCost = float64(cashCards) * game.BetAmount
+			if wallet.Balance < cashCost {
+				return
+			}
+		}
+
+		// Deduct the cash portion and record one bet transaction per card.
+		if cashCost > 0 {
+			if err := uc.walletRepo.UpdateBalance(ctx, tx, userID, -cashCost); err != nil {
+				return
+			}
 		}
 		for i := 0; i < count; i++ {
+			// Bonus-funded stakes carry their own category so promotional
+			// turnover can be told apart from cash turnover in reporting. The
+			// GAME_ reference is unchanged, so both stay out of the player's
+			// cash history exactly as before.
+			category := domain.TransactionCategoryBet
+			if i < bonusCards {
+				category = domain.TransactionCategoryBonusStake
+			}
 			betTx := &domain.Transaction{
 				UserID:    userID,
 				Type:      domain.TransactionTypeWithdraw,
-				Category:  domain.TransactionCategoryBet,
+				Category:  category,
 				Amount:    game.BetAmount,
 				Status:    domain.TransactionStatusCompleted,
 				Reference: &gameBetRef,
@@ -613,6 +696,13 @@ func (uc *GameUseCase) startDrawing(ctx context.Context, gameID uuid.UUID) {
 		}
 		if _, err := uc.gameRepo.MarkUserCardsPaidTx(ctx, tx, gameID, userID); err != nil {
 			return
+		}
+		// Record which cards the bonus bought, and under whose deadline, so a
+		// refund returns them as bonus rather than as withdrawable cash.
+		if bonusCards > 0 && bonusExpiry != nil {
+			if _, err := uc.gameRepo.MarkCardsBonusFundedTx(ctx, tx, gameID, userID, bonusCards, *bonusExpiry); err != nil {
+				return
+			}
 		}
 	}
 
@@ -1158,22 +1248,9 @@ func (uc *GameUseCase) ClaimBingo(ctx context.Context, gameID uuid.UUID, req dom
 			// Returning rolls back the cancellation with the refunds, so the
 			// game stays live and the claim can be retried.
 			for _, p := range players {
-				if _, err := uc.walletRepo.LockForUpdate(ctx, tx, p.UserID); err != nil {
-					return false, fmt.Errorf("failed to lock wallet for refund: %w", err)
-				}
-				if err := uc.walletRepo.UpdateBalance(ctx, tx, p.UserID, game.BetAmount); err != nil {
-					return false, fmt.Errorf("failed to refund stake: %w", err)
-				}
-				refundTx := &domain.Transaction{
-					UserID:    p.UserID,
-					Type:      domain.TransactionTypeDeposit,
-					Category:  domain.TransactionCategoryRefund,
-					Amount:    game.BetAmount,
-					Status:    domain.TransactionStatusCompleted,
-					Reference: &gameRefundRef, // Mark as game refund
-				}
-				if err := uc.transactionRepo.Create(ctx, tx, refundTx); err != nil {
-					return false, fmt.Errorf("failed to record refund: %w", err)
+				// Routes bonus-funded stakes back to bonus rather than cash.
+				if err := uc.refundCardStake(ctx, tx, p, game.BetAmount, &gameRefundRef); err != nil {
+					return false, err
 				}
 			}
 		}
@@ -1418,23 +1495,8 @@ func (uc *GameUseCase) cancelGameAndRefund(ctx context.Context, gameID uuid.UUID
 			continue
 		}
 
-		if _, err := uc.walletRepo.LockForUpdate(ctx, tx, p.UserID); err != nil {
-			return nil, 0, 0, fmt.Errorf("failed to lock wallet for refund: %w", err)
-		}
-		if err := uc.walletRepo.UpdateBalance(ctx, tx, p.UserID, game.BetAmount); err != nil {
-			return nil, 0, 0, fmt.Errorf("failed to refund stake: %w", err)
-		}
-
-		refundTx := &domain.Transaction{
-			UserID:    p.UserID,
-			Type:      domain.TransactionTypeDeposit, // Refund is treated as a deposit
-			Category:  domain.TransactionCategoryRefund,
-			Amount:    game.BetAmount,
-			Status:    domain.TransactionStatusCompleted,
-			Reference: &refundRef, // Mark as game refund to exclude from deposit history
-		}
-		if err := uc.transactionRepo.Create(ctx, tx, refundTx); err != nil {
-			return nil, 0, 0, fmt.Errorf("failed to record refund: %w", err)
+		if err := uc.refundCardStake(ctx, tx, p, game.BetAmount, &refundRef); err != nil {
+			return nil, 0, 0, err
 		}
 
 		refundedCount++

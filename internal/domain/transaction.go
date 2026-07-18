@@ -41,6 +41,13 @@ const (
 	TransactionCategoryAdminCredit TransactionCategory = "admin_credit" // manual balance increase by an admin
 	TransactionCategoryAdminDebit  TransactionCategory = "admin_debit"  // manual balance decrease by an admin
 	TransactionCategoryBotFunding  TransactionCategory = "bot_funding"  // house money injected to bankroll a bot wallet
+	// Bonus (play-only money) movements. Kept separate from admin_credit so
+	// promotional giveaway can be reported apart from manual adjustments —
+	// previously promo bonuses were indistinguishable from admin credits.
+	TransactionCategoryBonusGrant   TransactionCategory = "bonus_grant"   // play-only bonus awarded
+	TransactionCategoryBonusStake   TransactionCategory = "bonus_stake"   // bonus spent on a card
+	TransactionCategoryBonusRefund  TransactionCategory = "bonus_refund"  // bonus-funded stake returned as bonus
+	TransactionCategoryBonusExpired TransactionCategory = "bonus_expired" // unspent bonus lapsed
 )
 
 // TransactionStatus represents the status of a transaction

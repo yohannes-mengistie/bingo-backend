@@ -133,7 +133,8 @@ func main() {
 	userUseCase := usecase.NewUserUseCase(userRepo, walletRepo, db)
 	walletUseCase := usecase.NewWalletUseCase(walletRepo, transactionRepo, userRepo, gameRepo, db, paymentVerifier)
 	authUseCase := usecase.NewAuthUseCase(userRepo, jwtService, cfg.Admin.SecretCode, cfg.Telegram.BotToken)
-	gameUseCase := usecase.NewGameUseCase(gameRepo, walletRepo, transactionRepo, userRepo, db, gameStateService)
+	bonusRepo := postgres.NewBonusRepository(db)
+	gameUseCase := usecase.NewGameUseCase(gameRepo, walletRepo, transactionRepo, userRepo, bonusRepo, db, gameStateService)
 	botUseCase := usecase.NewBotUseCase(botRepo, userRepo, walletRepo, transactionRepo, gameRepo, gameUseCase, db, usecase.BotSettings{
 		PoolSize:        cfg.Bots.PoolSize,
 		WalletFloat:     cfg.Bots.WalletFloat,
@@ -142,6 +143,7 @@ func main() {
 		JoinDelay:       time.Duration(cfg.Bots.JoinDelay) * time.Second,
 	})
 	supportUseCase := usecase.NewSupportUseCase(supportRepo)
+	bonusUseCase := usecase.NewBonusUseCase(bonusRepo, userRepo, db)
 
 	// Initialize handlers
 	userHandler := handler.NewUserHandler(userUseCase)
@@ -150,6 +152,7 @@ func main() {
 	gameHandler := handler.NewGameHandler(gameUseCase)
 	botHandler := handler.NewBotHandler(botUseCase)
 	supportHandler := handler.NewSupportHandler(supportUseCase)
+	bonusHandler := handler.NewBonusHandler(bonusUseCase)
 	wsHandler := handler.NewWebSocketHandler(redisClient.GetClient(), gameStateService, gameUseCase, allowOrigins)
 
 	// Promo codes: created by admins, redeemed through the bot menu.
@@ -161,7 +164,7 @@ func main() {
 	telegramHandler := handler.NewTelegramHandler(userUseCase, promoRepo, telegramBot, cfg.Telegram.WebhookSecret, cfg.Telegram.MiniAppURL)
 
 	// Setup router
-	router := setupRouter(userHandler, walletHandler, authHandler, gameHandler, botHandler, supportHandler, wsHandler, telegramHandler, promoHandler, jwtService, cfg.Internal.APISecret, redisClient.GetClient(), cfg.RateLimits)
+	router := setupRouter(userHandler, walletHandler, authHandler, gameHandler, botHandler, supportHandler, wsHandler, telegramHandler, promoHandler, bonusHandler, jwtService, cfg.Internal.APISecret, redisClient.GetClient(), cfg.RateLimits)
 
 	// Shared background context for the server's housekeeping goroutines,
 	// cancelled on shutdown.
@@ -241,7 +244,7 @@ func main() {
 	log.Println("Server exited")
 }
 
-func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.WalletHandler, authHandler *handler.AuthHandler, gameHandler *handler.GameHandler, botHandler *handler.BotHandler, supportHandler *handler.SupportHandler, wsHandler *handler.WebSocketHandler, telegramHandler *handler.TelegramHandler, promoHandler *handler.PromoHandler, jwtService *jwt.Service, internalAPISecret string, rdb *redis.Client, rl config.RateLimitsConfig) *gin.Engine {
+func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.WalletHandler, authHandler *handler.AuthHandler, gameHandler *handler.GameHandler, botHandler *handler.BotHandler, supportHandler *handler.SupportHandler, wsHandler *handler.WebSocketHandler, telegramHandler *handler.TelegramHandler, promoHandler *handler.PromoHandler, bonusHandler *handler.BonusHandler, jwtService *jwt.Service, internalAPISecret string, rdb *redis.Client, rl config.RateLimitsConfig) *gin.Engine {
 	// Rate-limit buckets. Auth buckets are per-IP (no user to key on yet);
 	// the money buckets sit behind AuthMiddleware and key on the user id.
 	secs := func(n int) time.Duration { return time.Duration(n) * time.Second }
@@ -393,6 +396,7 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 
 			// Wallet (self)
 			authed.GET("/me/wallet", walletHandler.GetMyWallet)
+			authed.GET("/me/bonus", bonusHandler.GetMyBonus)
 			authed.GET("/me/wallet/deposits", walletHandler.GetMyDeposits)
 			authed.GET("/me/wallet/withdrawals", walletHandler.GetMyWithdrawals)
 			authed.GET("/me/wallet/transfers", walletHandler.GetMyTransfers)
@@ -461,6 +465,17 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			{
 				stats.GET("/dashboard", walletHandler.GetDashboardStats)
 			}
+
+			// Bonus wallet: policy, grants, and the house's live liability.
+			bonus := admin.Group("/bonus")
+			{
+				bonus.GET("/config", bonusHandler.GetConfig)
+				bonus.PUT("/config", bonusHandler.UpdateConfig)
+				bonus.POST("/grant", bonusHandler.GrantBonus)
+				bonus.POST("/grant-bulk", bonusHandler.GrantBonusBulk)
+				bonus.GET("/outstanding", bonusHandler.GetOutstanding)
+			}
+			admin.GET("/users/:user_id/bonus", bonusHandler.ListUserGrants)
 
 			// Promo codes (redeemed by players through the bot menu)
 			promos := admin.Group("/promo-codes")

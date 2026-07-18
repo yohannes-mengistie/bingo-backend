@@ -112,6 +112,9 @@ type GameRepository interface {
 	// MarkUserCardsPaidTx flips a user's reserved (unpaid) active cards to paid
 	// when the countdown ends and their stake is charged. Returns rows changed.
 	MarkUserCardsPaidTx(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID) (int64, error)
+	// MarkCardsBonusFundedTx flags n of a user's cards as bought with bonus,
+	// stamping the consumed grant's expiry so a refund can honour it.
+	MarkCardsBonusFundedTx(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID, n int, expiresAt time.Time) (int64, error)
 	// RemovePlayerCard marks one specific card (game_id, user_id, card_id) as
 	// left. A player may hold several cards, so leaving is per-card. It returns
 	// the number of rows actually transitioned (0 if the card was already left),
