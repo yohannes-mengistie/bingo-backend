@@ -107,8 +107,15 @@ func (h *WalletHandler) Withdraw(c *gin.Context) {
 		} else if err.Error() == "user not found" || err.Error() == "wallet not found" {
 			statusCode = http.StatusNotFound
 		} else if err.Error() == "insufficient balance" ||
-			err.Error() == "withdrawal not allowed: remaining balance must be at least 10" ||
-			err.Error() == "withdrawal not allowed: user must have at least one completed deposit" {
+			// Match on prefix rather than the whole string. These messages
+			// interpolate constants (the balance floor, the daily cap), so an
+			// exact comparison goes stale the moment a limit moves and silently
+			// turns a plain validation rejection into a 500. That is precisely
+			// what had happened here: the text still said "at least 10" while
+			// MinBalanceAfterWithdrawal had become 50, so every player who hit
+			// the floor got a server error instead of a readable 400.
+			strings.HasPrefix(err.Error(), "withdrawal not allowed:") ||
+			strings.HasPrefix(err.Error(), "daily withdrawal limit reached") {
 			statusCode = http.StatusBadRequest
 		}
 

@@ -32,7 +32,10 @@ const TotalCards = 500
 const MaxCardsPerPlayer = 4
 
 // MinWithdrawalAmount is the smallest withdrawal a player may request (birr).
-const MinWithdrawalAmount = 10.0
+// Note this stacks with MinBalanceAfterWithdrawal below: a player needs at
+// least MinWithdrawalAmount + MinBalanceAfterWithdrawal (100) in their wallet
+// before any withdrawal is possible.
+const MinWithdrawalAmount = 50.0
 
 // MaxDailyWithdrawal caps total withdrawals per Ethiopian calendar day (birr).
 const MaxDailyWithdrawal = 2000.0

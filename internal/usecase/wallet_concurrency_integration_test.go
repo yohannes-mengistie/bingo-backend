@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/bingo/backend/internal/domain"
+	"github.com/bingo/backend/internal/repository/postgres"
 	"github.com/google/uuid"
 )
 
@@ -89,12 +90,12 @@ func TestIntegration_Withdraw_ConcurrentCannotBreachMinBalance(t *testing.T) {
 	}
 }
 
-// The subtler drain: instead of one big withdrawal, fire many small ones that
+// The subtler drain: instead of one big withdrawal, fire many smaller ones that
 // each individually pass the floor check but collectively would not. With
-// balance 200 and a floor of 50, at most 150 is withdrawable, so at most 7 of
-// ten 20-birr requests may be accepted (7*20=140 leaves 60; an 8th would leave
-// 40). If the lock were dropped, several would read 200 concurrently and all
-// pass, draining below the floor.
+// balance 200, a floor of 50 and a 50-birr minimum request, at most 150 is
+// withdrawable, so at most 3 of ten requests may be accepted (3*50=150 leaves
+// exactly the floor; a 4th would leave 0). If the lock were dropped, several
+// would read 200 concurrently and all pass, draining below the floor.
 func TestIntegration_Withdraw_ConcurrentSmallDrainsRespectFloor(t *testing.T) {
 	h := newHarness(t)
 	defer h.cleanup()
@@ -103,12 +104,12 @@ func TestIntegration_Withdraw_ConcurrentSmallDrainsRespectFloor(t *testing.T) {
 	h.addCompletedDeposit(userID, 200, "RACE2")
 	h.setBalance(userID, 200)
 
-	const each = 20.0
+	each := domain.MinWithdrawalAmount // smallest a player may request
 	ok, errs := concurrentWithdrawals(t, h.walletUC(), userID, 10, each)
 
-	maxAllowed := 7 // (200 - 50) / 20, floored
+	maxAllowed := int((200 - domain.MinBalanceAfterWithdrawal) / each)
 	if ok > maxAllowed {
-		t.Fatalf("%d of 10 concurrent 20-birr withdrawals succeeded, at most %d may (errors: %v)", ok, maxAllowed, errs)
+		t.Fatalf("%d of 10 concurrent %.0f-birr withdrawals succeeded, at most %d may (errors: %v)", ok, each, maxAllowed, errs)
 	}
 
 	final := h.balance(userID)
@@ -130,6 +131,66 @@ func TestIntegration_Withdraw_ConcurrentSmallDrainsRespectFloor(t *testing.T) {
 	}
 	if pending != float64(ok)*each {
 		t.Fatalf("ledger shows %.2f withdrawn but %d requests were accepted (%.2f)", pending, ok, float64(ok)*each)
+	}
+}
+
+// Rejecting a withdrawal refunds it, so a double reject would double-credit —
+// an admin double-clicking the button, or a client retry on a slow response.
+// The guard is inside transactionRepository.UpdateStatus, whose UPDATE is
+// conditional on the row still being 'pending'; the loser updates 0 rows,
+// errors, and rolls back its refund with it. The pre-check in RejectWithdrawal
+// happens before BeginTx and cannot be the thing protecting this, so it is
+// worth pinning that the conditional UPDATE really is load-bearing.
+func TestIntegration_RejectWithdrawal_ConcurrentRefundsOnlyOnce(t *testing.T) {
+	h := newHarness(t)
+	defer h.cleanup()
+
+	userID := h.seedUser("RejectRace", 7704)
+	h.addCompletedDeposit(userID, 200, "RACE4")
+	h.setBalance(userID, 200)
+
+	withdrawal, err := h.walletUC().Withdraw(context.Background(), domain.WithdrawRequest{
+		UserID:        userID,
+		Amount:        100,
+		AccountNumber: withdrawalTestPhone,
+		AccountType:   domain.PaymentMethodTelebirr,
+	})
+	if err != nil {
+		t.Fatalf("seed withdrawal: %v", err)
+	}
+	if got := h.balance(userID); got != 100 {
+		t.Fatalf("balance after withdrawal = %.2f, want 100", got)
+	}
+
+	svc := postgres.NewTransactionService(h.db, postgres.NewWalletRepository(h.db), postgres.NewTransactionRepository(h.db))
+
+	var (
+		start sync.WaitGroup
+		done  sync.WaitGroup
+		mu    sync.Mutex
+		ok    int
+	)
+	start.Add(1)
+	for i := 0; i < 5; i++ {
+		done.Add(1)
+		go func() {
+			defer done.Done()
+			start.Wait()
+			if _, err := svc.RejectWithdrawal(context.Background(), withdrawal.ID); err == nil {
+				mu.Lock()
+				ok++
+				mu.Unlock()
+			}
+		}()
+	}
+	start.Done()
+	done.Wait()
+
+	if ok != 1 {
+		t.Fatalf("%d of 5 concurrent rejects succeeded, want exactly 1 — the refund was applied more than once", ok)
+	}
+	if got := h.balance(userID); got != 200 {
+		t.Fatalf("balance = %.2f after concurrent rejects, want 200 (refunded exactly once)", got)
 	}
 }
 
