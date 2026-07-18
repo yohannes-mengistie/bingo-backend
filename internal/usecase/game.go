@@ -256,11 +256,26 @@ func (uc *GameUseCase) JoinGame(ctx context.Context, gameID uuid.UUID, req domai
 	// Reservation model: the stake is NOT charged now. Picking a card only
 	// reserves it during the pre-game window; every reserved card is charged
 	// together when the countdown ends and the game actually starts (see
-	// commitReservations in startDrawing). We still verify the wallet can cover
-	// ALL of this player's reserved cards, so nobody reserves cards they can't
-	// pay for and blocks them from others. existingCardCount excludes the card
-	// being added, so the +1 accounts for it.
-	if wallet.Balance < float64(existingCardCount+1)*game.BetAmount {
+	// commitReservations in startDrawing). We still verify the player can cover
+	// ALL of their reserved cards, so nobody reserves cards they can't pay for
+	// and blocks them from others. existingCardCount excludes the card being
+	// added, so the +1 accounts for it.
+	//
+	// The check must count play-only bonus as well as cash, because that is
+	// what the charge itself does: bonus pays for whole cards first and cash
+	// covers the rest. Testing cash alone refused a player holding 8 birr and a
+	// 50 birr bonus a 10 birr card — locked out of exactly what the bonus was
+	// granted for, with a "top up your wallet" message while their bonus sat
+	// unused.
+	spendable := wallet.Balance
+	if uc.bonusRepo != nil {
+		bonusAvailable, berr := uc.bonusRepo.SpendableForUpdate(ctx, tx, req.UserID)
+		if berr != nil {
+			return nil, fmt.Errorf("failed to read bonus balance: %w", berr)
+		}
+		spendable += bonusAvailable
+	}
+	if spendable < float64(existingCardCount+1)*game.BetAmount {
 		return nil, errors.New("insufficient balance")
 	}
 

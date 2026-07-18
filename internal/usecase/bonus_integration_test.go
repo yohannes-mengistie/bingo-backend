@@ -6,6 +6,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/bingo/backend/internal/domain"
 	"github.com/google/uuid"
 )
 
@@ -324,5 +325,58 @@ func TestIntegration_Bonus_NotConsumedWhenCashShort(t *testing.T) {
 	}
 	if got := h.activeCardCount(gameID, user); got != 0 {
 		t.Fatalf("%d cards still active, want 0 — unfunded cards must be released", got)
+	}
+}
+
+// The bug a live player hit: 8 birr cash, 50 birr bonus, refused a 10 birr
+// card with "top up your wallet" while the bonus sat unused. Reservation
+// checks affordability, and it has to count bonus because the charge does.
+func TestIntegration_Bonus_CanReserveCardWithBonusAndLowCash(t *testing.T) {
+	h := newHarness(t)
+	defer h.cleanup()
+	ctx := context.Background()
+
+	user := h.seedUser("BonusLowCash", 9117)
+	h.setBalance(user, 8) // less than one card
+	h.grantBonus(user, 50, 7)
+
+	gameID := h.seedWaitingGame()
+
+	if _, err := h.uc.JoinGame(ctx, gameID, domain.JoinGameRequest{UserID: user, CardID: 91}); err != nil {
+		t.Fatalf("reserving a card the bonus can pay for was refused: %v", err)
+	}
+	// A second card is still covered (20 total vs 58 spendable).
+	if _, err := h.uc.JoinGame(ctx, gameID, domain.JoinGameRequest{UserID: user, CardID: 92}); err != nil {
+		t.Fatalf("second card refused: %v", err)
+	}
+
+	// Reserving must not have moved any money — neither purse.
+	if got := h.balance(user); got != 8 {
+		t.Fatalf("cash = %.2f after reserving, want 8 — reservations charge nothing", got)
+	}
+	if got := h.bonusBalance(user); got != 50 {
+		t.Fatalf("bonus = %.2f after reserving, want 50 — reservations charge nothing", got)
+	}
+}
+
+// The limit still bites once cash AND bonus are both exhausted, so a player
+// cannot reserve cards nobody can pay for and block them from others.
+func TestIntegration_Bonus_ReservationStillRefusedBeyondCombinedFunds(t *testing.T) {
+	h := newHarness(t)
+	defer h.cleanup()
+	ctx := context.Background()
+
+	user := h.seedUser("BonusCombinedCap", 9118)
+	h.setBalance(user, 5)
+	h.grantBonus(user, 15, 7) // 20 total => two cards at 10, not three
+
+	gameID := h.seedWaitingGame()
+	for _, card := range []int{93, 94} {
+		if _, err := h.uc.JoinGame(ctx, gameID, domain.JoinGameRequest{UserID: user, CardID: card}); err != nil {
+			t.Fatalf("card %d should be affordable: %v", card, err)
+		}
+	}
+	if _, err := h.uc.JoinGame(ctx, gameID, domain.JoinGameRequest{UserID: user, CardID: 95}); err == nil {
+		t.Fatal("a third card was allowed on 20 birr of combined funds")
 	}
 }
