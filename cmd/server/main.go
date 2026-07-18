@@ -139,6 +139,7 @@ func main() {
 		WalletFloat:     cfg.Bots.WalletFloat,
 		MaxJoinsPerTick: cfg.Bots.MaxJoinsPerTick,
 		CheckInterval:   time.Duration(cfg.Bots.CheckInterval) * time.Second,
+		JoinDelay:       time.Duration(cfg.Bots.JoinDelay) * time.Second,
 	})
 	supportUseCase := usecase.NewSupportUseCase(supportRepo)
 

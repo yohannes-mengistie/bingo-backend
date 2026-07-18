@@ -76,6 +76,7 @@ type BotSettings struct {
 	PoolSize        int           // how many bot accounts to seed
 	WalletFloat     float64       // balance each bot wallet is topped up to
 	MaxJoinsPerTick int           // bots added per game per sweep (spaces out joins)
+	JoinDelay       time.Duration // hold bots back this long after the first real player joins
 	CheckInterval   time.Duration // how often the auto-filler sweeps
 }
 
@@ -405,6 +406,27 @@ func (uc *BotUseCase) freeCards(ctx context.Context, gameID uuid.UUID) ([]int, e
 
 // ---- Auto-fill sweeper ----
 
+// joinDelayFor returns how long bots must hold off after the first real player
+// sat down in this game.
+//
+// Without it the sweeper fills the moment someone joins, so a player watches
+// five strangers appear within a second of picking their card — nobody arrives
+// that promptly, and it is the clearest tell that the room is padded.
+//
+// The wait is jittered per game rather than fixed, because "exactly N seconds,
+// every time" is itself a recognisable pattern to anyone who plays more than a
+// few rounds. The jitter is derived from the game id, so it is stable across
+// sweeps of the same game (the delay cannot wobble tick to tick) while
+// differing between games. Range is [delay, delay*1.5).
+func (uc *BotUseCase) joinDelayFor(gameID uuid.UUID) time.Duration {
+	base := uc.settings.JoinDelay
+	if base <= 0 {
+		return 0
+	}
+	spread := float64(gameID[0]) / 256.0 // 0.0 .. ~1.0, fixed per game
+	return base + time.Duration(float64(base)*0.5*spread)
+}
+
 // Run drives the automatic filler until ctx is cancelled. Each tick it reads the
 // admin policy and, for every WAITING/COUNTDOWN game in the configured tiers
 // that has at least one real player but fewer than min_real_players, adds bots
@@ -450,6 +472,18 @@ func (uc *BotUseCase) sweep(ctx context.Context) {
 			if err != nil || realPlayers < floor {
 				continue
 			}
+
+			// Let the room breathe before anyone "arrives". See joinDelayFor.
+			if delay := uc.joinDelayFor(game.ID); delay > 0 {
+				age, hasReal, err := uc.botRepo.SecondsSinceFirstRealPlayer(ctx, game.ID)
+				if err != nil || !hasReal {
+					continue
+				}
+				if time.Duration(age*float64(time.Second)) < delay {
+					continue // still too soon — try again on a later tick
+				}
+			}
+
 			botPlayers, err := uc.botRepo.CountBotsInGame(ctx, game.ID)
 			if err != nil {
 				continue

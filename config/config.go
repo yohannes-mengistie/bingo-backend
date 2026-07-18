@@ -69,6 +69,7 @@ type BotsConfig struct {
 	WalletFloat     float64 // house money each bot wallet is topped up to (birr)
 	MaxJoinsPerTick int     // bots added per game per sweep (spaces out joins)
 	CheckInterval   int     // seconds between auto-fill sweeps
+	JoinDelay       int     // seconds to hold bots back after the first real player joins
 }
 
 // InternalConfig gates the server-to-server ("bot-facing") /user, /wallet and
@@ -184,6 +185,7 @@ func Load() (*Config, error) {
 			WalletFloat:     float64(getEnvInt("BOT_WALLET_FLOAT", 1000)),
 			MaxJoinsPerTick: getEnvInt("BOT_MAX_JOINS_PER_TICK", 5),
 			CheckInterval:   getEnvInt("BOT_CHECK_INTERVAL_SECONDS", 5),
+			JoinDelay:       getEnvInt("BOT_JOIN_DELAY_SECONDS", 12),
 		},
 		RateLimits: RateLimitsConfig{
 			// Per-IP, so a blunt instrument here (see the type comment): the

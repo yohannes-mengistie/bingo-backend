@@ -79,6 +79,11 @@ type BotRepository interface {
 	CountRealPlayersInGame(ctx context.Context, gameID uuid.UUID) (int, error)
 	// CountBotsInGame counts distinct bot users still active in a game.
 	CountBotsInGame(ctx context.Context, gameID uuid.UUID) (int, error)
+	// SecondsSinceFirstRealPlayer reports how long ago the earliest still-active
+	// real player joined, and whether the game has one at all. Used to hold bots
+	// back for a moment after someone sits down. Computed in the database so it
+	// does not depend on the app clock agreeing with Postgres'.
+	SecondsSinceFirstRealPlayer(ctx context.Context, gameID uuid.UUID) (float64, bool, error)
 	// GetConfig returns the single policy row.
 	GetConfig(ctx context.Context) (*BotConfig, error)
 	// UpdateConfig persists the policy row.
