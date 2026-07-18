@@ -31,7 +31,6 @@ type WalletRepository interface {
 	FindByUserID(ctx context.Context, userID uuid.UUID) (*Wallet, error)
 	UpdateBalance(ctx context.Context, tx *sql.Tx, userID uuid.UUID, amount float64) error
 	LockForUpdate(ctx context.Context, tx *sql.Tx, userID uuid.UUID) (*Wallet, error)
-	Update(ctx context.Context, wallet *Wallet) error
 	GetTotalBalance(ctx context.Context) (float64, error)
 }
 

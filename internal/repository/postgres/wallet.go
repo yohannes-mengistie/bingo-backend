@@ -140,40 +140,6 @@ func (r *walletRepository) UpdateBalance(ctx context.Context, tx *sql.Tx, userID
 }
 
 // Update updates a wallet
-func (r *walletRepository) Update(ctx context.Context, wallet *domain.Wallet) error {
-	query := `
-		UPDATE wallets
-		SET balance = $2, demo_balance = $3, updated_at = $4
-		WHERE user_id = $1
-	`
-
-	wallet.UpdatedAt = time.Now()
-
-	result, err := r.db.ExecContext(
-		ctx,
-		query,
-		wallet.UserID,
-		wallet.Balance,
-		wallet.DemoBalance,
-		wallet.UpdatedAt,
-	)
-
-	if err != nil {
-		return fmt.Errorf("failed to update wallet: %w", err)
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
-
-	if rowsAffected == 0 {
-		return fmt.Errorf("wallet not found")
-	}
-
-	return nil
-}
-
 // GetTotalBalance calculates the sum of all wallet balances
 func (r *walletRepository) GetTotalBalance(ctx context.Context) (float64, error) {
 	// Exclude filler-bot wallets: their balance is house float, not real
