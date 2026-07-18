@@ -29,10 +29,20 @@ type Config struct {
 // The player-facing buckets are keyed on the authenticated user id rather than
 // the IP (see middleware.RateLimit), so they can be tight without punishing the
 // many subscribers an Ethiopian mobile carrier puts behind one NAT address.
-// The auth buckets have no user to key on yet and are necessarily per-IP, so
-// they are deliberately looser than a brute-force limit would otherwise be —
-// tight enough to stop credential stuffing, loose enough that a shared carrier
-// address is not locked out by one bad actor.
+//
+// The per-IP buckets are necessarily loose, because measurement against the
+// live service showed client addresses here are unreliable in BOTH directions:
+//   - many subscribers share one carrier NAT address, so a bucket is shared by
+//     strangers and a tight limit locks out bystanders; and
+//   - a single client's address ROTATES between requests. Eight consecutive
+//     calls from one machine arrived as 196.191.60.129, 152.233.56.193 and
+//     152.233.56.194.
+//
+// So a per-IP limit both over-counts (shared) and under-counts (rotating). It
+// is worth having as a blunt cost on automated abuse, but it is not a reliable
+// per-actor control and must not be sized as though it were. Anything that
+// needs to actually bind to one actor should key on the user id, or on the
+// submitted identifier where there is no session yet.
 type RateLimitsConfig struct {
 	LoginLimit         int // per-IP: admin password login
 	LoginWindow        int
@@ -176,9 +186,13 @@ func Load() (*Config, error) {
 			CheckInterval:   getEnvInt("BOT_CHECK_INTERVAL_SECONDS", 5),
 		},
 		RateLimits: RateLimitsConfig{
-			// Per-IP. 10 attempts per 15 min stops credential stuffing while
-			// leaving room for an admin fumbling a password behind shared NAT.
-			LoginLimit:  getEnvInt("RL_LOGIN_LIMIT", 10),
+			// Per-IP, so a blunt instrument here (see the type comment): the
+			// bucket is shared by everyone behind a carrier NAT, and a single
+			// attacker's address rotates anyway. Sized to make scripted
+			// credential stuffing costly without locking out the admins who
+			// share an address with them. Binding brute-force protection to a
+			// specific ACCOUNT wants a per-identifier bucket, not this.
+			LoginLimit:  getEnvInt("RL_LOGIN_LIMIT", 50),
 			LoginWindow: getEnvInt("RL_LOGIN_WINDOW_SECONDS", 900),
 			// Per-IP. Creating an admin is the highest-value action here and
 			// legitimately happens a handful of times ever.
@@ -187,7 +201,7 @@ func Load() (*Config, error) {
 			// Per-IP, and the one bucket a whole carrier shares — every Mini
 			// App open hits it, so it is generous on purpose. It exists to
 			// blunt initData forgery attempts, not to pace normal use.
-			TelegramAuthLimit:  getEnvInt("RL_TELEGRAM_AUTH_LIMIT", 120),
+			TelegramAuthLimit:  getEnvInt("RL_TELEGRAM_AUTH_LIMIT", 300),
 			TelegramAuthWindow: getEnvInt("RL_TELEGRAM_AUTH_WINDOW_SECONDS", 60),
 			// Per-user from here down, so these are about one account's
 			// behaviour and NAT is irrelevant.
@@ -197,7 +211,7 @@ func Load() (*Config, error) {
 			WithdrawWindow:  getEnvInt("RL_WITHDRAW_WINDOW_SECONDS", 60),
 			TransferLimit:   getEnvInt("RL_TRANSFER_LIMIT", 10),
 			TransferWindow:  getEnvInt("RL_TRANSFER_WINDOW_SECONDS", 60),
-			WebSocketLimit:  getEnvInt("RL_WEBSOCKET_LIMIT", 60),
+			WebSocketLimit:  getEnvInt("RL_WEBSOCKET_LIMIT", 300),
 			WebSocketWindow: getEnvInt("RL_WEBSOCKET_WINDOW_SECONDS", 60),
 		},
 	}

@@ -58,9 +58,17 @@ func resolveAllowedOrigins() []string {
 func resolveTrustedProxies() []string {
 	proxies := []string{
 		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", // RFC1918
-		"100.64.0.0/10", // CGNAT, used by several platform networks
+		"100.64.0.0/10", // CGNAT — Railway reaches containers from 100.64.0.0/10
 		"127.0.0.1/32",
-		"fd00::/8", "::1/128", // IPv6 ULA (Railway private networking) + loopback
+		"fd00::/8", "::1/128", // IPv6 ULA + loopback
+		// Railway's public edge, which appends the caller to X-Forwarded-For.
+		// Without this the right-most hop is untrusted and gin stops there, so
+		// ClientIP returns the edge address and every caller collapses into a
+		// single bucket. Confirmed in production via /debug/client-ip:
+		// RemoteAddr 100.64.0.3, XFF "<caller>, 79.127.178.81".
+		// If Railway ever changes this range the symptom is per-IP limits
+		// biting far too early — check /debug/client-ip first.
+		"79.127.178.0/24",
 	}
 	if env := os.Getenv("TRUSTED_PROXIES"); env != "" {
 		proxies = proxies[:0]
