@@ -392,9 +392,7 @@ func (s *TransactionService) ProcessWithdrawal(ctx context.Context, userID uuid.
 	// Enforce the per-day withdrawal cap (Ethiopian calendar day). Count
 	// withdrawals that still hold money — pending or completed; rejected/cancelled
 	// ones were refunded, so they don't count against the cap.
-	eat := time.FixedZone("EAT", 3*60*60)
-	nowEAT := time.Now().In(eat)
-	dayStart := time.Date(nowEAT.Year(), nowEAT.Month(), nowEAT.Day(), 0, 0, 0, 0, eat).UTC()
+	dayStart := ethiopianDayStart(time.Now(), time.Local)
 	var todayTotal float64
 	dailyQuery := `
 		SELECT COALESCE(SUM(amount), 0)
@@ -524,4 +522,30 @@ func (s *TransactionService) ProcessTransfer(ctx context.Context, senderID, rece
 	}
 
 	return senderTransaction, receiverTransaction, nil
+}
+
+// ethiopianDayStart returns midnight of the current Ethiopian calendar day
+// (UTC+3), expressed in the SAME wall-clock frame that timestamps are written
+// in — which is why it takes `local` rather than assuming one.
+//
+// transactions.created_at is `timestamp without time zone` and is written by
+// the application (transactionRepository.Create uses time.Now()), so the driver
+// discards the offset and the column stores the app's LOCAL wall clock. A
+// day-boundary computed in a different frame than the stored values silently
+// slides the window.
+//
+// This previously ended in .UTC(), which is correct only while the app process
+// happens to run in UTC — true in production today purely because the runtime
+// image is bare alpine with no tzdata and no TZ set, so Go falls back to UTC.
+// Setting TZ, or adding tzdata for some unrelated reason, would have shifted
+// the daily withdrawal window by three hours with nothing to indicate it: the
+// window would have started at 21:00 the previous evening, so a player's late
+// withdrawals from yesterday would count against today's cap and block them
+// early. Converting into `local` instead is correct whatever the process
+// timezone is, and makes a development machine behave like production.
+func ethiopianDayStart(now time.Time, local *time.Location) time.Time {
+	eat := time.FixedZone("EAT", 3*60*60)
+	nowEAT := now.In(eat)
+	midnightEAT := time.Date(nowEAT.Year(), nowEAT.Month(), nowEAT.Day(), 0, 0, 0, 0, eat)
+	return midnightEAT.In(local)
 }
