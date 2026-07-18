@@ -28,6 +28,16 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// telegramBroadcastSender adapts the Telegram bot to the narrow interface a
+// broadcast needs (plain text, one chat). Keeping the adapter here rather than
+// widening the domain interface means `domain` never imports the bot package,
+// and the send loop stays testable against a fake.
+type telegramBroadcastSender struct{ bot *telegram.Bot }
+
+func (s telegramBroadcastSender) SendMessage(chatID int64, text string) error {
+	return s.bot.SendMessage(chatID, text, nil)
+}
+
 // resolveAllowedOrigins returns the browser origins permitted to reach this
 // API. ALLOWED_ORIGINS (comma-separated) overrides the defaults, so moving the
 // frontends to a new host is an env change, not a code change.
@@ -163,8 +173,13 @@ func main() {
 	telegramBot := telegram.NewBot(cfg.Telegram.BotToken)
 	telegramHandler := handler.NewTelegramHandler(userUseCase, promoRepo, telegramBot, cfg.Telegram.WebhookSecret, cfg.Telegram.MiniAppURL)
 
+	// Admin broadcasts over the same bot token as the game's own messages.
+	broadcastRepo := postgres.NewBroadcastRepository(db)
+	broadcastUseCase := usecase.NewBroadcastUseCase(broadcastRepo, telegramBroadcastSender{bot: telegramBot})
+	broadcastHandler := handler.NewBroadcastHandler(broadcastUseCase)
+
 	// Setup router
-	router := setupRouter(userHandler, walletHandler, authHandler, gameHandler, botHandler, supportHandler, wsHandler, telegramHandler, promoHandler, bonusHandler, jwtService, cfg.Internal.APISecret, redisClient.GetClient(), cfg.RateLimits)
+	router := setupRouter(userHandler, walletHandler, authHandler, gameHandler, botHandler, supportHandler, wsHandler, telegramHandler, promoHandler, bonusHandler, broadcastHandler, jwtService, cfg.Internal.APISecret, redisClient.GetClient(), cfg.RateLimits)
 
 	// Shared background context for the server's housekeeping goroutines,
 	// cancelled on shutdown.
@@ -244,7 +259,7 @@ func main() {
 	log.Println("Server exited")
 }
 
-func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.WalletHandler, authHandler *handler.AuthHandler, gameHandler *handler.GameHandler, botHandler *handler.BotHandler, supportHandler *handler.SupportHandler, wsHandler *handler.WebSocketHandler, telegramHandler *handler.TelegramHandler, promoHandler *handler.PromoHandler, bonusHandler *handler.BonusHandler, jwtService *jwt.Service, internalAPISecret string, rdb *redis.Client, rl config.RateLimitsConfig) *gin.Engine {
+func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.WalletHandler, authHandler *handler.AuthHandler, gameHandler *handler.GameHandler, botHandler *handler.BotHandler, supportHandler *handler.SupportHandler, wsHandler *handler.WebSocketHandler, telegramHandler *handler.TelegramHandler, promoHandler *handler.PromoHandler, bonusHandler *handler.BonusHandler, broadcastHandler *handler.BroadcastHandler, jwtService *jwt.Service, internalAPISecret string, rdb *redis.Client, rl config.RateLimitsConfig) *gin.Engine {
 	// Rate-limit buckets. Auth buckets are per-IP (no user to key on yet);
 	// the money buckets sit behind AuthMiddleware and key on the user id.
 	secs := func(n int) time.Duration { return time.Duration(n) * time.Second }
@@ -476,6 +491,12 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 				bonus.GET("/outstanding", bonusHandler.GetOutstanding)
 			}
 			admin.GET("/users/:user_id/bonus", bonusHandler.ListUserGrants)
+
+			// Telegram broadcasts to every registered player.
+			admin.POST("/broadcast", broadcastHandler.Send)
+			admin.GET("/broadcast/audience", broadcastHandler.Audience)
+			admin.GET("/broadcast/:id", broadcastHandler.Get)
+			admin.GET("/broadcasts", broadcastHandler.List)
 
 			// Promo codes (redeemed by players through the bot menu)
 			promos := admin.Group("/promo-codes")
