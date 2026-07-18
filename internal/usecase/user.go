@@ -30,8 +30,17 @@ func NewUserUseCase(userRepo domain.UserRepository, walletRepo domain.WalletRepo
 
 // CreateUser creates a new user and wallet together in a transaction
 func (uc *UserUseCase) CreateUser(ctx context.Context, req domain.CreateUserRequest) (*domain.User, *domain.Wallet, error) {
-	// Normalize phone number
-	normalizedPhone := utils.NormalizePhoneNumber(req.Phone)
+	// Store the phone in the canonical 251XXXXXXXXX form. This must match what
+	// Login and the withdrawal payout path use (CanonicalEthiopianPhone), or a
+	// number registered as 0911... is stored as 911... and never matches the
+	// 251911... a login looks up — the account becomes unreachable by phone and
+	// the duplicate check silently misses it. Validation is centralized here
+	// rather than left to each caller: the Telegram handler already checked,
+	// but the plain HTTP registration endpoint did not.
+	if !utils.IsEthiopianMobile(req.Phone) {
+		return nil, nil, errors.New("phone must be a valid Ethiopian mobile number")
+	}
+	normalizedPhone := utils.CanonicalEthiopianPhone(req.Phone)
 
 	// Check if user with this telegram ID already exists
 	existingUser, err := uc.userRepo.FindByTelegramID(ctx, req.TelegramID)
@@ -179,9 +188,11 @@ func (uc *UserUseCase) MakeAdmin(ctx context.Context, userID uuid.UUID, password
 	return uc.userRepo.SetAdminCredentialsByID(ctx, userID, hashed)
 }
 
-// FindUserByPhone finds a user by their phone number (normalizes the phone first)
+// FindUserByPhone finds a user by their phone number, canonicalizing it first
+// so any accepted input shape (0911..., 251911..., +251 911..., 911...)
+// resolves to the single stored form.
 func (uc *UserUseCase) FindUserByPhone(ctx context.Context, phone string) (*domain.User, error) {
-	normalizedPhone := utils.NormalizePhoneNumber(phone)
+	normalizedPhone := utils.CanonicalEthiopianPhone(phone)
 	user, err := uc.userRepo.FindByPhone(ctx, normalizedPhone)
 	if err != nil {
 		return nil, err

@@ -27,12 +27,34 @@ import (
 	_ "github.com/lib/pq"
 )
 
+// resolveAllowedOrigins returns the browser origins permitted to reach this
+// API. ALLOWED_ORIGINS (comma-separated) overrides the defaults, so moving the
+// frontends to a new host is an env change, not a code change.
+//
+// Both the CORS middleware and the WebSocket upgrader read from this single
+// list — the socket used to accept every origin unconditionally, which meant
+// tightening CORS still left that door open.
+func resolveAllowedOrigins() []string {
+	origins := []string{"http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:5174", "https://bingo-frontend-production-7ee9.up.railway.app", "https://winner.up.railway.app", "https://bingo-miniapp-gold.vercel.app", "https://bingo-frontend-azure.vercel.app"}
+	if env := os.Getenv("ALLOWED_ORIGINS"); env != "" {
+		origins = origins[:0]
+		for _, o := range strings.Split(env, ",") {
+			if o = strings.TrimSpace(o); o != "" {
+				origins = append(origins, o)
+			}
+		}
+	}
+	return origins
+}
+
 func main() {
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
+
+	allowOrigins := resolveAllowedOrigins()
 
 	// Initialize database connection
 	db, err := sql.Open("postgres", cfg.Database.GetDSN())
@@ -93,7 +115,7 @@ func main() {
 	gameHandler := handler.NewGameHandler(gameUseCase)
 	botHandler := handler.NewBotHandler(botUseCase)
 	supportHandler := handler.NewSupportHandler(supportUseCase)
-	wsHandler := handler.NewWebSocketHandler(redisClient.GetClient(), gameStateService, gameUseCase)
+	wsHandler := handler.NewWebSocketHandler(redisClient.GetClient(), gameStateService, gameUseCase, allowOrigins)
 
 	// Promo codes: created by admins, redeemed through the bot menu.
 	promoRepo := postgres.NewPromoRepository(db, walletRepo, transactionRepo)
@@ -192,20 +214,8 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 
 	router := gin.New()
 
-	// CORS middleware. ALLOWED_ORIGINS (comma-separated) overrides the default
-	// allowlist, so moving the frontends to a new host is an env change, not a
-	// code change.
-	allowOrigins := []string{"http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:5174", "https://bingo-frontend-production-7ee9.up.railway.app", "https://winner.up.railway.app", "https://bingo-miniapp-gold.vercel.app", "https://bingo-frontend-azure.vercel.app"}
-	if env := os.Getenv("ALLOWED_ORIGINS"); env != "" {
-		allowOrigins = allowOrigins[:0]
-		for _, o := range strings.Split(env, ",") {
-			if o = strings.TrimSpace(o); o != "" {
-				allowOrigins = append(allowOrigins, o)
-			}
-		}
-	}
 	router.Use(cors.New(cors.Config{
-		AllowOrigins:     allowOrigins,
+		AllowOrigins:     resolveAllowedOrigins(),
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Length", "Content-Type", "Authorization", "Upgrade", "Connection", "Sec-WebSocket-Key", "Sec-WebSocket-Version", "Sec-WebSocket-Extensions", "Sec-WebSocket-Protocol"},
 		ExposeHeaders:    []string{"Content-Length", "Upgrade", "Connection", "Sec-WebSocket-Accept"},

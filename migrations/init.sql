@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS game_players (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     game_id UUID NOT NULL REFERENCES games(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    card_id INTEGER NOT NULL CHECK (card_id >= 1 AND card_id <= 200),
+    card_id INTEGER NOT NULL CHECK (card_id >= 1 AND card_id <= 500),
     is_eliminated BOOLEAN NOT NULL DEFAULT FALSE,
     -- Per-card winner tracking. When several cards complete a bingo on the same
     -- drawn number the pot is split across them; is_winner flags each winning

@@ -1128,7 +1128,13 @@ func (uc *GameUseCase) ClaimBingo(ctx context.Context, gameID uuid.UUID, req dom
 		// Count cards still in play. GetPlayers reads committed state, which does
 		// not yet reflect this transaction's elimination, so skip the just-killed
 		// card explicitly.
-		players, _ := uc.gameRepo.GetPlayers(ctx, gameID)
+		// The error here used to be discarded, which was the worse half of the
+		// bug below: a failed read yields no players, so activeCards lands on 0
+		// and the game commits as CANCELLED having refunded nobody.
+		players, err := uc.gameRepo.GetPlayers(ctx, gameID)
+		if err != nil {
+			return false, fmt.Errorf("failed to read players for elimination check: %w", err)
+		}
 		activeCards := 0
 		for _, p := range players {
 			if p.IsEliminated {
@@ -1144,20 +1150,30 @@ func (uc *GameUseCase) ClaimBingo(ctx context.Context, gameID uuid.UUID, req dom
 			// Every card is out - cancel the game and refund each card's stake
 			game.State = domain.GameStateCancelled
 			gameRefundRef := "GAME_REFUND"
+			// Every refund error is fatal to the whole transaction. Previously a
+			// failed wallet lock silently skipped that player's refund entirely
+			// (`if err == nil`), and UpdateBalance/Create errors were discarded
+			// outright — then the game committed as CANCELLED regardless. That
+			// left players unrefunded on a cancelled game with nothing logged.
+			// Returning rolls back the cancellation with the refunds, so the
+			// game stays live and the claim can be retried.
 			for _, p := range players {
-				_, err := uc.walletRepo.LockForUpdate(ctx, tx, p.UserID)
-				if err == nil {
-					uc.walletRepo.UpdateBalance(ctx, tx, p.UserID, game.BetAmount)
-					// Create refund transaction
-					refundTx := &domain.Transaction{
-						UserID:    p.UserID,
-						Type:      domain.TransactionTypeDeposit,
-						Category:  domain.TransactionCategoryRefund,
-						Amount:    game.BetAmount,
-						Status:    domain.TransactionStatusCompleted,
-						Reference: &gameRefundRef, // Mark as game refund
-					}
-					uc.transactionRepo.Create(ctx, tx, refundTx)
+				if _, err := uc.walletRepo.LockForUpdate(ctx, tx, p.UserID); err != nil {
+					return false, fmt.Errorf("failed to lock wallet for refund: %w", err)
+				}
+				if err := uc.walletRepo.UpdateBalance(ctx, tx, p.UserID, game.BetAmount); err != nil {
+					return false, fmt.Errorf("failed to refund stake: %w", err)
+				}
+				refundTx := &domain.Transaction{
+					UserID:    p.UserID,
+					Type:      domain.TransactionTypeDeposit,
+					Category:  domain.TransactionCategoryRefund,
+					Amount:    game.BetAmount,
+					Status:    domain.TransactionStatusCompleted,
+					Reference: &gameRefundRef, // Mark as game refund
+				}
+				if err := uc.transactionRepo.Create(ctx, tx, refundTx); err != nil {
+					return false, fmt.Errorf("failed to record refund: %w", err)
 				}
 			}
 		}

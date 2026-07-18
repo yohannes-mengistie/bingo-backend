@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,13 +24,34 @@ func isValidGameType(gameType domain.GameType) bool {
 	return gameType.IsValid()
 }
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		// Allow all origins for now (adjust for production)
-		return true
-	},
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
+// newUpgrader builds an upgrader that accepts browser connections only from
+// the configured frontend origins — the same allowlist the CORS middleware
+// uses, so the WebSocket cannot be the one door left open when that list is
+// tightened. It previously returned true unconditionally, which let any site a
+// player happened to visit open a socket to a game.
+//
+// An absent Origin is allowed: non-browser clients (native apps, curl, uptime
+// probes) send none, while browsers always do. Cross-site WebSocket hijacking
+// is a browser-only attack, so an empty Origin is not the case this guard
+// exists to stop, and rejecting it would break every non-browser consumer.
+func newUpgrader(allowed []string) websocket.Upgrader {
+	return websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				return true
+			}
+			for _, o := range allowed {
+				if strings.EqualFold(origin, o) {
+					return true
+				}
+			}
+			log.Printf("[WebSocket] rejected connection from disallowed origin %q", origin)
+			return false
+		},
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+	}
 }
 
 type WebSocketHandler struct {
@@ -38,24 +60,30 @@ type WebSocketHandler struct {
 	gameUseCase *usecase.GameUseCase                // Add game use case for database checks
 	clients     map[string]map[*websocket.Conn]bool // gameID -> connections
 	mu          sync.RWMutex
+	upgrader    websocket.Upgrader
 }
 
-// NewWebSocketHandler creates a new WebSocket handler
-func NewWebSocketHandler(redisClient *redis.Client, gameService *redisPkg.GameStateService, gameUseCase *usecase.GameUseCase) *WebSocketHandler {
+// NewWebSocketHandler creates a new WebSocket handler. allowedOrigins is the
+// same list the CORS middleware is configured with; see newUpgrader.
+func NewWebSocketHandler(redisClient *redis.Client, gameService *redisPkg.GameStateService, gameUseCase *usecase.GameUseCase, allowedOrigins []string) *WebSocketHandler {
 	return &WebSocketHandler{
 		redisClient: redisClient,
 		gameService: gameService,
 		gameUseCase: gameUseCase,
 		clients:     make(map[string]map[*websocket.Conn]bool),
+		upgrader:    newUpgrader(allowedOrigins),
 	}
 }
 
 // HandleWebSocket handles WebSocket connections for game updates
 // Public viewing - anyone can connect by game type (e.g., ?type=G5) or game ID
 func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
-	// Log request details for debugging
-	log.Printf("[WebSocket] Request received - Method: %s, Path: %s, Query: %s, Headers: %v",
-		c.Request.Method, c.Request.URL.Path, c.Request.URL.RawQuery, c.Request.Header)
+	// Log request details for debugging. Deliberately NOT the whole header map:
+	// that carries Authorization bearer tokens, cookies and any internal
+	// forwarding headers straight into the logs. Origin is the only header
+	// worth having here — it is what the upgrade decision turns on.
+	log.Printf("[WebSocket] Request received - Method: %s, Path: %s, Query: %s, Origin: %s",
+		c.Request.Method, c.Request.URL.Path, c.Request.URL.RawQuery, c.Request.Header.Get("Origin"))
 	var gameID uuid.UUID
 	var err error
 	var errorReason string
@@ -166,7 +194,7 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 	log.Printf("[WebSocket] All pre-checks passed. Attempting WebSocket upgrade for game %s", gameIDStr)
 
 	// Upgrade connection
-	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+	conn, err := h.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		errorReason = fmt.Sprintf("WebSocket upgrade failed: %v. Check if connection is already upgraded or headers are correct.", err)
 		log.Printf("[WebSocket] ERROR: %s", errorReason)
