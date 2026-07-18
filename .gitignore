@@ -41,4 +41,7 @@ Thumbs.db
 # Logs
 *.log
 
-server
+# The compiled server binary at the repo root. Anchored with a leading slash:
+# a bare "server" also matched the cmd/server DIRECTORY, so every new file
+# there (tests, helpers) was silently ignored and missed from commits.
+/server

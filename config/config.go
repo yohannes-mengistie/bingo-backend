@@ -20,6 +20,34 @@ type Config struct {
 	PaymentVerifier PaymentVerifierConfig
 	Internal        InternalConfig
 	Bots            BotsConfig
+	RateLimits      RateLimitsConfig
+}
+
+// RateLimitsConfig holds the per-bucket request ceilings. Each is "how many
+// requests per how many seconds"; setting a limit to 0 disables that bucket.
+//
+// The player-facing buckets are keyed on the authenticated user id rather than
+// the IP (see middleware.RateLimit), so they can be tight without punishing the
+// many subscribers an Ethiopian mobile carrier puts behind one NAT address.
+// The auth buckets have no user to key on yet and are necessarily per-IP, so
+// they are deliberately looser than a brute-force limit would otherwise be —
+// tight enough to stop credential stuffing, loose enough that a shared carrier
+// address is not locked out by one bad actor.
+type RateLimitsConfig struct {
+	LoginLimit         int // per-IP: admin password login
+	LoginWindow        int
+	CreateAdminLimit   int // per-IP: secret-code gated admin creation
+	CreateAdminWindow  int
+	TelegramAuthLimit  int // per-IP: Mini App initData -> JWT
+	TelegramAuthWindow int
+	DepositLimit       int // per-user: deposit submission/verification
+	DepositWindow      int
+	WithdrawLimit      int // per-user: withdrawal requests
+	WithdrawWindow     int
+	TransferLimit      int // per-user: player-to-player transfers
+	TransferWindow     int
+	WebSocketLimit     int // per-IP: socket connection attempts
+	WebSocketWindow    int
 }
 
 // BotsConfig holds the runtime knobs for the filler-bot subsystem. The actual
@@ -146,6 +174,31 @@ func Load() (*Config, error) {
 			WalletFloat:     float64(getEnvInt("BOT_WALLET_FLOAT", 1000)),
 			MaxJoinsPerTick: getEnvInt("BOT_MAX_JOINS_PER_TICK", 5),
 			CheckInterval:   getEnvInt("BOT_CHECK_INTERVAL_SECONDS", 5),
+		},
+		RateLimits: RateLimitsConfig{
+			// Per-IP. 10 attempts per 15 min stops credential stuffing while
+			// leaving room for an admin fumbling a password behind shared NAT.
+			LoginLimit:  getEnvInt("RL_LOGIN_LIMIT", 10),
+			LoginWindow: getEnvInt("RL_LOGIN_WINDOW_SECONDS", 900),
+			// Per-IP. Creating an admin is the highest-value action here and
+			// legitimately happens a handful of times ever.
+			CreateAdminLimit:  getEnvInt("RL_CREATE_ADMIN_LIMIT", 5),
+			CreateAdminWindow: getEnvInt("RL_CREATE_ADMIN_WINDOW_SECONDS", 3600),
+			// Per-IP, and the one bucket a whole carrier shares — every Mini
+			// App open hits it, so it is generous on purpose. It exists to
+			// blunt initData forgery attempts, not to pace normal use.
+			TelegramAuthLimit:  getEnvInt("RL_TELEGRAM_AUTH_LIMIT", 120),
+			TelegramAuthWindow: getEnvInt("RL_TELEGRAM_AUTH_WINDOW_SECONDS", 60),
+			// Per-user from here down, so these are about one account's
+			// behaviour and NAT is irrelevant.
+			DepositLimit:    getEnvInt("RL_DEPOSIT_LIMIT", 10),
+			DepositWindow:   getEnvInt("RL_DEPOSIT_WINDOW_SECONDS", 60),
+			WithdrawLimit:   getEnvInt("RL_WITHDRAW_LIMIT", 5),
+			WithdrawWindow:  getEnvInt("RL_WITHDRAW_WINDOW_SECONDS", 60),
+			TransferLimit:   getEnvInt("RL_TRANSFER_LIMIT", 10),
+			TransferWindow:  getEnvInt("RL_TRANSFER_WINDOW_SECONDS", 60),
+			WebSocketLimit:  getEnvInt("RL_WEBSOCKET_LIMIT", 60),
+			WebSocketWindow: getEnvInt("RL_WEBSOCKET_WINDOW_SECONDS", 60),
 		},
 	}
 

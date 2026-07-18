@@ -25,6 +25,7 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
+	"github.com/redis/go-redis/v9"
 )
 
 // resolveAllowedOrigins returns the browser origins permitted to reach this
@@ -45,6 +46,31 @@ func resolveAllowedOrigins() []string {
 		}
 	}
 	return origins
+}
+
+// resolveTrustedProxies lists the networks a reverse proxy may reach this
+// service from. TRUSTED_PROXIES (comma-separated CIDRs) overrides it.
+//
+// The default covers the private and CGNAT ranges a platform edge uses to
+// reach containers. If it is wrong the failure is loud rather than silent:
+// every caller collapses to the proxy's address, one shared bucket, and the
+// per-IP limits bite far too early.
+func resolveTrustedProxies() []string {
+	proxies := []string{
+		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", // RFC1918
+		"100.64.0.0/10", // CGNAT, used by several platform networks
+		"127.0.0.1/32",
+		"fd00::/8", "::1/128", // IPv6 ULA (Railway private networking) + loopback
+	}
+	if env := os.Getenv("TRUSTED_PROXIES"); env != "" {
+		proxies = proxies[:0]
+		for _, p := range strings.Split(env, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				proxies = append(proxies, p)
+			}
+		}
+	}
+	return proxies
 }
 
 func main() {
@@ -126,7 +152,7 @@ func main() {
 	telegramHandler := handler.NewTelegramHandler(userUseCase, promoRepo, telegramBot, cfg.Telegram.WebhookSecret, cfg.Telegram.MiniAppURL)
 
 	// Setup router
-	router := setupRouter(userHandler, walletHandler, authHandler, gameHandler, botHandler, supportHandler, wsHandler, telegramHandler, promoHandler, jwtService, cfg.Internal.APISecret)
+	router := setupRouter(userHandler, walletHandler, authHandler, gameHandler, botHandler, supportHandler, wsHandler, telegramHandler, promoHandler, jwtService, cfg.Internal.APISecret, redisClient.GetClient(), cfg.RateLimits)
 
 	// Shared background context for the server's housekeeping goroutines,
 	// cancelled on shutdown.
@@ -206,13 +232,41 @@ func main() {
 	log.Println("Server exited")
 }
 
-func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.WalletHandler, authHandler *handler.AuthHandler, gameHandler *handler.GameHandler, botHandler *handler.BotHandler, supportHandler *handler.SupportHandler, wsHandler *handler.WebSocketHandler, telegramHandler *handler.TelegramHandler, promoHandler *handler.PromoHandler, jwtService *jwt.Service, internalAPISecret string) *gin.Engine {
+func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.WalletHandler, authHandler *handler.AuthHandler, gameHandler *handler.GameHandler, botHandler *handler.BotHandler, supportHandler *handler.SupportHandler, wsHandler *handler.WebSocketHandler, telegramHandler *handler.TelegramHandler, promoHandler *handler.PromoHandler, jwtService *jwt.Service, internalAPISecret string, rdb *redis.Client, rl config.RateLimitsConfig) *gin.Engine {
+	// Rate-limit buckets. Auth buckets are per-IP (no user to key on yet);
+	// the money buckets sit behind AuthMiddleware and key on the user id.
+	secs := func(n int) time.Duration { return time.Duration(n) * time.Second }
+	limitLogin := middleware.RateLimit(rdb, "login", middleware.RateLimitRule{Limit: rl.LoginLimit, Window: secs(rl.LoginWindow)})
+	limitCreateAdmin := middleware.RateLimit(rdb, "create-admin", middleware.RateLimitRule{Limit: rl.CreateAdminLimit, Window: secs(rl.CreateAdminWindow)})
+	limitTelegramAuth := middleware.RateLimit(rdb, "telegram-auth", middleware.RateLimitRule{Limit: rl.TelegramAuthLimit, Window: secs(rl.TelegramAuthWindow)})
+	limitDeposit := middleware.RateLimit(rdb, "deposit", middleware.RateLimitRule{Limit: rl.DepositLimit, Window: secs(rl.DepositWindow)})
+	limitWithdraw := middleware.RateLimit(rdb, "withdraw", middleware.RateLimitRule{Limit: rl.WithdrawLimit, Window: secs(rl.WithdrawWindow)})
+	limitTransfer := middleware.RateLimit(rdb, "transfer", middleware.RateLimitRule{Limit: rl.TransferLimit, Window: secs(rl.TransferWindow)})
+	limitWebSocket := middleware.RateLimit(rdb, "websocket", middleware.RateLimitRule{Limit: rl.WebSocketLimit, Window: secs(rl.WebSocketWindow)})
+
 	// Set Gin to release mode in production
 	if os.Getenv("GIN_MODE") == "release" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
 	router := gin.New()
+
+	// Trust only the platform's reverse proxy when resolving the client IP.
+	//
+	// Gin's default is to trust EVERY proxy, which makes c.ClientIP() return
+	// the left-most X-Forwarded-For entry — a value the caller sets. Any
+	// per-IP rate limit would then be bypassed by varying that header per
+	// request, so this has to be right for the limiter to mean anything.
+	// With a trusted list, gin walks X-Forwarded-For from the right and skips
+	// trusted hops, landing on the address the platform's edge actually saw.
+	//
+	// TRUSTED_PROXIES (comma-separated CIDRs) overrides the default, which
+	// covers the private and CGNAT ranges a platform edge reaches containers
+	// over. If it is ever wrong the failure is visible rather than silent:
+	// every caller collapses to one identity and the buckets throttle early.
+	if err := router.SetTrustedProxies(resolveTrustedProxies()); err != nil {
+		log.Fatalf("Invalid TRUSTED_PROXIES: %v", err)
+	}
 
 	router.Use(cors.New(cors.Config{
 		AllowOrigins:     resolveAllowedOrigins(),
@@ -253,9 +307,9 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 		// Public auth endpoints
 		auth := api.Group("/auth")
 		{
-			auth.POST("/login", authHandler.Login)              // admin login (telegram_id + password)
-			auth.POST("/create-admin", authHandler.CreateAdmin) // secret-code gated
-			auth.POST("/telegram", authHandler.TelegramLogin)   // website: verify Mini App initData -> JWT
+			auth.POST("/login", limitLogin, authHandler.Login)                    // admin login (telegram_id + password)
+			auth.POST("/create-admin", limitCreateAdmin, authHandler.CreateAdmin) // secret-code gated
+			auth.POST("/telegram", limitTelegramAuth, authHandler.TelegramLogin)  // website: verify Mini App initData -> JWT
 		}
 
 		// Bot-facing user endpoints (server-to-server; called by the trusted Telegram bot).
@@ -312,9 +366,9 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			authed.GET("/me/wallet/deposits", walletHandler.GetMyDeposits)
 			authed.GET("/me/wallet/withdrawals", walletHandler.GetMyWithdrawals)
 			authed.GET("/me/wallet/transfers", walletHandler.GetMyTransfers)
-			authed.POST("/wallet/deposit", walletHandler.Deposit)
-			authed.POST("/wallet/withdraw", walletHandler.Withdraw)
-			authed.POST("/wallet/transfer", walletHandler.Transfer)
+			authed.POST("/wallet/deposit", limitDeposit, walletHandler.Deposit)
+			authed.POST("/wallet/withdraw", limitWithdraw, walletHandler.Withdraw)
+			authed.POST("/wallet/transfer", limitTransfer, walletHandler.Transfer)
 
 			// Games (self)
 			authed.GET("/me/active-game", gameHandler.GetMyActiveGame)
@@ -354,8 +408,8 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization, Upgrade, Connection, Sec-WebSocket-Key, Sec-WebSocket-Version")
 			c.Status(http.StatusOK)
 		})
-		api.GET("/ws/game/:gameId", wsHandler.HandleWebSocket)
-		api.GET("/ws/game", wsHandler.HandleWebSocket)
+		api.GET("/ws/game/:gameId", limitWebSocket, wsHandler.HandleWebSocket)
+		api.GET("/ws/game", limitWebSocket, wsHandler.HandleWebSocket)
 
 		// Protected admin endpoints
 		admin := api.Group("/admin")
@@ -430,7 +484,7 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			// Player problem reports (triage queue)
 			support := admin.Group("/support")
 			{
-				support.GET("", supportHandler.ListReports)              // list (?status=open|resolved&limit=&offset=)
+				support.GET("", supportHandler.ListReports)                // list (?status=open|resolved&limit=&offset=)
 				support.POST("/:id/resolve", supportHandler.ResolveReport) // mark handled
 			}
 		}
