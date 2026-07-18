@@ -70,7 +70,8 @@ type BotFillResult struct {
 // separate from UserRepository so the money engine and existing interfaces are
 // untouched.
 type BotRepository interface {
-	// ListBots returns bot users ordered oldest-first, up to limit.
+	// ListBots returns bot users in random order, up to limit. Callers must not
+	// rely on a stable order — it varies per call so lobbies vary per round.
 	ListBots(ctx context.Context, limit int) ([]*User, error)
 	// CountBots returns how many bot accounts exist.
 	CountBots(ctx context.Context) (int, error)

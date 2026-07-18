@@ -16,13 +16,50 @@ import (
 // IDs are positive, so large negative IDs can never collide with a real user.
 const botTelegramIDBase = -1_000_000_000
 
-// botNames is the pool of display names for filler bots. Names need not be
-// unique (only telegram_id / phone / referral_code are), so they are reused.
-var botNames = []string{
-	"Abel", "Bruk", "Chala", "Dawit", "Eyob", "Fitsum", "Girma", "Hana",
-	"Kalkidan", "Liya", "Mekdes", "Nardos", "Robel", "Saron", "Tigist",
-	"Yonas", "Selam", "Bereket", "Kidus", "Meron", "Nahom", "Rediet",
-	"Samuel", "Tsion", "Yohannes", "Betty", "Danny", "Feven", "Helen", "Sena",
+// botFirstNames and botLastNames are combined to give filler bots plausible
+// full names. The DB only requires telegram_id / phone / referral_code to be
+// unique, but a room showing seven players called "Abel" is the most visible
+// tell that a lobby is padded — so the display name space has to comfortably
+// exceed the pool size.
+//
+// The two lengths are deliberately COPRIME (120 and 49 share no factor), which
+// makes the pair (index%120, index%49) unique for the first 120*49 = 5880 bots
+// by the Chinese remainder theorem, while both halves advance on every index.
+// Keep them coprime if you edit these lists — appending one name to either can
+// silently collapse the space (e.g. 120 and 50 share a factor and repeat every
+// 600). A first name recurs only every 120 bots, which at a 300 pool means a
+// handful of repeats paired with different surnames: realistic for Ethiopian
+// given names, where common ones genuinely recur in any real crowd.
+var botFirstNames = []string{
+	"Abel", "Abenezer", "Abiy", "Addis", "Amanuel", "Anteneh", "Ashenafi",
+	"Bereket", "Berhanu", "Biruk", "Bruk", "Chala", "Dagim", "Dagmawi",
+	"Daniel", "Dawit", "Dereje", "Desalegn", "Elias", "Endale", "Ephrem",
+	"Eyasu", "Eyob", "Ezra", "Fasil", "Fikru", "Fitsum", "Getachew", "Girma",
+	"Habtamu", "Hailu", "Henok", "Kaleb", "Kalab", "Kebede", "Kidus",
+	"Kirubel", "Leul", "Mekonnen", "Melaku", "Mesfin", "Michael", "Mulugeta",
+	"Nahom", "Natnael", "Nebiyu", "Robel", "Samson", "Samuel", "Solomon",
+	"Surafel", "Tadesse", "Tamirat", "Tesfaye", "Tewodros", "Tsegaye", "Yared",
+	"Yeabsira", "Yohannes", "Yonas", "Zelalem", "Zerihun", "Alemayehu",
+	"Bekele", "Belay", "Ermias", "Getnet", "Gizachew", "Kassahun", "Mengistu",
+	"Sisay", "Wondwosen", "Yilma", "Abera", "Endalkachew", "Hana", "Kalkidan",
+	"Liya", "Mekdes", "Nardos", "Saron", "Tigist", "Selam", "Meron", "Rediet",
+	"Tsion", "Betty", "Feven", "Helen", "Sena", "Bezawit", "Blen", "Eden",
+	"Eyerusalem", "Firehiwot", "Genet", "Hiwot", "Kidist", "Lidya", "Mahlet",
+	"Marta", "Meaza", "Mihret", "Netsanet", "Rahel", "Rakeb", "Ruth", "Sara",
+	"Selamawit", "Semira", "Senait", "Seble", "Sofia", "Tizita", "Yordanos",
+	"Abeba", "Almaz", "Aster", "Birtukan", "Hirut",
+}
+
+// Ethiopian surnames are patronymics — the father's given name — so the overlap
+// with botFirstNames below is authentic, not an oversight.
+var botLastNames = []string{
+	"Tesfaye", "Bekele", "Alemu", "Girma", "Hailu", "Kebede", "Mengistu",
+	"Assefa", "Tadesse", "Wolde", "Gebre", "Haile", "Desta", "Abebe",
+	"Mulugeta", "Getachew", "Negash", "Teshome", "Worku", "Yimer", "Ayele",
+	"Berhe", "Demissie", "Fikadu", "Gizaw", "Kassa", "Lemma", "Mamo",
+	"Regassa", "Shiferaw", "Tilahun", "Wondimu", "Zeleke", "Abera", "Adugna",
+	"Bayissa", "Emiru", "Feyisa", "Jemal", "Kumsa", "Melaku", "Nigussie",
+	"Olana", "Tola", "Urgessa", "Chane", "Dida", "Sori", "Gonfa",
 }
 
 // BotSettings holds the operator-tunable knobs supplied from config/env.
@@ -148,7 +185,8 @@ func (uc *BotUseCase) createBot(ctx context.Context, index int, telegramID int64
 		return err
 	}
 
-	name := botNames[(index-1)%len(botNames)]
+	name := botFirstNames[(index-1)%len(botFirstNames)]
+	lastName := botLastNames[(index-1)%len(botLastNames)]
 	phone := fmt.Sprintf("BOT-%08d", index)
 
 	tx, err := uc.db.BeginTx(ctx, nil)
@@ -161,6 +199,7 @@ func (uc *BotUseCase) createBot(ctx context.Context, index int, telegramID int64
 		ID:          uuid.New(),
 		TelegramID:  telegramID,
 		FirstName:   name,
+		LastName:    &lastName,
 		PhoneNumber: phone,
 		ReferalCode: code,
 		Role:        "user",

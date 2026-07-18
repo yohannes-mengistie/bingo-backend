@@ -19,13 +19,21 @@ func NewBotRepository(db *sql.DB) domain.BotRepository {
 	return &botRepository{db: db}
 }
 
-// ListBots returns bot users (is_bot = true), oldest first, up to limit.
+// ListBots returns bot users (is_bot = true) in RANDOM order, up to limit.
+//
+// The order is deliberately random rather than oldest-first: FillGame walks
+// this list and takes the first N that fit, so a stable order meant the same
+// oldest bots joined every single game in the same sequence — a recognisable
+// roster to any regular player — while bots past the target count never played
+// at all. Randomising spreads play across the whole pool and varies the lineup
+// per round. Sorting only touches the few hundred rows matching is_bot, so the
+// cost is negligible even at the 1s sweep interval.
 func (r *botRepository) ListBots(ctx context.Context, limit int) ([]*domain.User, error) {
 	query := `
 		SELECT id, telegram_id, first_name, last_name, phone_number, referal_code, role, banned, is_bot, created_at, updated_at
 		FROM users
 		WHERE is_bot = true
-		ORDER BY created_at ASC
+		ORDER BY RANDOM()
 		LIMIT $1
 	`
 	rows, err := r.db.QueryContext(ctx, query, limit)
