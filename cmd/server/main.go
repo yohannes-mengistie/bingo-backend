@@ -153,7 +153,11 @@ func main() {
 		JoinDelay:       time.Duration(cfg.Bots.JoinDelay) * time.Second,
 	})
 	supportUseCase := usecase.NewSupportUseCase(supportRepo)
-	bonusUseCase := usecase.NewBonusUseCase(bonusRepo, userRepo, db)
+	// One bot client, shared by everything that messages players: the game's
+	// own replies, bonus grant notices, and admin broadcasts. They share a
+	// token and therefore a rate-limit budget, so they should share a client.
+	telegramBot := telegram.NewBot(cfg.Telegram.BotToken)
+	bonusUseCase := usecase.NewBonusUseCase(bonusRepo, userRepo, db, telegramBroadcastSender{bot: telegramBot})
 
 	// Initialize handlers
 	userHandler := handler.NewUserHandler(userUseCase)
@@ -170,7 +174,6 @@ func main() {
 	promoHandler := handler.NewPromoHandler(promoRepo)
 
 	// Telegram bot: registration gateway + Mini App launcher (webhook-driven).
-	telegramBot := telegram.NewBot(cfg.Telegram.BotToken)
 	telegramHandler := handler.NewTelegramHandler(userUseCase, promoRepo, telegramBot, cfg.Telegram.WebhookSecret, cfg.Telegram.MiniAppURL)
 
 	// Admin broadcasts over the same bot token as the game's own messages.

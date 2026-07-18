@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 
 	"github.com/bingo/backend/internal/domain"
 	"github.com/google/uuid"
@@ -22,10 +23,39 @@ type BonusUseCase struct {
 	bonusRepo domain.BonusRepository
 	userRepo  domain.UserRepository
 	db        *sql.DB
+	// notifier tells the player they received something. Optional: without it
+	// bonus still works, players just have to notice it in the app.
+	notifier domain.BroadcastSender
 }
 
-func NewBonusUseCase(bonusRepo domain.BonusRepository, userRepo domain.UserRepository, db *sql.DB) *BonusUseCase {
-	return &BonusUseCase{bonusRepo: bonusRepo, userRepo: userRepo, db: db}
+func NewBonusUseCase(bonusRepo domain.BonusRepository, userRepo domain.UserRepository, db *sql.DB, notifier domain.BroadcastSender) *BonusUseCase {
+	return &BonusUseCase{bonusRepo: bonusRepo, userRepo: userRepo, db: db, notifier: notifier}
+}
+
+// notifyGrant tells the player on Telegram that they have bonus waiting.
+//
+// Without this a grant is invisible: nothing pushes it, so a player only finds
+// out if they happen to open the app and look — and bonus expires, so one they
+// never noticed is one they silently lose.
+//
+// Deliberately AFTER the commit and never fatal. The money is already theirs;
+// a Telegram hiccup must not roll that back, and re-granting to "fix" a failed
+// message would double the award. Bilingual to match the bot's existing voice.
+func (uc *BonusUseCase) notifyGrant(user *domain.User, grant *domain.BonusGrant) {
+	if uc.notifier == nil || user.TelegramID <= 0 {
+		return
+	}
+	expiry := grant.ExpiresAt.Format("Jan 2")
+	msg := fmt.Sprintf(
+		"🎁 %.0f ብር የጨዋታ ቦነስ አግኝተዋል!\n"+
+			"በ%s ጊዜው ያበቃል። ካርድ ለመግዛት ይጠቀሙበት — ገንዘቡ ራሱ አይወጣም፣ ነገር ግን ያሸነፉት ገንዘብ ይወጣል።\n\n"+
+			"You received a %.0f birr play bonus! Expires %s.\n"+
+			"Use it to buy cards — the bonus itself cannot be withdrawn, but anything you win with it is real cash. 💰",
+		grant.Amount, expiry, grant.Amount, expiry,
+	)
+	if err := uc.notifier.SendMessage(user.TelegramID, msg); err != nil {
+		log.Printf("[bonus] granted %.2f to %s but the Telegram notice failed: %v", grant.Amount, user.ID, err)
+	}
 }
 
 // Grant awards bonus to one player. Admin-triggered.
@@ -57,6 +87,8 @@ func (uc *BonusUseCase) Grant(ctx context.Context, req domain.GrantBonusRequest)
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
+
+	uc.notifyGrant(user, grant)
 	return grant, nil
 }
 
