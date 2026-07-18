@@ -185,7 +185,7 @@ func Load() (*Config, error) {
 			WalletFloat:     float64(getEnvInt("BOT_WALLET_FLOAT", 1000)),
 			MaxJoinsPerTick: getEnvInt("BOT_MAX_JOINS_PER_TICK", 5),
 			CheckInterval:   getEnvInt("BOT_CHECK_INTERVAL_SECONDS", 5),
-			JoinDelay:       getEnvInt("BOT_JOIN_DELAY_SECONDS", 12),
+			JoinDelay:       getEnvInt("BOT_JOIN_DELAY_SECONDS", 5),
 		},
 		RateLimits: RateLimitsConfig{
 			// Per-IP, so a blunt instrument here (see the type comment): the
