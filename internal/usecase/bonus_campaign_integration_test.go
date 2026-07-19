@@ -62,6 +62,11 @@ func TestIntegration_Campaign_StampedeHandsOutExactlyNSlots(t *testing.T) {
 	if campaign.AmountPerSlot != 100 {
 		t.Fatalf("1000 over 10 slots should be 100 each, got %v", campaign.AmountPerSlot)
 	}
+	// The admin screen renders this straight from the create response, so a
+	// zero time here is a visible "started year 1" bug, not a cosmetic one.
+	if campaign.CreatedAt.IsZero() {
+		t.Fatal("Create returned a zero created_at")
+	}
 
 	// All twenty press Claim at the same instant.
 	var wg sync.WaitGroup
@@ -148,7 +153,7 @@ func TestIntegration_Campaign_StampedeHandsOutExactlyNSlots(t *testing.T) {
 	if status.Campaign == nil {
 		t.Fatal("latecomer sees no campaign at all; want the exhausted one")
 	}
-	if status.CanClaim || status.Reason != domain.ErrCampaignExhausted.Error() {
+	if status.CanClaim || status.Reason != domain.ReasonExhausted {
 		t.Fatalf("latecomer status = can_claim:%v reason:%q, want exhausted", status.CanClaim, status.Reason)
 	}
 }
@@ -260,8 +265,11 @@ func TestIntegration_Campaign_RequiresDeposit(t *testing.T) {
 	if status.CanClaim {
 		t.Fatal("status says an ineligible player can claim")
 	}
-	if status.Reason != domain.ErrCampaignNotEligible.Error() {
-		t.Fatalf("status reason = %q, want the not-eligible reason", status.Reason)
+	// The app switches on this CODE to pick its Amharic wording. If it ever
+	// becomes English prose again, the player sees a dead button with no
+	// explanation — so assert the contract, not just that something is set.
+	if status.Reason != domain.ReasonNotEligible {
+		t.Fatalf("status reason = %q, want the %q code", status.Reason, domain.ReasonNotEligible)
 	}
 }
 

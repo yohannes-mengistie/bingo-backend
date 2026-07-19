@@ -276,19 +276,19 @@ func (uc *BonusCampaignUseCase) Status(ctx context.Context, userID uuid.UUID) (*
 	}
 	status := &domain.BonusCampaignStatus{Campaign: campaign}
 	if campaign == nil {
-		status.Reason = domain.ErrNoActiveCampaign.Error()
+		status.Reason = domain.ReasonCode(domain.ErrNoActiveCampaign)
 		return status, nil
 	}
 
 	if claim, err := uc.repo.FindClaim(ctx, campaign.ID, userID); err == nil && claim != nil {
 		status.Claimed = true
 		status.ClaimedAmount = claim.Amount
-		status.Reason = domain.ErrCampaignAlreadyClaimed.Error()
+		status.Reason = domain.ReasonCode(domain.ErrCampaignAlreadyClaimed)
 		return status, nil
 	}
 
 	if campaign.SlotsLeft() <= 0 {
-		status.Reason = domain.ErrCampaignExhausted.Error()
+		status.Reason = domain.ReasonCode(domain.ErrCampaignExhausted)
 		return status, nil
 	}
 
@@ -297,7 +297,7 @@ func (uc *BonusCampaignUseCase) Status(ctx context.Context, userID uuid.UUID) (*
 		return nil, err
 	}
 	if !eligible {
-		status.Reason = domain.ErrCampaignNotEligible.Error()
+		status.Reason = domain.ReasonCode(domain.ErrCampaignNotEligible)
 		return status, nil
 	}
 

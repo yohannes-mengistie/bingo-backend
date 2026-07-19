@@ -57,12 +57,17 @@ func (r *bonusCampaignRepository) Create(ctx context.Context, c *domain.BonusCam
 	if c.CreatedBy != nil {
 		createdBy = *c.CreatedBy
 	}
-	_, err := r.db.ExecContext(ctx, `
+	// created_at is RETURNED rather than assumed: the database writes it (see
+	// the clocks note in migration 032), so without reading it back the caller
+	// gets Go's zero time and the admin screen shows "started year 1" until
+	// something else refetches.
+	err := r.db.QueryRowContext(ctx, `
 		INSERT INTO bonus_campaigns
 			(id, total_amount, slots, amount_per_slot, announcement, status, created_by)
-		VALUES ($1, $2, $3, $4, $5, 'active', $6)`,
+		VALUES ($1, $2, $3, $4, $5, 'active', $6)
+		RETURNING created_at`,
 		c.ID, c.Amount, c.Slots, c.AmountPerSlot, c.Announcement, createdBy,
-	)
+	).Scan(&c.CreatedAt)
 	if err != nil {
 		// The partial unique index on status='active' is what refuses a second
 		// live campaign. Translated here so the admin sees the actual problem

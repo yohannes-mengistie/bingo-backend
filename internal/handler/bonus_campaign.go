@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"errors"
 	"net/http"
 	"strconv"
 
@@ -62,7 +61,7 @@ func (h *BonusCampaignHandler) Claim(c *gin.Context) {
 		if usecase.IsClaimRefusal(err) {
 			c.JSON(http.StatusConflict, gin.H{
 				"error":  err.Error(),
-				"reason": claimReasonCode(err),
+				"reason": domain.ReasonCode(err),
 			})
 			return
 		}
@@ -70,22 +69,6 @@ func (h *BonusCampaignHandler) Claim(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"claim": claim})
-}
-
-// claimReasonCode maps a refusal to a stable code for the client.
-func claimReasonCode(err error) string {
-	switch {
-	case errors.Is(err, domain.ErrNoActiveCampaign):
-		return "no_campaign"
-	case errors.Is(err, domain.ErrCampaignExhausted):
-		return "exhausted"
-	case errors.Is(err, domain.ErrCampaignAlreadyClaimed):
-		return "already_claimed"
-	case errors.Is(err, domain.ErrCampaignNotEligible):
-		return "not_eligible"
-	default:
-		return "refused"
-	}
 }
 
 // CreateCampaign handles POST /admin/bonus/campaigns — start today's giveaway,

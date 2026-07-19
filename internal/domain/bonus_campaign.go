@@ -27,6 +27,36 @@ var (
 	ErrCampaignNotEligible    = errors.New("only players who have deposited before can claim")
 )
 
+// Machine-readable refusal codes sent to the client.
+//
+// The client must never render the error text: it is English prose, and the
+// app is bilingual. Both the claim endpoint and the status endpoint report the
+// SAME code for the same situation, so the app needs one mapping from code to
+// translated string rather than one per endpoint.
+const (
+	ReasonNoCampaign     = "no_campaign"
+	ReasonExhausted      = "exhausted"
+	ReasonAlreadyClaimed = "already_claimed"
+	ReasonNotEligible    = "not_eligible"
+	ReasonRefused        = "refused"
+)
+
+// ReasonCode maps a refusal to its stable client-facing code.
+func ReasonCode(err error) string {
+	switch {
+	case errors.Is(err, ErrNoActiveCampaign):
+		return ReasonNoCampaign
+	case errors.Is(err, ErrCampaignExhausted):
+		return ReasonExhausted
+	case errors.Is(err, ErrCampaignAlreadyClaimed):
+		return ReasonAlreadyClaimed
+	case errors.Is(err, ErrCampaignNotEligible):
+		return ReasonNotEligible
+	default:
+		return ReasonRefused
+	}
+}
+
 // BonusCampaign is a "first N players" giveaway: a pot split into a fixed
 // number of equal slots, claimed first-come-first-served.
 type BonusCampaign struct {
