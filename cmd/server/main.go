@@ -181,8 +181,14 @@ func main() {
 	broadcastUseCase := usecase.NewBroadcastUseCase(broadcastRepo, telegramBroadcastSender{bot: telegramBot})
 	broadcastHandler := handler.NewBroadcastHandler(broadcastUseCase)
 
+	// "First N players" bonus giveaways. Declared after broadcastUseCase
+	// because creating a campaign can announce itself to every player.
+	bonusCampaignRepo := postgres.NewBonusCampaignRepository(db)
+	bonusCampaignUseCase := usecase.NewBonusCampaignUseCase(bonusCampaignRepo, bonusRepo, userRepo, db, broadcastUseCase, telegramBroadcastSender{bot: telegramBot})
+	bonusCampaignHandler := handler.NewBonusCampaignHandler(bonusCampaignUseCase)
+
 	// Setup router
-	router := setupRouter(userHandler, walletHandler, authHandler, gameHandler, botHandler, supportHandler, wsHandler, telegramHandler, promoHandler, bonusHandler, broadcastHandler, jwtService, cfg.Internal.APISecret, redisClient.GetClient(), cfg.RateLimits)
+	router := setupRouter(userHandler, walletHandler, authHandler, gameHandler, botHandler, supportHandler, wsHandler, telegramHandler, promoHandler, bonusHandler, bonusCampaignHandler, broadcastHandler, jwtService, cfg.Internal.APISecret, redisClient.GetClient(), cfg.RateLimits)
 
 	// Shared background context for the server's housekeeping goroutines,
 	// cancelled on shutdown.
@@ -262,7 +268,7 @@ func main() {
 	log.Println("Server exited")
 }
 
-func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.WalletHandler, authHandler *handler.AuthHandler, gameHandler *handler.GameHandler, botHandler *handler.BotHandler, supportHandler *handler.SupportHandler, wsHandler *handler.WebSocketHandler, telegramHandler *handler.TelegramHandler, promoHandler *handler.PromoHandler, bonusHandler *handler.BonusHandler, broadcastHandler *handler.BroadcastHandler, jwtService *jwt.Service, internalAPISecret string, rdb *redis.Client, rl config.RateLimitsConfig) *gin.Engine {
+func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.WalletHandler, authHandler *handler.AuthHandler, gameHandler *handler.GameHandler, botHandler *handler.BotHandler, supportHandler *handler.SupportHandler, wsHandler *handler.WebSocketHandler, telegramHandler *handler.TelegramHandler, promoHandler *handler.PromoHandler, bonusHandler *handler.BonusHandler, bonusCampaignHandler *handler.BonusCampaignHandler, broadcastHandler *handler.BroadcastHandler, jwtService *jwt.Service, internalAPISecret string, rdb *redis.Client, rl config.RateLimitsConfig) *gin.Engine {
 	// Rate-limit buckets. Auth buckets are per-IP (no user to key on yet);
 	// the money buckets sit behind AuthMiddleware and key on the user id.
 	secs := func(n int) time.Duration { return time.Duration(n) * time.Second }
@@ -415,6 +421,9 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			// Wallet (self)
 			authed.GET("/me/wallet", walletHandler.GetMyWallet)
 			authed.GET("/me/bonus", bonusHandler.GetMyBonus)
+			// "First N players" giveaway: what is running, and taking a slot.
+			authed.GET("/me/bonus/campaign", bonusCampaignHandler.GetMyCampaign)
+			authed.POST("/me/bonus/claim", bonusCampaignHandler.Claim)
 			authed.GET("/me/wallet/deposits", walletHandler.GetMyDeposits)
 			authed.GET("/me/wallet/withdrawals", walletHandler.GetMyWithdrawals)
 			authed.GET("/me/wallet/transfers", walletHandler.GetMyTransfers)
@@ -492,6 +501,13 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 				bonus.POST("/grant", bonusHandler.GrantBonus)
 				bonus.POST("/grant-bulk", bonusHandler.GrantBonusBulk)
 				bonus.GET("/outstanding", bonusHandler.GetOutstanding)
+
+				// "First N players" giveaways. Creating one can announce it to
+				// every player in the same call.
+				bonus.POST("/campaigns", bonusCampaignHandler.CreateCampaign)
+				bonus.GET("/campaigns", bonusCampaignHandler.ListCampaigns)
+				bonus.GET("/campaigns/:id/claims", bonusCampaignHandler.ListClaims)
+				bonus.POST("/campaigns/:id/end", bonusCampaignHandler.EndCampaign)
 			}
 			admin.GET("/users/:user_id/bonus", bonusHandler.ListUserGrants)
 
