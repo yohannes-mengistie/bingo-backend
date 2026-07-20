@@ -50,6 +50,11 @@ type TelegramHandler struct {
 	// again. Entries expire after depositConvoTTL.
 	depositMu     sync.Mutex
 	depositConvos map[int64]*depositConvo
+
+	// withdrawConvos is the analogous in-chat withdraw conversation
+	// (method → amount → destination number).
+	withdrawMu     sync.Mutex
+	withdrawConvos map[int64]*withdrawConvo
 }
 
 // promoWaitTTL is how long a "send me your promo code" prompt stays armed.
@@ -76,6 +81,22 @@ type depositConvo struct {
 	deadline time.Time
 }
 
+// withdrawStep is where a withdraw conversation has reached.
+type withdrawStep int
+
+const (
+	wdAwaitingAmount  withdrawStep = iota // method chosen; waiting for the amount
+	wdAwaitingAccount                     // amount known; waiting for the payout number
+)
+
+// withdrawConvo is one player's in-flight withdrawal.
+type withdrawConvo struct {
+	step     withdrawStep
+	method   domain.PaymentMethod
+	amount   float64
+	deadline time.Time
+}
+
 // NewTelegramHandler creates a new Telegram webhook handler.
 func NewTelegramHandler(userUseCase *usecase.UserUseCase, walletUseCase *usecase.WalletUseCase, bonusUseCase *usecase.BonusUseCase, promoRepo domain.PromoRepository, bot *telegram.Bot, webhookSecret, miniAppURL string, depositAccounts map[domain.PaymentMethod]string) *TelegramHandler {
 	base := strings.TrimRight(miniAppURL, "/")
@@ -94,10 +115,11 @@ func NewTelegramHandler(userUseCase *usecase.UserUseCase, walletUseCase *usecase
 		// previous build after a deploy. Resolved once at startup (stable
 		// within a deploy, so repeated opens still hit Telegram's cache;
 		// changes on the next deploy).
-		miniAppBase:   base,
-		appVersion:    version,
-		promoWaiting:  make(map[int64]time.Time),
-		depositConvos: make(map[int64]*depositConvo),
+		miniAppBase:    base,
+		appVersion:     version,
+		promoWaiting:   make(map[int64]time.Time),
+		depositConvos:  make(map[int64]*depositConvo),
+		withdrawConvos: make(map[int64]*withdrawConvo),
 	}
 }
 
@@ -279,13 +301,23 @@ func (h *TelegramHandler) handleMenuText(c *gin.Context, msg *telegram.Message) 
 		}
 	}
 
+	// Same for a withdraw in progress (amount, then destination number).
+	if convo := h.getWithdraw(msg.Chat.ID); convo != nil {
+		if isMenuLabel(text) {
+			h.clearWithdraw(msg.Chat.ID)
+		} else {
+			h.handleWithdrawInput(c, msg, user, convo, text)
+			return
+		}
+	}
+
 	switch text {
 	case btnPlay:
 		h.appButton(msg.Chat.ID, "🎮 ለመጫወት ከታች ይንኩ 👇", "🎮 ቢንጎ ተጫወት / Play", "/")
 	case btnDeposit:
 		h.startDeposit(c, msg, user.ID)
 	case btnWithdraw:
-		h.appButton(msg.Chat.ID, "💸 ገንዘብ ለማውጣት ከታች ይንኩ 👇", "💸 ቦርሳ ክፈት / Open Wallet", "/wallet")
+		h.startWithdraw(c, msg, user.ID)
 	case btnInvite:
 		h.appButton(msg.Chat.ID, "🔗 ጓደኞችዎን ጋብዘው ቦነስ ያግኙ 👇", "🔗 ጋብዝ & አግኝ / Invite", "/referral")
 	case btnProfile:
@@ -472,6 +504,7 @@ func (h *TelegramHandler) handleCallback(c *gin.Context, cq *telegram.CallbackQu
 			h.reply(chatID, "ይህ መንገድ አሁን አይገኝም።\nThat method isn't available right now.", h.mainMenu())
 			return
 		}
+		h.clearWithdraw(chatID) // one wallet action at a time
 		h.setDeposit(chatID, &depositConvo{step: depAwaitingAmount, method: method})
 		_ = h.bot.AnswerCallbackQuery(cq.ID, "")
 		h.reply(chatID, fmt.Sprintf(
@@ -481,9 +514,50 @@ func (h *TelegramHandler) handleCallback(c *gin.Context, cq *telegram.CallbackQu
 				"Send the money to %s, then type the amount you sent (in birr).",
 			depositMethodLabel(method), account, account), nil)
 
+	case data == "wd:cancel":
+		h.clearWithdraw(chatID)
+		_ = h.bot.AnswerCallbackQuery(cq.ID, "ተሰርዟል / Cancelled")
+		h.reply(chatID, "እሺ፣ ተሰርዟል።\nOkay, cancelled.", h.mainMenu())
+
+	case data == "wd:self":
+		// "Use my registered number" — finalise with a blank account, which the
+		// use case resolves to the player's verified registration phone.
+		convo := h.getWithdraw(chatID)
+		if convo == nil || convo.step != wdAwaitingAccount {
+			_ = h.bot.AnswerCallbackQuery(cq.ID, "")
+			return
+		}
+		h.clearWithdraw(chatID)
+		_ = h.bot.AnswerCallbackQuery(cq.ID, "")
+		h.doWithdraw(c, msg2From(cq), user.ID, convo.method, convo.amount, "")
+
+	case strings.HasPrefix(data, "wd:"):
+		method := domain.PaymentMethod(strings.TrimPrefix(data, "wd:"))
+		if !domain.IsSupportedPaymentMethod(method) {
+			_ = h.bot.AnswerCallbackQuery(cq.ID, "")
+			h.reply(chatID, "ይህ መንገድ አሁን አይገኝም።\nThat method isn't available right now.", h.mainMenu())
+			return
+		}
+		h.clearDeposit(chatID) // one wallet action at a time
+		h.setWithdraw(chatID, &withdrawConvo{step: wdAwaitingAmount, method: method})
+		_ = h.bot.AnswerCallbackQuery(cq.ID, "")
+		bal := 0.0
+		if w, werr := h.walletUseCase.GetWalletByTelegramID(c.Request.Context(), cq.From.ID); werr == nil && w != nil {
+			bal = w.Balance
+		}
+		h.reply(chatID, fmt.Sprintf(
+			"✅ %s ተመርጧል።\n\nምን ያህል ማውጣት ይፈልጋሉ? (በ ብር)\nዝቅተኛ %.0f ብር · ያለዎት %.2f ብር\n\nHow much do you want to withdraw? (min %.0f, you have %.2f)",
+			depositMethodLabel(method), domain.MinWithdrawalAmount, bal, domain.MinWithdrawalAmount, bal), nil)
+
 	default:
 		_ = h.bot.AnswerCallbackQuery(cq.ID, "")
 	}
+}
+
+// msg2From adapts a callback's sender into the *telegram.Message shape doWithdraw
+// needs for its follow-up balance read (which keys on the sender's Telegram ID).
+func msg2From(cq *telegram.CallbackQuery) *telegram.Message {
+	return &telegram.Message{From: cq.From, Chat: cq.Message.Chat}
 }
 
 // handleDepositInput consumes the player's typed answer to the current deposit
@@ -570,6 +644,136 @@ func depositErrorMessage(err error) string {
 		return "❌ ክፍያውን ማረጋገጥ አልተቻለም። ቁጥሩን ያረጋግጡና እንደገና ይሞክሩ።\nWe couldn't verify that payment — check the number and try again."
 	default:
 		return "⚠️ ገቢ ማድረግ አልተሳካም፣ እባክዎ እንደገና ይሞክሩ።\nDeposit failed — please try again."
+	}
+}
+
+// ---- In-chat withdraw ------------------------------------------------------
+
+func (h *TelegramHandler) getWithdraw(chatID int64) *withdrawConvo {
+	h.withdrawMu.Lock()
+	defer h.withdrawMu.Unlock()
+	convo, ok := h.withdrawConvos[chatID]
+	if !ok {
+		return nil
+	}
+	if time.Now().After(convo.deadline) {
+		delete(h.withdrawConvos, chatID)
+		return nil
+	}
+	return convo
+}
+
+func (h *TelegramHandler) setWithdraw(chatID int64, convo *withdrawConvo) {
+	convo.deadline = time.Now().Add(depositConvoTTL)
+	h.withdrawMu.Lock()
+	h.withdrawConvos[chatID] = convo
+	h.withdrawMu.Unlock()
+}
+
+func (h *TelegramHandler) clearWithdraw(chatID int64) {
+	h.withdrawMu.Lock()
+	delete(h.withdrawConvos, chatID)
+	h.withdrawMu.Unlock()
+}
+
+// startWithdraw answers the Withdraw button with a method picker. All methods
+// are offered (unlike deposit): the payout goes to the player's OWN phone, so
+// no house account needs configuring.
+func (h *TelegramHandler) startWithdraw(c *gin.Context, msg *telegram.Message, _ uuid.UUID) {
+	var rows [][]telegram.InlineKeyboardButton
+	for _, m := range domain.SupportedPaymentMethods {
+		rows = append(rows, []telegram.InlineKeyboardButton{
+			{Text: depositMethodLabel(m), CallbackData: "wd:" + string(m)},
+		})
+	}
+	rows = append(rows, []telegram.InlineKeyboardButton{{Text: "❌ ተወው / Cancel", CallbackData: "wd:cancel"}})
+
+	h.reply(msg.Chat.ID,
+		"💸 ገንዘብዎ በየትኛው መንገድ እንዲላክ ይፈልጋሉ?\nWhich method should we send your money to?",
+		&telegram.ReplyMarkup{InlineKeyboard: rows})
+}
+
+// handleWithdrawInput consumes the player's typed answer: first the amount,
+// then the destination number (a typed number finalises the withdrawal; the
+// "use my number" button does so via the callback path).
+func (h *TelegramHandler) handleWithdrawInput(c *gin.Context, msg *telegram.Message, user *domain.User, convo *withdrawConvo, text string) {
+	switch convo.step {
+	case wdAwaitingAmount:
+		amount, err := strconv.ParseFloat(strings.TrimSpace(text), 64)
+		if err != nil || amount <= 0 {
+			h.reply(msg.Chat.ID, "❓ እባክዎ መጠኑን በቁጥር ይጻፉ (ለምሳሌ 100)።\nPlease type the amount as a number (e.g. 100).", nil)
+			return
+		}
+		if amount < domain.MinWithdrawalAmount {
+			h.reply(msg.Chat.ID, fmt.Sprintf("ዝቅተኛው የማውጣት መጠን %.0f ብር ነው።\nThe minimum withdrawal is %.0f birr.", domain.MinWithdrawalAmount, domain.MinWithdrawalAmount), nil)
+			return
+		}
+		convo.amount = amount
+		convo.step = wdAwaitingAccount
+		h.setWithdraw(msg.Chat.ID, convo)
+
+		// Offer the registered phone as a one-tap default; typing a number
+		// overrides it.
+		selfBtn := [][]telegram.InlineKeyboardButton{}
+		if utils.IsEthiopianMobile(user.PhoneNumber) {
+			selfBtn = append(selfBtn, []telegram.InlineKeyboardButton{
+				{Text: "📱 የተመዘገብኩበት ቁጥር / Use my number", CallbackData: "wd:self"},
+			})
+		}
+		h.reply(msg.Chat.ID,
+			"ወደ የትኛው ቁጥር እንላክ? ቁጥሩን ይጻፉ፣ ወይም ከታች ይንኩ።\n\nWhich number should we send it to? Type the number, or tap below.",
+			&telegram.ReplyMarkup{InlineKeyboard: selfBtn})
+
+	case wdAwaitingAccount:
+		h.clearWithdraw(msg.Chat.ID)
+		h.doWithdraw(c, msg, user.ID, convo.method, convo.amount, strings.TrimSpace(text))
+	}
+}
+
+// doWithdraw runs the withdrawal through the SAME use case the Mini App uses —
+// min/daily-cap/deposit-gate checks, phone validation, balance debit — and
+// reports the outcome. A blank account resolves to the registration phone.
+func (h *TelegramHandler) doWithdraw(c *gin.Context, msg *telegram.Message, userID uuid.UUID, method domain.PaymentMethod, amount float64, account string) {
+	tx, err := h.walletUseCase.Withdraw(c.Request.Context(), domain.WithdrawRequest{
+		UserID:        userID,
+		Amount:        amount,
+		AccountNumber: account,
+		AccountType:   method,
+	})
+	if err != nil {
+		h.reply(msg.Chat.ID, withdrawErrorMessage(err), h.mainMenu())
+		return
+	}
+
+	// The balance is debited immediately; the payout itself is pending admin
+	// approval. Show the new balance so the debit is visible.
+	line := fmt.Sprintf("✅ ጥያቄዎ ደርሷል! %.2f ብር እየተላከ ነው (በአስተዳዳሪ ማረጋገጫ በኋላ)።\nRequest received! %.2f birr is on its way (after admin approval).", amount, amount)
+	if tx != nil {
+		if wallet, werr := h.walletUseCase.GetWalletByTelegramID(c.Request.Context(), msg.From.ID); werr == nil && wallet != nil {
+			line += fmt.Sprintf("\n\n💰 ቀሪ ሂሳብ / Balance: %.2f ብር", wallet.Balance)
+		}
+	}
+	h.reply(msg.Chat.ID, line, h.mainMenu())
+}
+
+// withdrawErrorMessage maps a Withdraw error to a player-facing bilingual line.
+func withdrawErrorMessage(err error) string {
+	m := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(m, "insufficient"):
+		return "⚠️ በቂ ቀሪ ሂሳብ የለዎትም።\nYou don't have enough balance."
+	case strings.Contains(m, "remaining balance"):
+		return fmt.Sprintf("⚠️ ቢያንስ %.0f ብር በሂሳብዎ መቅረት አለበት።\nYou must keep at least %.0f birr in your wallet.", domain.MinBalanceAfterWithdrawal, domain.MinBalanceAfterWithdrawal)
+	case strings.Contains(m, "daily"):
+		return fmt.Sprintf("⚠️ የዕለታዊ የማውጣት ገደብ (%.0f ብር) ደርሷል።\nYou've reached the daily withdrawal limit (%.0f birr).", domain.MaxDailyWithdrawal, domain.MaxDailyWithdrawal)
+	case strings.Contains(m, "completed deposit"):
+		return "⚠️ ገንዘብ ለማውጣት በመጀመሪያ ቢያንስ አንድ ጊዜ ገቢ ማድረግ አለብዎት።\nYou must make at least one deposit before you can withdraw."
+	case strings.Contains(m, "minimum"):
+		return fmt.Sprintf("ዝቅተኛው የማውጣት መጠን %.0f ብር ነው።\nThe minimum withdrawal is %.0f birr.", domain.MinWithdrawalAmount, domain.MinWithdrawalAmount)
+	case strings.Contains(m, "phone") || strings.Contains(m, "account"):
+		return "⚠️ ትክክለኛ የኢትዮጵያ ስልክ ቁጥር ያስገቡ (ለምሳሌ 0912345678)።\nPlease enter a valid Ethiopian phone number (e.g. 0912345678)."
+	default:
+		return "⚠️ ወጪ ማድረግ አልተሳካም፣ እባክዎ እንደገና ይሞክሩ።\nWithdrawal failed — please try again."
 	}
 }
 
