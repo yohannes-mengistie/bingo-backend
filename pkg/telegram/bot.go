@@ -164,11 +164,17 @@ func (b *Bot) SendMessage(chatID int64, text string, replyMarkup *ReplyMarkup) e
 	return nil
 }
 
-// SetDefaultMenuButton resets the chat menu button (the persistent button next
-// to the message box) to Telegram's default, removing any Mini App "Open"
-// launcher previously configured there. Idempotent — safe to call on boot.
-func (b *Bot) SetDefaultMenuButton() error {
-	payload := map[string]any{"menu_button": map[string]string{"type": "default"}}
+// SetWebAppMenuButton sets the chat menu button (the persistent button next to
+// the message box) to a Mini App launcher opening webAppURL. Idempotent — safe
+// to call on boot.
+func (b *Bot) SetWebAppMenuButton(text, webAppURL string) error {
+	payload := map[string]any{
+		"menu_button": map[string]any{
+			"type":    "web_app",
+			"text":    text,
+			"web_app": map[string]string{"url": webAppURL},
+		},
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal setChatMenuButton payload: %w", err)

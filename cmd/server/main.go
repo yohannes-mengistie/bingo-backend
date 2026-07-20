@@ -167,10 +167,11 @@ func main() {
 	// own replies, bonus grant notices, and admin broadcasts. They share a
 	// token and therefore a rate-limit budget, so they should share a client.
 	telegramBot := telegram.NewBot(cfg.Telegram.BotToken)
-	// Remove the Mini App "Open" launcher from the chat menu button — the menu's
-	// own buttons cover launching the app, and the extra launcher was noise.
-	if err := telegramBot.SetDefaultMenuButton(); err != nil {
-		log.Printf("[telegram] could not reset chat menu button: %v", err)
+	// Keep the in-chat menu button as a Mini App launcher (next to the message
+	// box). NOTE: the "Open" shortcut in the CHAT LIST is the separate BotFather
+	// "Main Mini App" setting and cannot be changed here.
+	if err := telegramBot.SetWebAppMenuButton("🎮 Play", cfg.Telegram.MiniAppURL); err != nil {
+		log.Printf("[telegram] could not set chat menu button: %v", err)
 	}
 	bonusUseCase := usecase.NewBonusUseCase(bonusRepo, userRepo, db, telegramBroadcastSender{bot: telegramBot})
 	// The bot exists now, so the wallet can Telegram a referrer when their
