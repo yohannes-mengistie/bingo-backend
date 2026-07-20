@@ -325,11 +325,11 @@ func (h *TelegramHandler) handleMenuText(c *gin.Context, msg *telegram.Message) 
 	case btnProfile:
 		h.showBalance(c, msg, user)
 	case btnPromo:
-		// Promo codes are switched off for now: tell the player plainly instead
-		// of arming the capture, so a typed code isn't left waiting.
+		// A tap arms the chat: the NEXT message is read as a promo code.
+		h.armPromo(msg.Chat.ID)
 		h.reply(msg.Chat.ID,
-			"🎁 የፕሮሞ ኮድ አገልግሎት አሁን ዝግ ነው። ቆየት ብለው ይሞክሩ።\n\nPromo codes are not available right now — please check back later.",
-			h.mainMenu())
+			"🎁 የፕሮሞ ኮድዎን አሁን ይላኩ 👇\n\nSend your promo code now 👇",
+			nil)
 	case btnHelp:
 		h.reply(msg.Chat.ID,
 			"🆘 እርዳታ / Help\n\n"+
