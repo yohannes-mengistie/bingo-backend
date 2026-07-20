@@ -3,13 +3,16 @@ package usecase
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"math"
 
 	"github.com/bingo/backend/internal/domain"
+	redisPkg "github.com/bingo/backend/pkg/redis"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -46,6 +49,9 @@ type BonusCampaignUseCase struct {
 	broadcaster *BroadcastUseCase
 	// notifier confirms an individual claim. Optional.
 	notifier domain.BroadcastSender
+	// rdb pushes live claim/create/end events to subscribed admin dashboards.
+	// Optional: nil simply means the dashboard falls back to its own refresh.
+	rdb *redis.Client
 }
 
 func NewBonusCampaignUseCase(
@@ -55,6 +61,7 @@ func NewBonusCampaignUseCase(
 	db *sql.DB,
 	broadcaster *BroadcastUseCase,
 	notifier domain.BroadcastSender,
+	rdb *redis.Client,
 ) *BonusCampaignUseCase {
 	return &BonusCampaignUseCase{
 		repo:        repo,
@@ -63,6 +70,24 @@ func NewBonusCampaignUseCase(
 		db:          db,
 		broadcaster: broadcaster,
 		notifier:    notifier,
+		rdb:         rdb,
+	}
+}
+
+// publish pushes a live admin event. After-the-fact and never fatal: a claim is
+// already committed and the money already granted, so a Redis hiccup must not
+// fail the operation — the dashboard reconciles on its next load regardless.
+func (uc *BonusCampaignUseCase) publish(event string, data any) {
+	if uc.rdb == nil {
+		return
+	}
+	payload, err := json.Marshal(map[string]any{"event": event, "data": data})
+	if err != nil {
+		log.Printf("[campaign] failed to marshal %s event: %v", event, err)
+		return
+	}
+	if err := uc.rdb.Publish(context.Background(), redisPkg.BonusCampaignChannel, payload).Err(); err != nil {
+		log.Printf("[campaign] failed to publish %s event: %v", event, err)
 	}
 }
 
@@ -142,6 +167,9 @@ func (uc *BonusCampaignUseCase) Create(ctx context.Context, req domain.CreateBon
 	if req.Broadcast {
 		uc.announce(ctx, c)
 	}
+	// Tell any open dashboard a new campaign is live, so its scoreboard appears
+	// without a manual refresh.
+	uc.publish("created", c)
 	return c, nil
 }
 
@@ -277,14 +305,27 @@ func (uc *BonusCampaignUseCase) Claim(ctx context.Context, userID uuid.UUID) (*d
 
 	uc.notifyClaim(user, campaign.AmountPerSlot, position, campaign.Slots)
 
-	return &domain.BonusCampaignClaim{
+	claim := &domain.BonusCampaignClaim{
 		CampaignID: campaign.ID,
 		UserID:     userID,
 		GrantID:    &grant.ID,
 		Amount:     campaign.AmountPerSlot,
 		Position:   position,
 		ClaimedAt:  grant.GrantedAt,
-	}, nil
+		// Identity carried on the live event so the admin scoreboard can show
+		// the new row without a lookup, exactly as ListClaims would.
+		Name:  user.FirstName,
+		Phone: user.PhoneNumber,
+	}
+	// Live update for the admin scoreboard: the new claim plus the running
+	// count, so a stampede fills the bar in real time.
+	uc.publish("claim", map[string]any{
+		"campaign_id":   campaign.ID,
+		"claimed_count": position,
+		"slots":         campaign.Slots,
+		"claim":         claim,
+	})
+	return claim, nil
 }
 
 // Status is what the player's bonus screen shows: the running campaign, and
@@ -342,6 +383,8 @@ func (uc *BonusCampaignUseCase) End(ctx context.Context, id uuid.UUID) (*domain.
 	if err := uc.repo.End(ctx, nil, id); err != nil {
 		return nil, err
 	}
+	// Tell open dashboards the campaign is over, so the scoreboard clears.
+	uc.publish("ended", map[string]any{"campaign_id": id})
 	return uc.repo.FindByID(ctx, id)
 }
 

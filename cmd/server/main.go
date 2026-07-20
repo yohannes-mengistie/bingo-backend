@@ -184,11 +184,15 @@ func main() {
 	// "First N players" bonus giveaways. Declared after broadcastUseCase
 	// because creating a campaign can announce itself to every player.
 	bonusCampaignRepo := postgres.NewBonusCampaignRepository(db)
-	bonusCampaignUseCase := usecase.NewBonusCampaignUseCase(bonusCampaignRepo, bonusRepo, userRepo, db, broadcastUseCase, telegramBroadcastSender{bot: telegramBot})
+	bonusCampaignUseCase := usecase.NewBonusCampaignUseCase(bonusCampaignRepo, bonusRepo, userRepo, db, broadcastUseCase, telegramBroadcastSender{bot: telegramBot}, redisClient.GetClient())
 	bonusCampaignHandler := handler.NewBonusCampaignHandler(bonusCampaignUseCase)
 
+	// Live admin feed: pushes campaign claims to the dashboard over WebSocket
+	// so a stampede fills in real time instead of on a refresh timer.
+	adminWSHandler := handler.NewAdminWSHandler(redisClient.GetClient(), jwtService, allowOrigins)
+
 	// Setup router
-	router := setupRouter(userHandler, walletHandler, authHandler, gameHandler, botHandler, supportHandler, wsHandler, telegramHandler, promoHandler, bonusHandler, bonusCampaignHandler, broadcastHandler, jwtService, cfg.Internal.APISecret, redisClient.GetClient(), cfg.RateLimits)
+	router := setupRouter(userHandler, walletHandler, authHandler, gameHandler, botHandler, supportHandler, wsHandler, adminWSHandler, telegramHandler, promoHandler, bonusHandler, bonusCampaignHandler, broadcastHandler, jwtService, cfg.Internal.APISecret, redisClient.GetClient(), cfg.RateLimits)
 
 	// Shared background context for the server's housekeeping goroutines,
 	// cancelled on shutdown.
@@ -268,7 +272,7 @@ func main() {
 	log.Println("Server exited")
 }
 
-func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.WalletHandler, authHandler *handler.AuthHandler, gameHandler *handler.GameHandler, botHandler *handler.BotHandler, supportHandler *handler.SupportHandler, wsHandler *handler.WebSocketHandler, telegramHandler *handler.TelegramHandler, promoHandler *handler.PromoHandler, bonusHandler *handler.BonusHandler, bonusCampaignHandler *handler.BonusCampaignHandler, broadcastHandler *handler.BroadcastHandler, jwtService *jwt.Service, internalAPISecret string, rdb *redis.Client, rl config.RateLimitsConfig) *gin.Engine {
+func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.WalletHandler, authHandler *handler.AuthHandler, gameHandler *handler.GameHandler, botHandler *handler.BotHandler, supportHandler *handler.SupportHandler, wsHandler *handler.WebSocketHandler, adminWSHandler *handler.AdminWSHandler, telegramHandler *handler.TelegramHandler, promoHandler *handler.PromoHandler, bonusHandler *handler.BonusHandler, bonusCampaignHandler *handler.BonusCampaignHandler, broadcastHandler *handler.BroadcastHandler, jwtService *jwt.Service, internalAPISecret string, rdb *redis.Client, rl config.RateLimitsConfig) *gin.Engine {
 	// Rate-limit buckets. Auth buckets are per-IP (no user to key on yet);
 	// the money buckets sit behind AuthMiddleware and key on the user id.
 	secs := func(n int) time.Duration { return time.Duration(n) * time.Second }
@@ -471,6 +475,10 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 		})
 		api.GET("/ws/game/:gameId", limitWebSocket, wsHandler.HandleWebSocket)
 		api.GET("/ws/game", limitWebSocket, wsHandler.HandleWebSocket)
+		// Live admin bonus-campaign feed. Authenticates via a ?token= query
+		// param (a browser cannot set headers on a WebSocket), validated inside
+		// the handler, so it sits outside the header-based admin middleware.
+		api.GET("/ws/admin/bonus-campaign", limitWebSocket, adminWSHandler.BonusCampaign)
 
 		// Protected admin endpoints
 		admin := api.Group("/admin")

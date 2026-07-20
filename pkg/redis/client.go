@@ -68,3 +68,8 @@ func GameCountdownKey(gameID string) string {
 func GameChannel(gameID string) string {
 	return fmt.Sprintf("game:%s:events", gameID)
 }
+
+// BonusCampaignChannel carries live "first N players" giveaway events to
+// subscribed admin dashboards. A single global channel, not one per campaign,
+// because only one campaign is ever active at a time.
+const BonusCampaignChannel = "admin:bonus_campaign:events"

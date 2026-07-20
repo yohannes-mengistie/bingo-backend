@@ -23,6 +23,7 @@ func (h *harness) campaignUC() *BonusCampaignUseCase {
 		h.db,
 		nil, // no broadcaster: these tests must not message real players
 		nil, // no notifier, same reason
+		nil, // no redis: publish() is a no-op, the claim logic is unaffected
 	)
 }
 
