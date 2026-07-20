@@ -31,8 +31,19 @@ func NewBot(token string) *Bot {
 
 // Update is one entry from a webhook POST body.
 type Update struct {
-	UpdateID int64    `json:"update_id"`
-	Message  *Message `json:"message"`
+	UpdateID      int64          `json:"update_id"`
+	Message       *Message       `json:"message"`
+	CallbackQuery *CallbackQuery `json:"callback_query"`
+}
+
+// CallbackQuery is the payload when a user taps an inline button carrying
+// callback_data (as opposed to a web_app button, which opens the Mini App).
+// It is how the in-chat deposit flow reads a method choice.
+type CallbackQuery struct {
+	ID      string       `json:"id"`
+	From    *MessageUser `json:"from"`
+	Message *Message     `json:"message"` // the message the button was attached to
+	Data    string       `json:"data"`    // the callback_data of the tapped button
 }
 
 // Message is a Telegram message. Contact is set when the user shares a phone.
@@ -89,10 +100,13 @@ type KeyboardButton struct {
 	WebApp         *WebAppInfo `json:"web_app,omitempty"`
 }
 
-// InlineKeyboardButton is a button under the message. WebApp opens a Mini App.
+// InlineKeyboardButton is a button under the message. Exactly one action field
+// is set: WebApp opens a Mini App; CallbackData sends that string back to the
+// webhook as a CallbackQuery (a tap the bot handles in-chat, no Mini App).
 type InlineKeyboardButton struct {
-	Text   string      `json:"text"`
-	WebApp *WebAppInfo `json:"web_app,omitempty"`
+	Text         string      `json:"text"`
+	WebApp       *WebAppInfo `json:"web_app,omitempty"`
+	CallbackData string      `json:"callback_data,omitempty"`
 }
 
 // WebAppInfo points an inline button at a Mini App URL.
@@ -144,6 +158,31 @@ func (b *Bot) SendMessage(chatID int64, text string, replyMarkup *ReplyMarkup) e
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("sendMessage failed: status %d: %s", resp.StatusCode, string(raw))
+	}
+	return nil
+}
+
+// AnswerCallbackQuery acknowledges an inline-button tap. Telegram shows a
+// loading spinner on the button until this is called; leaving it unanswered
+// makes the button look stuck. text (optional) pops a small toast to the user.
+func (b *Bot) AnswerCallbackQuery(callbackID, text string) error {
+	payload := map[string]any{"callback_query_id": callbackID}
+	if text != "" {
+		payload["text"] = text
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal answerCallbackQuery payload: %w", err)
+	}
+	url := fmt.Sprintf("%s/bot%s/answerCallbackQuery", botAPIBase, b.token)
+	resp, err := b.client.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("answerCallbackQuery request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("answerCallbackQuery failed: status %d: %s", resp.StatusCode, string(raw))
 	}
 	return nil
 }

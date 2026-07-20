@@ -173,8 +173,15 @@ func main() {
 	promoRepo := postgres.NewPromoRepository(db, walletRepo, transactionRepo)
 	promoHandler := handler.NewPromoHandler(promoRepo)
 
-	// Telegram bot: registration gateway + Mini App launcher (webhook-driven).
-	telegramHandler := handler.NewTelegramHandler(userUseCase, promoRepo, telegramBot, cfg.Telegram.WebhookSecret, cfg.Telegram.MiniAppURL)
+	// Telegram bot: registration gateway + Mini App launcher (webhook-driven),
+	// plus in-chat balance and deposit. Deposit shows the house account for each
+	// method, so the bot needs the same numbers the verifier binds receipts to.
+	depositAccounts := map[domain.PaymentMethod]string{
+		domain.PaymentMethodTelebirr: cfg.PaymentVerifier.TelebirrAccount,
+		domain.PaymentMethodCBEBirr:  cfg.PaymentVerifier.CBEBirrAccount,
+		domain.PaymentMethodMpesa:    cfg.PaymentVerifier.MpesaAccount,
+	}
+	telegramHandler := handler.NewTelegramHandler(userUseCase, walletUseCase, bonusUseCase, promoRepo, telegramBot, cfg.Telegram.WebhookSecret, cfg.Telegram.MiniAppURL, depositAccounts)
 
 	// Admin broadcasts over the same bot token as the game's own messages.
 	broadcastRepo := postgres.NewBroadcastRepository(db)
