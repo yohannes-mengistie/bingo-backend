@@ -173,16 +173,6 @@ func main() {
 	promoRepo := postgres.NewPromoRepository(db, walletRepo, transactionRepo)
 	promoHandler := handler.NewPromoHandler(promoRepo)
 
-	// Telegram bot: registration gateway + Mini App launcher (webhook-driven),
-	// plus in-chat balance and deposit. Deposit shows the house account for each
-	// method, so the bot needs the same numbers the verifier binds receipts to.
-	depositAccounts := map[domain.PaymentMethod]string{
-		domain.PaymentMethodTelebirr: cfg.PaymentVerifier.TelebirrAccount,
-		domain.PaymentMethodCBEBirr:  cfg.PaymentVerifier.CBEBirrAccount,
-		domain.PaymentMethodMpesa:    cfg.PaymentVerifier.MpesaAccount,
-	}
-	telegramHandler := handler.NewTelegramHandler(userUseCase, walletUseCase, bonusUseCase, promoRepo, telegramBot, cfg.Telegram.WebhookSecret, cfg.Telegram.MiniAppURL, depositAccounts)
-
 	// Admin broadcasts over the same bot token as the game's own messages.
 	broadcastRepo := postgres.NewBroadcastRepository(db)
 	broadcastUseCase := usecase.NewBroadcastUseCase(broadcastRepo, telegramBroadcastSender{bot: telegramBot})
@@ -193,6 +183,18 @@ func main() {
 	bonusCampaignRepo := postgres.NewBonusCampaignRepository(db)
 	bonusCampaignUseCase := usecase.NewBonusCampaignUseCase(bonusCampaignRepo, bonusRepo, userRepo, db, broadcastUseCase, telegramBroadcastSender{bot: telegramBot}, redisClient.GetClient())
 	bonusCampaignHandler := handler.NewBonusCampaignHandler(bonusCampaignUseCase)
+
+	// Telegram bot: registration gateway + Mini App launcher (webhook-driven),
+	// plus in-chat balance/deposit/withdraw and today's-bonus claim. Deposit
+	// shows the house account for each method, so the bot needs the same numbers
+	// the verifier binds receipts to; the campaign use case powers the in-chat
+	// Claim button. Built after the campaign use case it depends on.
+	depositAccounts := map[domain.PaymentMethod]string{
+		domain.PaymentMethodTelebirr: cfg.PaymentVerifier.TelebirrAccount,
+		domain.PaymentMethodCBEBirr:  cfg.PaymentVerifier.CBEBirrAccount,
+		domain.PaymentMethodMpesa:    cfg.PaymentVerifier.MpesaAccount,
+	}
+	telegramHandler := handler.NewTelegramHandler(userUseCase, walletUseCase, bonusUseCase, bonusCampaignUseCase, promoRepo, telegramBot, cfg.Telegram.WebhookSecret, cfg.Telegram.MiniAppURL, depositAccounts)
 
 	// Live admin feed: pushes campaign claims to the dashboard over WebSocket
 	// so a stampede fills in real time instead of on a refresh timer.

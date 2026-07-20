@@ -23,14 +23,15 @@ import (
 // users register (it captures the phone number a Mini App cannot read), so this
 // is the registration gateway in front of the Mini App.
 type TelegramHandler struct {
-	userUseCase   *usecase.UserUseCase
-	walletUseCase *usecase.WalletUseCase
-	bonusUseCase  *usecase.BonusUseCase
-	promoRepo     domain.PromoRepository
-	bot           *telegram.Bot
-	webhookSecret string
-	miniAppBase   string // Mini App origin, no trailing slash
-	appVersion    string // per-deploy cache-buster (see appURL)
+	userUseCase     *usecase.UserUseCase
+	walletUseCase   *usecase.WalletUseCase
+	bonusUseCase    *usecase.BonusUseCase
+	campaignUseCase *usecase.BonusCampaignUseCase
+	promoRepo       domain.PromoRepository
+	bot             *telegram.Bot
+	webhookSecret   string
+	miniAppBase     string // Mini App origin, no trailing slash
+	appVersion      string // per-deploy cache-buster (see appURL)
 
 	// depositAccounts is the house number a player pays for each method, shown
 	// in-chat when they start a deposit. A method absent here is not offered in
@@ -98,13 +99,14 @@ type withdrawConvo struct {
 }
 
 // NewTelegramHandler creates a new Telegram webhook handler.
-func NewTelegramHandler(userUseCase *usecase.UserUseCase, walletUseCase *usecase.WalletUseCase, bonusUseCase *usecase.BonusUseCase, promoRepo domain.PromoRepository, bot *telegram.Bot, webhookSecret, miniAppURL string, depositAccounts map[domain.PaymentMethod]string) *TelegramHandler {
+func NewTelegramHandler(userUseCase *usecase.UserUseCase, walletUseCase *usecase.WalletUseCase, bonusUseCase *usecase.BonusUseCase, campaignUseCase *usecase.BonusCampaignUseCase, promoRepo domain.PromoRepository, bot *telegram.Bot, webhookSecret, miniAppURL string, depositAccounts map[domain.PaymentMethod]string) *TelegramHandler {
 	base := strings.TrimRight(miniAppURL, "/")
 	version := miniAppCacheVersion()
 	return &TelegramHandler{
 		userUseCase:     userUseCase,
 		walletUseCase:   walletUseCase,
 		bonusUseCase:    bonusUseCase,
+		campaignUseCase: campaignUseCase,
 		promoRepo:       promoRepo,
 		bot:             bot,
 		webhookSecret:   webhookSecret,
@@ -228,6 +230,7 @@ func (h *TelegramHandler) Webhook(c *gin.Context) {
 // routed by exact match in handleMenuText.
 const (
 	btnPlay     = "🎮 ቢንጎ ተጫወት"
+	btnClaim    = "🎁 የዛሬ ቦነስ ውሰድ"
 	btnPromo    = "🎁 ፕሮሞ ኮድ"
 	btnDeposit  = "💰 ገቢ ለማድረግ"
 	btnWithdraw = "💸 ወጪ ለማድረግ"
@@ -250,11 +253,11 @@ func (h *TelegramHandler) mainMenu() *telegram.ReplyMarkup {
 	}
 	return &telegram.ReplyMarkup{
 		Keyboard: [][]telegram.KeyboardButton{
-			{txt(btnPlay), txt(btnPromo)},
-			{txt(btnDeposit), txt(btnWithdraw)},
-			{txt(btnInvite), txt(btnProfile)},
-			{txt(btnHelp), txt(btnLanguage)},
-			{txt(btnAgent)},
+			{txt(btnPlay), txt(btnClaim)},
+			{txt(btnPromo), txt(btnDeposit)},
+			{txt(btnWithdraw), txt(btnInvite)},
+			{txt(btnProfile), txt(btnHelp)},
+			{txt(btnLanguage), txt(btnAgent)},
 		},
 		ResizeKeyboard: true,
 		IsPersistent:   true,
@@ -314,6 +317,8 @@ func (h *TelegramHandler) handleMenuText(c *gin.Context, msg *telegram.Message) 
 	switch text {
 	case btnPlay:
 		h.appButton(msg.Chat.ID, "🎮 ለመጫወት ከታች ይንኩ 👇", "🎮 ቢንጎ ተጫወት / Play", "/")
+	case btnClaim:
+		h.showClaim(c, msg, user.ID)
 	case btnDeposit:
 		h.startDeposit(c, msg, user.ID)
 	case btnWithdraw:
@@ -388,7 +393,7 @@ func (h *TelegramHandler) redeemPromo(c *gin.Context, msg *telegram.Message, use
 // deposit conversation knows to yield to a menu tap instead of swallowing it.
 func isMenuLabel(text string) bool {
 	switch text {
-	case btnPlay, btnPromo, btnDeposit, btnWithdraw, btnInvite, btnProfile, btnHelp, btnLanguage, btnAgent:
+	case btnPlay, btnClaim, btnPromo, btnDeposit, btnWithdraw, btnInvite, btnProfile, btnHelp, btnLanguage, btnAgent:
 		return true
 	}
 	return false
@@ -548,6 +553,27 @@ func (h *TelegramHandler) handleCallback(c *gin.Context, cq *telegram.CallbackQu
 		h.reply(chatID, fmt.Sprintf(
 			"✅ %s ተመርጧል።\n\nምን ያህል ማውጣት ይፈልጋሉ? (በ ብር)\nዝቅተኛ %.0f ብር · ያለዎት %.2f ብር\n\nHow much do you want to withdraw? (min %.0f, you have %.2f)",
 			depositMethodLabel(method), domain.MinWithdrawalAmount, bal, domain.MinWithdrawalAmount, bal), nil)
+
+	case data == "bonus:claim":
+		// The claim itself is the ONLY guard against a double claim: the use
+		// case (and its unique constraint) reject a second attempt, so even a
+		// double-tapped button can never pay twice — the second returns
+		// ErrCampaignAlreadyClaimed, reported as "already claimed".
+		if h.campaignUseCase == nil {
+			_ = h.bot.AnswerCallbackQuery(cq.ID, "")
+			h.reply(chatID, "🎁 አሁን ምንም ቦነስ የለም።\nNo bonus right now.", h.mainMenu())
+			return
+		}
+		claim, cerr := h.campaignUseCase.Claim(c.Request.Context(), user.ID)
+		if cerr != nil {
+			_ = h.bot.AnswerCallbackQuery(cq.ID, "")
+			h.reply(chatID, claimErrorMessage(cerr), h.mainMenu())
+			return
+		}
+		_ = h.bot.AnswerCallbackQuery(cq.ID, "🎉")
+		h.reply(chatID, fmt.Sprintf(
+			"🎉 እንኳን ደስ አለዎት! %.0f ብር ቦነስ አግኝተዋል።\nCongratulations! You got %.0f birr bonus. 💰",
+			claim.Amount, claim.Amount), h.mainMenu())
 
 	default:
 		_ = h.bot.AnswerCallbackQuery(cq.ID, "")
@@ -774,6 +800,63 @@ func withdrawErrorMessage(err error) string {
 		return "⚠️ ትክክለኛ የኢትዮጵያ ስልክ ቁጥር ያስገቡ (ለምሳሌ 0912345678)።\nPlease enter a valid Ethiopian phone number (e.g. 0912345678)."
 	default:
 		return "⚠️ ወጪ ማድረግ አልተሳካም፣ እባክዎ እንደገና ይሞክሩ።\nWithdrawal failed — please try again."
+	}
+}
+
+// ---- In-chat "today's bonus" claim -----------------------------------------
+
+// showClaim answers the Claim button. Deliberately minimal: a short heading and
+// a Claim button when a slot is still available and unexpired, plus a shortcut
+// to claim in the Mini App instead. No pot size, per-player amount, or
+// remaining-slot count is shown — just whether claiming is possible.
+func (h *TelegramHandler) showClaim(c *gin.Context, msg *telegram.Message, userID uuid.UUID) {
+	if h.campaignUseCase == nil {
+		h.reply(msg.Chat.ID, "🎁 አሁን ምንም ቦነስ የለም።\nNo bonus right now.", h.mainMenu())
+		return
+	}
+
+	status, err := h.campaignUseCase.Status(c.Request.Context(), userID)
+	if err != nil || status == nil || status.Campaign == nil {
+		h.reply(msg.Chat.ID, "🎁 አሁን ምንም ቦነስ የለም። ቆየት ብለው ይሞክሩ።\nNo bonus running right now — check back later.", h.mainMenu())
+		return
+	}
+	if status.Claimed {
+		h.reply(msg.Chat.ID, "✅ የዛሬውን ቦነስ ወስደዋል።\nYou already claimed today's bonus.", h.mainMenu())
+		return
+	}
+	if !status.CanClaim {
+		// A slot exists only when claiming is possible; otherwise say why,
+		// without exposing counts.
+		if status.Reason == domain.ReasonNotEligible {
+			h.reply(msg.Chat.ID, "ℹ️ ቦነሱን ለመውሰድ በመጀመሪያ አንድ ጊዜ ገቢ ማድረግ አለብዎት።\nDeposit once to unlock the bonus.", h.mainMenu())
+			return
+		}
+		h.reply(msg.Chat.ID, "😔 ይቅርታ፣ የዛሬው ቦነስ አልቋል።\nSorry, today's bonus is finished.", h.mainMenu())
+		return
+	}
+
+	// Claimable: heading + Claim button, plus a claim-in-app shortcut.
+	h.reply(msg.Chat.ID, "🎁 የዛሬ ቦነስ / Today's bonus",
+		&telegram.ReplyMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{
+			{{Text: "🎁 ውሰድ / Claim", CallbackData: "bonus:claim"}},
+			{{Text: "📱 በአፕ ውሰድ / Claim in app", WebApp: &telegram.WebAppInfo{URL: h.appURL("/")}}},
+		}})
+}
+
+// claimErrorMessage maps a campaign claim refusal to a bilingual line. The
+// already-claimed case is what enforces "no double claim" for the player.
+func claimErrorMessage(err error) string {
+	switch {
+	case errors.Is(err, domain.ErrCampaignAlreadyClaimed):
+		return "ℹ️ የዛሬውን ቦነስ ቀድሞ ወስደዋል።\nYou already claimed today's bonus."
+	case errors.Is(err, domain.ErrCampaignExhausted):
+		return "😔 ይቅርታ፣ ቦታዎቹ አልቀዋል። ነገ ይሞክሩ።\nSorry, the bonus is finished — try again tomorrow."
+	case errors.Is(err, domain.ErrCampaignNotEligible):
+		return "ℹ️ ቦነሱን ለመውሰድ በመጀመሪያ አንድ ጊዜ ገቢ ማድረግ አለብዎት።\nDeposit once to unlock the bonus."
+	case errors.Is(err, domain.ErrNoActiveCampaign):
+		return "🎁 አሁን ምንም ቦነስ የለም።\nNo bonus running right now."
+	default:
+		return "⚠️ ቦነስ መውሰድ አልተሳካም፣ እባክዎ እንደገና ይሞክሩ።\nCouldn't claim — please try again."
 	}
 }
 
