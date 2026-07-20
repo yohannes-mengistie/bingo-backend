@@ -56,6 +56,22 @@ type TelegramHandler struct {
 	// (method → amount → destination number).
 	withdrawMu     sync.Mutex
 	withdrawConvos map[int64]*withdrawConvo
+
+	// pendingReferral remembers the referral code from a /start ref_<code> deep
+	// link until the invited user finishes registering (shares their phone). In
+	// memory like the rest: worst case after a restart the referral link is not
+	// credited, which is acceptable.
+	referralMu      sync.Mutex
+	pendingReferral map[int64]pendingRef
+}
+
+// referralTTL is how long a captured invite code waits for the user to finish
+// registering before it lapses.
+const referralTTL = 30 * time.Minute
+
+type pendingRef struct {
+	code     string
+	deadline time.Time
 }
 
 // promoWaitTTL is how long a "send me your promo code" prompt stays armed.
@@ -117,12 +133,47 @@ func NewTelegramHandler(userUseCase *usecase.UserUseCase, walletUseCase *usecase
 		// previous build after a deploy. Resolved once at startup (stable
 		// within a deploy, so repeated opens still hit Telegram's cache;
 		// changes on the next deploy).
-		miniAppBase:    base,
-		appVersion:     version,
-		promoWaiting:   make(map[int64]time.Time),
-		depositConvos:  make(map[int64]*depositConvo),
-		withdrawConvos: make(map[int64]*withdrawConvo),
+		miniAppBase:     base,
+		appVersion:      version,
+		promoWaiting:    make(map[int64]time.Time),
+		depositConvos:   make(map[int64]*depositConvo),
+		withdrawConvos:  make(map[int64]*withdrawConvo),
+		pendingReferral: make(map[int64]pendingRef),
 	}
+}
+
+// stashReferral records the invite code from a deep link for a chat, to be
+// applied when that user registers.
+func (h *TelegramHandler) stashReferral(chatID int64, code string) {
+	h.referralMu.Lock()
+	defer h.referralMu.Unlock()
+	h.pendingReferral[chatID] = pendingRef{code: code, deadline: time.Now().Add(referralTTL)}
+}
+
+// takeReferral returns and clears a chat's pending invite code (empty if none
+// or expired).
+func (h *TelegramHandler) takeReferral(chatID int64) string {
+	h.referralMu.Lock()
+	defer h.referralMu.Unlock()
+	p, ok := h.pendingReferral[chatID]
+	if !ok {
+		return ""
+	}
+	delete(h.pendingReferral, chatID)
+	if time.Now().After(p.deadline) {
+		return ""
+	}
+	return p.code
+}
+
+// startPayload extracts the parameter after "/start" (Telegram delivers a deep
+// link t.me/bot?start=X as the message "/start X").
+func startPayload(text string) string {
+	parts := strings.SplitN(strings.TrimSpace(text), " ", 2)
+	if len(parts) < 2 {
+		return ""
+	}
+	return strings.TrimSpace(parts[1])
 }
 
 // armPromo marks chatID so its next message is read as a promo code.
@@ -821,6 +872,14 @@ func claimErrorMessage(err error) string {
 // handleStart greets the user. If already registered, it shows the persistent
 // main menu straight away; otherwise it asks them to share their phone number.
 func (h *TelegramHandler) handleStart(c *gin.Context, msg *telegram.Message) {
+	// Capture an invite code from the deep link (/start ref_<code>) so it can be
+	// applied when this person finishes registering below.
+	if payload := startPayload(msg.Text); payload != "" {
+		if code := strings.TrimPrefix(payload, "ref_"); code != "" {
+			h.stashReferral(msg.Chat.ID, code)
+		}
+	}
+
 	if user, err := h.userUseCase.FindUserByTelegramID(c.Request.Context(), msg.From.ID); err == nil && user != nil {
 		h.reply(msg.Chat.ID,
 			"እንኳን ደህና መጡ፣ "+user.FirstName+"! 🎉\nከታች ያለውን ማውጫ ይጠቀሙ 👇\n\nWelcome back! Use the menu below 👇",
@@ -854,10 +913,11 @@ func (h *TelegramHandler) handleContact(c *gin.Context, msg *telegram.Message) {
 	}
 
 	_, _, err := h.userUseCase.CreateUser(c.Request.Context(), domain.CreateUserRequest{
-		TelegramID: msg.From.ID,
-		FirstName:  msg.From.FirstName,
-		LastName:   lastName,
-		Phone:      contact.PhoneNumber,
+		TelegramID:   msg.From.ID,
+		FirstName:    msg.From.FirstName,
+		LastName:     lastName,
+		Phone:        contact.PhoneNumber,
+		ReferrerCode: h.takeReferral(msg.Chat.ID),
 	})
 
 	// Treat "already registered" as success — the user just wants to play.

@@ -31,16 +31,17 @@ const (
 type TransactionCategory string
 
 const (
-	TransactionCategoryDeposit     TransactionCategory = "deposit"      // real money in (e.g. Telebirr top-up)
-	TransactionCategoryWithdrawal  TransactionCategory = "withdrawal"   // real money out (payout to phone)
-	TransactionCategoryBet         TransactionCategory = "bet"          // stake placed on a game card
-	TransactionCategoryWinnings    TransactionCategory = "winnings"     // prize paid to a game winner
-	TransactionCategoryRefund      TransactionCategory = "refund"       // stake returned (left/cancelled game)
-	TransactionCategoryTransferIn  TransactionCategory = "transfer_in"  // received from another player
-	TransactionCategoryTransferOut TransactionCategory = "transfer_out" // sent to another player
-	TransactionCategoryAdminCredit TransactionCategory = "admin_credit" // manual balance increase by an admin
-	TransactionCategoryAdminDebit  TransactionCategory = "admin_debit"  // manual balance decrease by an admin
-	TransactionCategoryBotFunding  TransactionCategory = "bot_funding"  // house money injected to bankroll a bot wallet
+	TransactionCategoryDeposit        TransactionCategory = "deposit"         // real money in (e.g. Telebirr top-up)
+	TransactionCategoryWithdrawal     TransactionCategory = "withdrawal"      // real money out (payout to phone)
+	TransactionCategoryBet            TransactionCategory = "bet"             // stake placed on a game card
+	TransactionCategoryWinnings       TransactionCategory = "winnings"        // prize paid to a game winner
+	TransactionCategoryRefund         TransactionCategory = "refund"          // stake returned (left/cancelled game)
+	TransactionCategoryTransferIn     TransactionCategory = "transfer_in"     // received from another player
+	TransactionCategoryTransferOut    TransactionCategory = "transfer_out"    // sent to another player
+	TransactionCategoryAdminCredit    TransactionCategory = "admin_credit"    // manual balance increase by an admin
+	TransactionCategoryAdminDebit     TransactionCategory = "admin_debit"     // manual balance decrease by an admin
+	TransactionCategoryBotFunding     TransactionCategory = "bot_funding"     // house money injected to bankroll a bot wallet
+	TransactionCategoryReferralReward TransactionCategory = "referral_reward" // cash reward paid to a referrer on their invitee's first deposit
 	// Bonus (play-only money) movements. Kept separate from admin_credit so
 	// promotional giveaway can be reported apart from manual adjustments —
 	// previously promo bonuses were indistinguishable from admin credits.

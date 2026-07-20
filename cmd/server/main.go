@@ -168,6 +168,9 @@ func main() {
 	// token and therefore a rate-limit budget, so they should share a client.
 	telegramBot := telegram.NewBot(cfg.Telegram.BotToken)
 	bonusUseCase := usecase.NewBonusUseCase(bonusRepo, userRepo, db, telegramBroadcastSender{bot: telegramBot})
+	// The bot exists now, so the wallet can Telegram a referrer when their
+	// reward lands on their invitee's first deposit.
+	walletUseCase.SetReferralNotifier(telegramBroadcastSender{bot: telegramBot})
 
 	// Initialize handlers
 	userHandler := handler.NewUserHandler(userUseCase)

@@ -23,8 +23,8 @@ func NewUserRepository(db *sql.DB) domain.UserRepository {
 // Create inserts a new user into the database
 func (r *userRepository) Create(ctx context.Context, tx *sql.Tx, user *domain.User) error {
 	query := `
-		INSERT INTO users (id, telegram_id, first_name, last_name, phone_number, referal_code, role, password, is_bot, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		INSERT INTO users (id, telegram_id, first_name, last_name, phone_number, referal_code, role, password, is_bot, referred_by, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`
 
 	now := time.Now()
@@ -40,39 +40,31 @@ func (r *userRepository) Create(ctx context.Context, tx *sql.Tx, user *domain.Us
 		user.Role = "user"
 	}
 
+	var referredBy any
+	if user.ReferredBy != nil {
+		referredBy = *user.ReferredBy
+	}
+
+	args := []any{
+		user.ID,
+		user.TelegramID,
+		user.FirstName,
+		user.LastName,
+		user.PhoneNumber,
+		user.ReferalCode,
+		user.Role,
+		user.Password,
+		user.IsBot,
+		referredBy,
+		user.CreatedAt,
+		user.UpdatedAt,
+	}
+
 	var err error
 	if tx != nil {
-		_, err = tx.ExecContext(
-			ctx,
-			query,
-			user.ID,
-			user.TelegramID,
-			user.FirstName,
-			user.LastName,
-			user.PhoneNumber,
-			user.ReferalCode,
-			user.Role,
-			user.Password,
-			user.IsBot,
-			user.CreatedAt,
-			user.UpdatedAt,
-		)
+		_, err = tx.ExecContext(ctx, query, args...)
 	} else {
-		_, err = r.db.ExecContext(
-			ctx,
-			query,
-			user.ID,
-			user.TelegramID,
-			user.FirstName,
-			user.LastName,
-			user.PhoneNumber,
-			user.ReferalCode,
-			user.Role,
-			user.Password,
-			user.IsBot,
-			user.CreatedAt,
-			user.UpdatedAt,
-		)
+		_, err = r.db.ExecContext(ctx, query, args...)
 	}
 
 	if err != nil {

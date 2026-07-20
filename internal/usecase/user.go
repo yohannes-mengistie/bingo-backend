@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/bingo/backend/internal/domain"
 	"github.com/bingo/backend/pkg/auth"
@@ -83,6 +84,17 @@ func (uc *UserUseCase) CreateUser(ctx context.Context, req domain.CreateUserRequ
 	}
 	defer tx.Rollback()
 
+	// Resolve the invite link's referral code to a referrer, if one came in.
+	// Best-effort: an unknown/blank code just means no referrer. The referrer is
+	// only PAID later, on this user's first deposit — see the wallet approve
+	// path — so recording the link here is safe and never gives instant money.
+	var referredBy *uuid.UUID
+	if code := strings.TrimSpace(req.ReferrerCode); code != "" {
+		if referrer, rerr := uc.userRepo.FindByReferralCode(ctx, code); rerr == nil && referrer != nil {
+			referredBy = &referrer.ID
+		}
+	}
+
 	// Create user
 	user := &domain.User{
 		TelegramID:  req.TelegramID,
@@ -90,6 +102,7 @@ func (uc *UserUseCase) CreateUser(ctx context.Context, req domain.CreateUserRequ
 		LastName:    req.LastName,
 		PhoneNumber: normalizedPhone,
 		ReferalCode: referralCode,
+		ReferredBy:  referredBy,
 	}
 
 	if err := uc.userRepo.Create(ctx, tx, user); err != nil {

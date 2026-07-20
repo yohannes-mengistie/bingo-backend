@@ -14,12 +14,15 @@ type User struct {
 	LastName    *string   `json:"last_name,omitempty" db:"last_name"`
 	PhoneNumber string    `json:"phone_number" db:"phone_number"`
 	ReferalCode string    `json:"referal_code" db:"referal_code"`
-	Role        string    `json:"role" db:"role"`
-	Banned      bool      `json:"banned" db:"banned"`
-	IsBot       bool      `json:"is_bot" db:"is_bot"` // house-controlled filler player, not a real account
-	Password    *string   `json:"-" db:"password"` // Never expose password in JSON
-	CreatedAt   time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
+	// ReferredBy is who invited this user (nil if they signed up on their own),
+	// set once at registration from the ?start=ref_<code> deep link.
+	ReferredBy *uuid.UUID `json:"referred_by,omitempty" db:"referred_by"`
+	Role       string     `json:"role" db:"role"`
+	Banned     bool       `json:"banned" db:"banned"`
+	IsBot      bool       `json:"is_bot" db:"is_bot"` // house-controlled filler player, not a real account
+	Password   *string    `json:"-" db:"password"`    // Never expose password in JSON
+	CreatedAt  time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at" db:"updated_at"`
 }
 
 // SetRoleRequest is the admin request to change a user's role.
@@ -46,6 +49,10 @@ type CreateUserRequest struct {
 	FirstName  string  `json:"first_name" binding:"required"`
 	LastName   *string `json:"last_name,omitempty"`
 	Phone      string  `json:"phone" binding:"required"`
+	// ReferrerCode is the referral code from the invite link that brought this
+	// user in (optional). Resolved to a referrer at creation; the referrer is
+	// paid only once the new user makes their first deposit.
+	ReferrerCode string `json:"referrer_code,omitempty"`
 }
 
 // UpdateUserNameRequest represents the data needed to update a user's name

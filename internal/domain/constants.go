@@ -178,6 +178,10 @@ const WebSocketInitialStateTimeout = 5 * time.Second
 // player can play immediately without depositing first.
 const DefaultUserBalance = 10.0
 
+// ReferralRewardAmount is the cash paid to a referrer when the player they
+// invited makes their first deposit. Paid once per invited player.
+const ReferralRewardAmount = 15.0
+
 // MaxReferralCodeGenerationAttempts is the maximum number of attempts to generate a unique referral code
 const MaxReferralCodeGenerationAttempts = 10
 
