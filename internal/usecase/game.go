@@ -12,6 +12,7 @@ import (
 	"github.com/bingo/backend/internal/domain"
 	"github.com/bingo/backend/pkg/bingo"
 	redisGame "github.com/bingo/backend/pkg/redis"
+	utils "github.com/bingo/backend/pkg/utils"
 	"github.com/google/uuid"
 )
 
@@ -328,7 +329,7 @@ func (uc *GameUseCase) JoinGame(ctx context.Context, gameID uuid.UUID, req domai
 	// distinct players (the WAITING → ready transition), and only from WAITING so
 	// extra cards from existing players don't re-trigger it.
 	if game.State == domain.GameStateWaiting && prevCount < domain.MinPlayers && game.PlayerCount >= domain.MinPlayers {
-		go uc.startCountdown(context.Background(), gameID)
+		utils.GoSafe("startCountdown", func() { uc.startCountdown(context.Background(), gameID) })
 	}
 
 	// Publish event. Carry the live prize_pool and player_count so already-
@@ -780,7 +781,7 @@ func (uc *GameUseCase) startDrawing(ctx context.Context, gameID uuid.UUID) {
 	})
 
 	// Start drawing numbers periodically
-	go uc.drawNumbers(ctx, gameID)
+	utils.GoSafe("drawNumbers", func() { uc.drawNumbers(ctx, gameID) })
 }
 
 // drawNumbers draws numbers periodically
@@ -827,6 +828,7 @@ func (uc *GameUseCase) drawNumbers(ctx context.Context, gameID uuid.UUID) {
 
 			// Spin up a fresh game of the same type for the lobby.
 			go func() {
+				defer utils.RecoverPanic("spawnNextGame")
 				if newGame, err := uc.CreateOrGetGame(context.Background(), game.GameType); err == nil && newGame != nil {
 					uc.redisService.PublishEvent(context.Background(), gameID, domain.WebSocketEventNewGameAvailable, map[string]interface{}{
 						"gameId":   newGame.ID.String(),
@@ -1121,6 +1123,7 @@ func (uc *GameUseCase) finalizeWinners(ctx context.Context, game *domain.Game, w
 
 	// Create a new game of the same type and notify clients
 	go func() {
+		defer utils.RecoverPanic("spawnNextGame")
 		newGame, err := uc.CreateOrGetGame(context.Background(), game.GameType)
 		if err == nil && newGame != nil {
 			// Publish new game available event to the same channel so clients can
@@ -1295,6 +1298,7 @@ func (uc *GameUseCase) ClaimBingo(ctx context.Context, gameID uuid.UUID, req dom
 
 			// Create a new game of the same type and notify clients
 			go func() {
+				defer utils.RecoverPanic("spawnNextGame")
 				newGame, err := uc.CreateOrGetGame(context.Background(), game.GameType)
 				if err == nil && newGame != nil {
 					uc.redisService.PublishEvent(context.Background(), gameID, domain.WebSocketEventNewGameAvailable, map[string]interface{}{

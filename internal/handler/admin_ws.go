@@ -9,6 +9,7 @@ import (
 	"github.com/bingo/backend/internal/domain"
 	"github.com/bingo/backend/pkg/jwt"
 	redisPkg "github.com/bingo/backend/pkg/redis"
+	"github.com/bingo/backend/pkg/utils"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
@@ -78,6 +79,7 @@ func (h *AdminWSHandler) BonusCampaign(c *gin.Context) {
 	// handling and close detection, even though this endpoint is push-only.
 	readDone := make(chan struct{})
 	go func() {
+		defer utils.RecoverPanic("admin-ws.read")
 		defer close(readDone)
 		conn.SetReadDeadline(time.Now().Add(domain.WebSocketReadDeadline))
 		conn.SetPongHandler(func(string) error {

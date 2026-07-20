@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/bingo/backend/internal/domain"
+	"github.com/bingo/backend/pkg/utils"
 	"github.com/google/uuid"
 )
 
@@ -117,6 +118,7 @@ func (uc *BroadcastUseCase) sendOne(chatID int64, message string, action *domain
 // far is a player who blocked the bot, and one blocked player must not stop
 // the message reaching everyone after them in the list.
 func (uc *BroadcastUseCase) deliver(id uuid.UUID, message string, recipients []domain.BroadcastRecipient, action *domain.BroadcastAction) {
+	defer utils.RecoverPanic("broadcast.deliver")
 	// Own context with a generous ceiling, independent of the request that
 	// started this. The timeout is a backstop against a wedged run holding a
 	// row in "sending" forever, not an expected path.

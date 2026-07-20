@@ -22,6 +22,7 @@ import (
 	"github.com/bingo/backend/pkg/jwt"
 	redisPkg "github.com/bingo/backend/pkg/redis"
 	"github.com/bingo/backend/pkg/telegram"
+	"github.com/bingo/backend/pkg/utils"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
@@ -230,6 +231,7 @@ func main() {
 	// Empty-game sweeper: periodically cancel abandoned/never-joined WAITING
 	// games (0 players) so they drop out of the lobby and admin active list.
 	go func() {
+		defer utils.RecoverPanic("empty-game-sweeper")
 		ticker := time.NewTicker(domain.EmptyGameCleanupInterval)
 		defer ticker.Stop()
 		for {
@@ -237,11 +239,15 @@ func main() {
 			case <-botCtx.Done():
 				return
 			case <-ticker.C:
-				if n, err := gameUseCase.CleanupEmptyGames(botCtx); err != nil {
-					log.Printf("Warning: empty-game cleanup failed: %v", err)
-				} else if n > 0 {
-					log.Printf("Empty-game cleanup: cancelled %d abandoned game(s)", n)
-				}
+				// Per-iteration recovery so one bad sweep can't kill the loop.
+				func() {
+					defer utils.RecoverPanic("empty-game-sweep")
+					if n, err := gameUseCase.CleanupEmptyGames(botCtx); err != nil {
+						log.Printf("Warning: empty-game cleanup failed: %v", err)
+					} else if n > 0 {
+						log.Printf("Empty-game cleanup: cancelled %d abandoned game(s)", n)
+					}
+				}()
 			}
 		}
 	}()
@@ -251,6 +257,7 @@ func main() {
 	// dashboard (bot_config), so this only decides whether the machinery runs.
 	if cfg.Bots.Enabled {
 		go func() {
+			defer utils.RecoverPanic("bot-filler")
 			// Generous timeout: seeding is sequential (one tx per bot), so a
 			// large pool (e.g. 1000) needs minutes, not seconds. Runs in a
 			// goroutine so it never blocks server startup, and is idempotent —
