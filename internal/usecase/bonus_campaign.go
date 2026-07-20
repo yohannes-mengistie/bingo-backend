@@ -195,7 +195,11 @@ func (uc *BonusCampaignUseCase) announce(ctx context.Context, c *domain.BonusCam
 			c.Amount, c.Slots, c.AmountPerSlot,
 		)
 	}
-	if _, err := uc.broadcaster.Send(ctx, msg, c.CreatedBy); err != nil {
+	// The announcement carries a Claim button, so a player claims straight from
+	// the notification — no menu digging. The callback is handled in-chat by the
+	// Telegram webhook; double-claim is refused there as everywhere.
+	action := &domain.BroadcastAction{Text: "🎁 ውሰድ / Claim", CallbackData: "bonus:claim"}
+	if _, err := uc.broadcaster.SendWithAction(ctx, msg, c.CreatedBy, action); err != nil {
 		log.Printf("[campaign %s] created but the announcement failed: %v", c.ID, err)
 	}
 }

@@ -38,6 +38,16 @@ func (s telegramBroadcastSender) SendMessage(chatID int64, text string) error {
 	return s.bot.SendMessage(chatID, text, nil)
 }
 
+// SendMessageWithAction attaches a single inline callback button (e.g. a bonus
+// announcement's "Claim" button), satisfying domain.ActionBroadcastSender.
+func (s telegramBroadcastSender) SendMessageWithAction(chatID int64, text string, action domain.BroadcastAction) error {
+	return s.bot.SendMessage(chatID, text, &telegram.ReplyMarkup{
+		InlineKeyboard: [][]telegram.InlineKeyboardButton{{
+			{Text: action.Text, CallbackData: action.CallbackData},
+		}},
+	})
+}
+
 // resolveAllowedOrigins returns the browser origins permitted to reach this
 // API. ALLOWED_ORIGINS (comma-separated) overrides the defaults, so moving the
 // frontends to a new host is an env change, not a code change.

@@ -54,6 +54,18 @@ func NewBroadcastUseCase(repo domain.BroadcastRepository, sender domain.Broadcas
 // cancelled the moment the HTTP handler returns, which would kill the
 // broadcast after a single message.
 func (uc *BroadcastUseCase) Send(ctx context.Context, message string, createdBy *uuid.UUID) (*domain.Broadcast, error) {
+	return uc.send(ctx, message, createdBy, nil)
+}
+
+// SendWithAction is Send with a single inline button on every message — used to
+// put a "Claim" button on a bonus announcement so players claim straight from
+// the notification. Falls back to a plain message if the sender can't attach
+// buttons.
+func (uc *BroadcastUseCase) SendWithAction(ctx context.Context, message string, createdBy *uuid.UUID, action *domain.BroadcastAction) (*domain.Broadcast, error) {
+	return uc.send(ctx, message, createdBy, action)
+}
+
+func (uc *BroadcastUseCase) send(ctx context.Context, message string, createdBy *uuid.UUID, action *domain.BroadcastAction) (*domain.Broadcast, error) {
 	message = strings.TrimSpace(message)
 	if message == "" {
 		return nil, fmt.Errorf("message cannot be empty")
@@ -84,8 +96,19 @@ func (uc *BroadcastUseCase) Send(ctx context.Context, message string, createdBy 
 		return nil, err
 	}
 
-	go uc.deliver(b.ID, message, recipients)
+	go uc.deliver(b.ID, message, recipients, action)
 	return b, nil
+}
+
+// sendOne delivers a single message, attaching the action button when one is
+// set and the sender supports it, else sending plain text.
+func (uc *BroadcastUseCase) sendOne(chatID int64, message string, action *domain.BroadcastAction) error {
+	if action != nil {
+		if rich, ok := uc.sender.(domain.ActionBroadcastSender); ok {
+			return rich.SendMessageWithAction(chatID, message, *action)
+		}
+	}
+	return uc.sender.SendMessage(chatID, message)
 }
 
 // deliver walks the recipient list at a fixed pace.
@@ -93,7 +116,7 @@ func (uc *BroadcastUseCase) Send(ctx context.Context, message string, createdBy 
 // A failed send is recorded and skipped, never fatal: the commonest failure by
 // far is a player who blocked the bot, and one blocked player must not stop
 // the message reaching everyone after them in the list.
-func (uc *BroadcastUseCase) deliver(id uuid.UUID, message string, recipients []domain.BroadcastRecipient) {
+func (uc *BroadcastUseCase) deliver(id uuid.UUID, message string, recipients []domain.BroadcastRecipient, action *domain.BroadcastAction) {
 	// Own context with a generous ceiling, independent of the request that
 	// started this. The timeout is a backstop against a wedged run holding a
 	// row in "sending" forever, not an expected path.
@@ -115,7 +138,7 @@ func (uc *BroadcastUseCase) deliver(id uuid.UUID, message string, recipients []d
 			}
 		}
 
-		if err := uc.sender.SendMessage(rec.TelegramID, message); err != nil {
+		if err := uc.sendOne(rec.TelegramID, message, action); err != nil {
 			failed++
 			// Logged at low volume rather than per-message-body: a player who
 			// blocked the bot is routine, not an incident.

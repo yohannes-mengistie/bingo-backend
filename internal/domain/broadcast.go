@@ -68,3 +68,20 @@ type BroadcastRepository interface {
 type BroadcastSender interface {
 	SendMessage(chatID int64, text string) error
 }
+
+// BroadcastAction is an optional inline button attached to every message of a
+// broadcast — a single in-chat callback the bot handles, e.g. a "Claim" button
+// on a bonus announcement. Kept to a callback only: a broadcast reaches
+// thousands of chats, and a callback carries no per-recipient data.
+type BroadcastAction struct {
+	Text         string
+	CallbackData string
+}
+
+// ActionBroadcastSender is a BroadcastSender that can also attach a single
+// inline callback button. The Telegram adapter implements it; the send loop
+// uses it only when an action is set and falls back to plain SendMessage
+// otherwise, so a sender without button support still works.
+type ActionBroadcastSender interface {
+	SendMessageWithAction(chatID int64, text string, action BroadcastAction) error
+}

@@ -230,7 +230,6 @@ func (h *TelegramHandler) Webhook(c *gin.Context) {
 // routed by exact match in handleMenuText.
 const (
 	btnPlay     = "🎮 ቢንጎ ተጫወት"
-	btnClaim    = "🎁 የዛሬ ቦነስ ውሰድ"
 	btnPromo    = "🎁 ፕሮሞ ኮድ"
 	btnDeposit  = "💰 ገቢ ለማድረግ"
 	btnWithdraw = "💸 ወጪ ለማድረግ"
@@ -253,11 +252,11 @@ func (h *TelegramHandler) mainMenu() *telegram.ReplyMarkup {
 	}
 	return &telegram.ReplyMarkup{
 		Keyboard: [][]telegram.KeyboardButton{
-			{txt(btnPlay), txt(btnClaim)},
-			{txt(btnPromo), txt(btnDeposit)},
-			{txt(btnWithdraw), txt(btnInvite)},
-			{txt(btnProfile), txt(btnHelp)},
-			{txt(btnLanguage), txt(btnAgent)},
+			{txt(btnPlay), txt(btnPromo)},
+			{txt(btnDeposit), txt(btnWithdraw)},
+			{txt(btnInvite), txt(btnProfile)},
+			{txt(btnHelp), txt(btnLanguage)},
+			{txt(btnAgent)},
 		},
 		ResizeKeyboard: true,
 		IsPersistent:   true,
@@ -317,8 +316,6 @@ func (h *TelegramHandler) handleMenuText(c *gin.Context, msg *telegram.Message) 
 	switch text {
 	case btnPlay:
 		h.appButton(msg.Chat.ID, "🎮 ለመጫወት ከታች ይንኩ 👇", "🎮 ቢንጎ ተጫወት / Play", "/")
-	case btnClaim:
-		h.showClaim(c, msg, user.ID)
 	case btnDeposit:
 		h.startDeposit(c, msg, user.ID)
 	case btnWithdraw:
@@ -393,7 +390,7 @@ func (h *TelegramHandler) redeemPromo(c *gin.Context, msg *telegram.Message, use
 // deposit conversation knows to yield to a menu tap instead of swallowing it.
 func isMenuLabel(text string) bool {
 	switch text {
-	case btnPlay, btnClaim, btnPromo, btnDeposit, btnWithdraw, btnInvite, btnProfile, btnHelp, btnLanguage, btnAgent:
+	case btnPlay, btnPromo, btnDeposit, btnWithdraw, btnInvite, btnProfile, btnHelp, btnLanguage, btnAgent:
 		return true
 	}
 	return false
@@ -801,46 +798,6 @@ func withdrawErrorMessage(err error) string {
 	default:
 		return "⚠️ ወጪ ማድረግ አልተሳካም፣ እባክዎ እንደገና ይሞክሩ።\nWithdrawal failed — please try again."
 	}
-}
-
-// ---- In-chat "today's bonus" claim -----------------------------------------
-
-// showClaim answers the Claim button. Deliberately minimal: a short heading and
-// a Claim button when a slot is still available and unexpired, plus a shortcut
-// to claim in the Mini App instead. No pot size, per-player amount, or
-// remaining-slot count is shown — just whether claiming is possible.
-func (h *TelegramHandler) showClaim(c *gin.Context, msg *telegram.Message, userID uuid.UUID) {
-	if h.campaignUseCase == nil {
-		h.reply(msg.Chat.ID, "🎁 አሁን ምንም ቦነስ የለም።\nNo bonus right now.", h.mainMenu())
-		return
-	}
-
-	status, err := h.campaignUseCase.Status(c.Request.Context(), userID)
-	if err != nil || status == nil || status.Campaign == nil {
-		h.reply(msg.Chat.ID, "🎁 አሁን ምንም ቦነስ የለም። ቆየት ብለው ይሞክሩ።\nNo bonus running right now — check back later.", h.mainMenu())
-		return
-	}
-	if status.Claimed {
-		h.reply(msg.Chat.ID, "✅ የዛሬውን ቦነስ ወስደዋል።\nYou already claimed today's bonus.", h.mainMenu())
-		return
-	}
-	if !status.CanClaim {
-		// A slot exists only when claiming is possible; otherwise say why,
-		// without exposing counts.
-		if status.Reason == domain.ReasonNotEligible {
-			h.reply(msg.Chat.ID, "ℹ️ ቦነሱን ለመውሰድ በመጀመሪያ አንድ ጊዜ ገቢ ማድረግ አለብዎት።\nDeposit once to unlock the bonus.", h.mainMenu())
-			return
-		}
-		h.reply(msg.Chat.ID, "😔 ይቅርታ፣ የዛሬው ቦነስ አልቋል።\nSorry, today's bonus is finished.", h.mainMenu())
-		return
-	}
-
-	// Claimable: heading + Claim button, plus a claim-in-app shortcut.
-	h.reply(msg.Chat.ID, "🎁 የዛሬ ቦነስ / Today's bonus",
-		&telegram.ReplyMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{
-			{{Text: "🎁 ውሰድ / Claim", CallbackData: "bonus:claim"}},
-			{{Text: "📱 በአፕ ውሰድ / Claim in app", WebApp: &telegram.WebAppInfo{URL: h.appURL("/")}}},
-		}})
 }
 
 // claimErrorMessage maps a campaign claim refusal to a bilingual line. The
