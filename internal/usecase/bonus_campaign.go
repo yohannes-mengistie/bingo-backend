@@ -22,6 +22,11 @@ const (
 	// per-slot figure rounds to something a player cannot buy a card with, and
 	// the giveaway reads as an insult rather than a promotion.
 	campaignMinPerSlot = 1.0
+
+	// campaignMaxExpiryMinutes caps a campaign bonus lifetime at a year — a
+	// backstop against a typo, not a real limit anyone reaches. The floor is
+	// one minute, enforced where the value is read.
+	campaignMaxExpiryMinutes = 365 * 24 * 60
 )
 
 // BonusCampaignUseCase runs "today's bonus is N birr for the first M players"
@@ -79,6 +84,16 @@ func (uc *BonusCampaignUseCase) Create(ctx context.Context, req domain.CreateBon
 	if len([]rune(req.Announcement)) > 1000 {
 		return nil, fmt.Errorf("announcement cannot exceed 1000 characters")
 	}
+	// An explicit expiry, when given, must be sane. Nil means "use the policy
+	// default", which is the pre-flexible-expiry behaviour.
+	if req.ExpiryMinutes != nil {
+		if *req.ExpiryMinutes < 1 {
+			return nil, fmt.Errorf("expiry must be at least 1 minute")
+		}
+		if *req.ExpiryMinutes > campaignMaxExpiryMinutes {
+			return nil, fmt.Errorf("expiry cannot exceed 1 year")
+		}
+	}
 
 	// Rounded DOWN to the cent: rounding up would let slots * amount_per_slot
 	// exceed the pot the admin authorised.
@@ -117,6 +132,7 @@ func (uc *BonusCampaignUseCase) Create(ctx context.Context, req domain.CreateBon
 		Slots:         req.Slots,
 		AmountPerSlot: perSlot,
 		Announcement:  req.Announcement,
+		ExpiryMinutes: req.ExpiryMinutes,
 		CreatedBy:     createdBy,
 	}
 	if err := uc.repo.Create(ctx, c); err != nil {
@@ -226,8 +242,16 @@ func (uc *BonusCampaignUseCase) Claim(ctx context.Context, userID uuid.UUID) (*d
 		return nil, domain.ErrCampaignExhausted
 	}
 
+	// A campaign with its own expiry mints a bonus on that clock (urgency: good
+	// only for the next few hours); one without falls back to the general
+	// policy lifetime, exactly as before per-campaign expiry existed.
 	reason := fmt.Sprintf("campaign %s", campaign.ID)
-	grant, err := uc.bonusRepo.Grant(ctx, tx, userID, campaign.AmountPerSlot, reason)
+	var grant *domain.BonusGrant
+	if campaign.ExpiryMinutes != nil {
+		grant, err = uc.bonusRepo.GrantWithExpiry(ctx, tx, userID, campaign.AmountPerSlot, reason, *campaign.ExpiryMinutes)
+	} else {
+		grant, err = uc.bonusRepo.Grant(ctx, tx, userID, campaign.AmountPerSlot, reason)
+	}
 	if err != nil {
 		return nil, err
 	}

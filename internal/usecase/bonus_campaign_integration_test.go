@@ -7,6 +7,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/bingo/backend/internal/domain"
 	"github.com/bingo/backend/internal/repository/postgres"
@@ -300,6 +301,49 @@ func TestIntegration_Campaign_OnlyOneActiveAtATime(t *testing.T) {
 		t.Fatalf("create after ending the first: %v", err)
 	}
 	defer h.dropCampaign(second.ID)
+}
+
+// TestIntegration_Campaign_ExpiryOverride proves a campaign's own short expiry
+// lands on the granted bonus — the urgency lever ("claim it, use it tonight").
+func TestIntegration_Campaign_ExpiryOverride(t *testing.T) {
+	h := newHarness(t)
+	defer h.cleanup()
+	ctx := context.Background()
+	uc := h.campaignUC()
+
+	user := h.seedUser("QuickExpiry", 770)
+	h.addCompletedDeposit(user, 50, "CAMPEXP")
+
+	threeHours := 180
+	campaign, err := uc.Create(ctx, domain.CreateBonusCampaignRequest{
+		TotalAmount:   200,
+		Slots:         2,
+		ExpiryMinutes: &threeHours,
+	}, nil)
+	if err != nil {
+		t.Fatalf("create campaign: %v", err)
+	}
+	defer h.dropCampaign(campaign.ID)
+	if campaign.ExpiryMinutes == nil || *campaign.ExpiryMinutes != threeHours {
+		t.Fatalf("campaign expiry not persisted: %v", campaign.ExpiryMinutes)
+	}
+
+	claim, err := uc.Claim(ctx, user)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+
+	// The granted bonus must expire ~3 hours out, not the 7-day policy default.
+	var expiresAt, grantedAt time.Time
+	if err := h.db.QueryRow(
+		`SELECT expires_at, granted_at FROM bonus_grants WHERE id = $1`, *claim.GrantID,
+	).Scan(&expiresAt, &grantedAt); err != nil {
+		t.Fatalf("read grant: %v", err)
+	}
+	gotMinutes := expiresAt.Sub(grantedAt).Minutes()
+	if gotMinutes < 179 || gotMinutes > 181 {
+		t.Fatalf("bonus expiry = %.1f minutes, want ~180 (campaign override ignored?)", gotMinutes)
+	}
 }
 
 // TestIntegration_Campaign_RejectsUnpayableSplit stops a campaign whose slots

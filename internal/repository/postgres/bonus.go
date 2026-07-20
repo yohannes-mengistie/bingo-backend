@@ -10,6 +10,10 @@ import (
 	"github.com/google/uuid"
 )
 
+// Bonus lifetimes are stored per grant as a minute count, so the day-based
+// policy default is converted once here.
+const minutesPerDay = 24 * 60
+
 type bonusRepository struct {
 	db *sql.DB
 }
@@ -53,6 +57,37 @@ func (r *bonusRepository) Grant(ctx context.Context, tx *sql.Tx, userID uuid.UUI
 		return nil, fmt.Errorf("bonus granting is disabled")
 	}
 
+	// The configured day count is the default lifetime, expressed in minutes so
+	// a single code path serves both this and the shorter, per-campaign expiry.
+	return r.grantMinutes(ctx, tx, userID, amount, reason, cfg.ExpiryDays*minutesPerDay)
+}
+
+// GrantWithExpiry awards bonus that lapses after an explicit number of minutes,
+// for a campaign that wants urgency (a giveaway good only for the next few
+// hours) rather than the general grant lifetime. Enforces the same master
+// switch as Grant — a campaign cannot mint bonus while granting is disabled.
+func (r *bonusRepository) GrantWithExpiry(ctx context.Context, tx *sql.Tx, userID uuid.UUID, amount float64, reason string, expiresInMinutes int) (*domain.BonusGrant, error) {
+	if amount <= 0 {
+		return nil, fmt.Errorf("bonus amount must be greater than 0")
+	}
+	if expiresInMinutes <= 0 {
+		return nil, fmt.Errorf("bonus expiry must be greater than 0 minutes")
+	}
+
+	cfg, err := r.GetConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !cfg.Enabled {
+		return nil, fmt.Errorf("bonus granting is disabled")
+	}
+	return r.grantMinutes(ctx, tx, userID, amount, reason, expiresInMinutes)
+}
+
+// grantMinutes is the shared insert: the deadline is computed by the DATABASE
+// (CURRENT_TIMESTAMP + interval), never by the application, so it cannot drift
+// when the app process runs in a different timezone than Postgres.
+func (r *bonusRepository) grantMinutes(ctx context.Context, tx *sql.Tx, userID uuid.UUID, amount float64, reason string, minutes int) (*domain.BonusGrant, error) {
 	var reasonArg any
 	if reason != "" {
 		reasonArg = reason
@@ -61,10 +96,10 @@ func (r *bonusRepository) Grant(ctx context.Context, tx *sql.Tx, userID uuid.UUI
 	grant := &domain.BonusGrant{ID: uuid.New()}
 	query := `
 		INSERT INTO bonus_grants (id, user_id, amount, remaining, reason, expires_at)
-		VALUES ($1, $2, $3, $3, $4, CURRENT_TIMESTAMP + ($5 || ' days')::interval)
+		VALUES ($1, $2, $3, $3, $4, CURRENT_TIMESTAMP + ($5 || ' minutes')::interval)
 		RETURNING id, user_id, amount::float8, remaining::float8, granted_at, expires_at
 	`
-	err = r.exec(tx).QueryRowContext(ctx, query, grant.ID, userID, amount, reasonArg, cfg.ExpiryDays).Scan(
+	err := r.exec(tx).QueryRowContext(ctx, query, grant.ID, userID, amount, reasonArg, minutes).Scan(
 		&grant.ID, &grant.UserID, &grant.Amount, &grant.Remaining, &grant.GrantedAt, &grant.ExpiresAt,
 	)
 	if err != nil {

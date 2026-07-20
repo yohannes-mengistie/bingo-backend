@@ -65,9 +65,13 @@ type BonusCampaign struct {
 	Slots  int       `json:"slots"`
 	// AmountPerSlot is frozen at creation so every claimer gets the same,
 	// already-rounded figure.
-	AmountPerSlot float64    `json:"amount_per_slot"`
-	ClaimedCount  int        `json:"claimed_count"`
-	Announcement  string     `json:"announcement"`
+	AmountPerSlot float64 `json:"amount_per_slot"`
+	ClaimedCount  int     `json:"claimed_count"`
+	Announcement  string  `json:"announcement"`
+	// ExpiryMinutes is how long a claimed bonus lasts, in minutes. Nil means
+	// the campaign uses the general bonus_config.expiry_days default — most
+	// giveaways set a short value here (e.g. 180 for three hours) for urgency.
+	ExpiryMinutes *int       `json:"expiry_minutes,omitempty"`
 	Status        string     `json:"status"`
 	CreatedBy     *uuid.UUID `json:"created_by,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
@@ -102,6 +106,10 @@ type CreateBonusCampaignRequest struct {
 	TotalAmount  float64 `json:"total_amount" binding:"required,gt=0"`
 	Slots        int     `json:"slots" binding:"required,gt=0"`
 	Announcement string  `json:"announcement"`
+	// ExpiryMinutes sets how long a claimed bonus lasts. Nil/0 falls back to
+	// the general policy expiry. The admin UI sends this as a value-plus-unit
+	// (minutes/hours/days) already reduced to minutes.
+	ExpiryMinutes *int `json:"expiry_minutes"`
 	// Broadcast sends the announcement to every player on Telegram. Defaults
 	// to false: creating the campaign and telling two thousand people about it
 	// are different-sized mistakes to make by accident.

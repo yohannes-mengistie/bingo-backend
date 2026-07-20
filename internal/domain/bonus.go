@@ -64,6 +64,10 @@ type GrantBonusRequest struct {
 type BonusRepository interface {
 	// Grant awards bonus expiring after the configured number of days.
 	Grant(ctx context.Context, tx *sql.Tx, userID uuid.UUID, amount float64, reason string) (*BonusGrant, error)
+	// GrantWithExpiry awards bonus lapsing after an explicit number of minutes,
+	// for a campaign that wants a short, urgency-driven lifetime instead of the
+	// general policy default.
+	GrantWithExpiry(ctx context.Context, tx *sql.Tx, userID uuid.UUID, amount float64, reason string, expiresInMinutes int) (*BonusGrant, error)
 	// Balance returns spendable bonus (expired grants excluded) and the
 	// soonest upcoming expiry.
 	Balance(ctx context.Context, userID uuid.UUID) (*BonusBalance, error)

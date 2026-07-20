@@ -28,17 +28,22 @@ func (r *bonusCampaignRepository) exec(tx *sql.Tx) execer {
 }
 
 const bonusCampaignColumns = `id, total_amount, slots, amount_per_slot, claimed_count,
-	announcement, status, created_by, created_at, ended_at`
+	announcement, expiry_minutes, status, created_by, created_at, ended_at`
 
 func scanBonusCampaign(row interface{ Scan(...any) error }) (*domain.BonusCampaign, error) {
 	var c domain.BonusCampaign
 	var createdBy sql.NullString
 	var endedAt sql.NullTime
+	var expiryMinutes sql.NullInt64
 	if err := row.Scan(
 		&c.ID, &c.Amount, &c.Slots, &c.AmountPerSlot, &c.ClaimedCount,
-		&c.Announcement, &c.Status, &createdBy, &c.CreatedAt, &endedAt,
+		&c.Announcement, &expiryMinutes, &c.Status, &createdBy, &c.CreatedAt, &endedAt,
 	); err != nil {
 		return nil, err
+	}
+	if expiryMinutes.Valid {
+		m := int(expiryMinutes.Int64)
+		c.ExpiryMinutes = &m
 	}
 	if createdBy.Valid {
 		if id, err := uuid.Parse(createdBy.String); err == nil {
@@ -61,12 +66,16 @@ func (r *bonusCampaignRepository) Create(ctx context.Context, c *domain.BonusCam
 	// the clocks note in migration 032), so without reading it back the caller
 	// gets Go's zero time and the admin screen shows "started year 1" until
 	// something else refetches.
+	var expiryMinutes any
+	if c.ExpiryMinutes != nil {
+		expiryMinutes = *c.ExpiryMinutes
+	}
 	err := r.db.QueryRowContext(ctx, `
 		INSERT INTO bonus_campaigns
-			(id, total_amount, slots, amount_per_slot, announcement, status, created_by)
-		VALUES ($1, $2, $3, $4, $5, 'active', $6)
+			(id, total_amount, slots, amount_per_slot, announcement, expiry_minutes, status, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6, 'active', $7)
 		RETURNING created_at`,
-		c.ID, c.Amount, c.Slots, c.AmountPerSlot, c.Announcement, createdBy,
+		c.ID, c.Amount, c.Slots, c.AmountPerSlot, c.Announcement, expiryMinutes, createdBy,
 	).Scan(&c.CreatedAt)
 	if err != nil {
 		// The partial unique index on status='active' is what refuses a second
