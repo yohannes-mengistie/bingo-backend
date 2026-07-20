@@ -167,6 +167,11 @@ func main() {
 	// own replies, bonus grant notices, and admin broadcasts. They share a
 	// token and therefore a rate-limit budget, so they should share a client.
 	telegramBot := telegram.NewBot(cfg.Telegram.BotToken)
+	// Remove the Mini App "Open" launcher from the chat menu button — the menu's
+	// own buttons cover launching the app, and the extra launcher was noise.
+	if err := telegramBot.SetDefaultMenuButton(); err != nil {
+		log.Printf("[telegram] could not reset chat menu button: %v", err)
+	}
 	bonusUseCase := usecase.NewBonusUseCase(bonusRepo, userRepo, db, telegramBroadcastSender{bot: telegramBot})
 	// The bot exists now, so the wallet can Telegram a referrer when their
 	// reward lands on their invitee's first deposit.
@@ -207,7 +212,7 @@ func main() {
 		domain.PaymentMethodCBEBirr:  cfg.PaymentVerifier.CBEBirrAccount,
 		domain.PaymentMethodMpesa:    cfg.PaymentVerifier.MpesaAccount,
 	}
-	telegramHandler := handler.NewTelegramHandler(userUseCase, walletUseCase, bonusUseCase, bonusCampaignUseCase, promoRepo, telegramBot, cfg.Telegram.WebhookSecret, cfg.Telegram.MiniAppURL, depositAccounts)
+	telegramHandler := handler.NewTelegramHandler(userUseCase, walletUseCase, bonusUseCase, bonusCampaignUseCase, promoRepo, telegramBot, cfg.Telegram.WebhookSecret, cfg.Telegram.MiniAppURL, cfg.Telegram.BotUsername, depositAccounts)
 
 	// Live admin feed: pushes campaign claims to the dashboard over WebSocket
 	// so a stampede fills in real time instead of on a refresh timer.

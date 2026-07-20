@@ -102,11 +102,13 @@ type KeyboardButton struct {
 
 // InlineKeyboardButton is a button under the message. Exactly one action field
 // is set: WebApp opens a Mini App; CallbackData sends that string back to the
-// webhook as a CallbackQuery (a tap the bot handles in-chat, no Mini App).
+// webhook as a CallbackQuery (a tap the bot handles in-chat, no Mini App); URL
+// opens a link (e.g. a t.me/share/url share dialog).
 type InlineKeyboardButton struct {
 	Text         string      `json:"text"`
 	WebApp       *WebAppInfo `json:"web_app,omitempty"`
 	CallbackData string      `json:"callback_data,omitempty"`
+	URL          string      `json:"url,omitempty"`
 }
 
 // WebAppInfo points an inline button at a Mini App URL.
@@ -158,6 +160,28 @@ func (b *Bot) SendMessage(chatID int64, text string, replyMarkup *ReplyMarkup) e
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("sendMessage failed: status %d: %s", resp.StatusCode, string(raw))
+	}
+	return nil
+}
+
+// SetDefaultMenuButton resets the chat menu button (the persistent button next
+// to the message box) to Telegram's default, removing any Mini App "Open"
+// launcher previously configured there. Idempotent — safe to call on boot.
+func (b *Bot) SetDefaultMenuButton() error {
+	payload := map[string]any{"menu_button": map[string]string{"type": "default"}}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal setChatMenuButton payload: %w", err)
+	}
+	url := fmt.Sprintf("%s/bot%s/setChatMenuButton", botAPIBase, b.token)
+	resp, err := b.client.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("setChatMenuButton request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("setChatMenuButton failed: status %d: %s", resp.StatusCode, string(raw))
 	}
 	return nil
 }

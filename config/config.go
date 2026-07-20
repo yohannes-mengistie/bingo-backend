@@ -117,6 +117,7 @@ type TelegramConfig struct {
 	BotToken      string // used to verify Mini App initData AND authenticate Bot API calls
 	WebhookSecret string // shared secret Telegram echoes back in X-Telegram-Bot-Api-Secret-Token
 	MiniAppURL    string // URL the bot's "Play" button opens (the Vercel Mini App)
+	BotUsername   string // @username (no @), used to build in-chat invite deep links
 }
 
 type PaymentVerifierConfig struct {
@@ -168,6 +169,7 @@ func Load() (*Config, error) {
 			BotToken:      getEnv("TELEGRAM_BOT_TOKEN", ""),
 			WebhookSecret: getEnv("TELEGRAM_WEBHOOK_SECRET", ""),
 			MiniAppURL:    getEnv("TELEGRAM_MINIAPP_URL", "https://bingo-miniapp-gold.vercel.app"),
+			BotUsername:   getEnv("TELEGRAM_BOT_USERNAME", "EDL_Bingobot"),
 		},
 		PaymentVerifier: PaymentVerifierConfig{
 			BaseURL:         strings.TrimRight(getEnv("VERIFY_API_BASE_URL", "https://verifyapi.leulzenebe.pro"), "/"),

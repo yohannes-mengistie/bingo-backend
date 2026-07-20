@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -32,6 +33,7 @@ type TelegramHandler struct {
 	webhookSecret   string
 	miniAppBase     string // Mini App origin, no trailing slash
 	appVersion      string // per-deploy cache-buster (see appURL)
+	botUsername     string // @username (no @), for building in-chat invite links
 
 	// depositAccounts is the house number a player pays for each method, shown
 	// in-chat when they start a deposit. A method absent here is not offered in
@@ -115,7 +117,7 @@ type withdrawConvo struct {
 }
 
 // NewTelegramHandler creates a new Telegram webhook handler.
-func NewTelegramHandler(userUseCase *usecase.UserUseCase, walletUseCase *usecase.WalletUseCase, bonusUseCase *usecase.BonusUseCase, campaignUseCase *usecase.BonusCampaignUseCase, promoRepo domain.PromoRepository, bot *telegram.Bot, webhookSecret, miniAppURL string, depositAccounts map[domain.PaymentMethod]string) *TelegramHandler {
+func NewTelegramHandler(userUseCase *usecase.UserUseCase, walletUseCase *usecase.WalletUseCase, bonusUseCase *usecase.BonusUseCase, campaignUseCase *usecase.BonusCampaignUseCase, promoRepo domain.PromoRepository, bot *telegram.Bot, webhookSecret, miniAppURL, botUsername string, depositAccounts map[domain.PaymentMethod]string) *TelegramHandler {
 	base := strings.TrimRight(miniAppURL, "/")
 	version := miniAppCacheVersion()
 	return &TelegramHandler{
@@ -126,6 +128,7 @@ func NewTelegramHandler(userUseCase *usecase.UserUseCase, walletUseCase *usecase
 		promoRepo:       promoRepo,
 		bot:             bot,
 		webhookSecret:   webhookSecret,
+		botUsername:     strings.TrimPrefix(strings.TrimSpace(botUsername), "@"),
 		depositAccounts: depositAccounts,
 		// appURL bakes a per-deploy cache-buster into every Mini App URL.
 		// Telegram caches the web app per-URL and ignores our no-cache
@@ -372,7 +375,7 @@ func (h *TelegramHandler) handleMenuText(c *gin.Context, msg *telegram.Message) 
 	case btnWithdraw:
 		h.startWithdraw(c, msg, user.ID)
 	case btnInvite:
-		h.appButton(msg.Chat.ID, "🔗 ጓደኞችዎን ጋብዘው ቦነስ ያግኙ 👇", "🔗 ጋብዝ & አግኝ / Invite", "/referral")
+		h.showInvite(msg.Chat.ID, user)
 	case btnProfile:
 		h.showBalance(c, msg, user)
 	case btnPromo:
@@ -446,6 +449,29 @@ func isMenuLabel(text string) bool {
 		return true
 	}
 	return false
+}
+
+// showInvite answers the Invite button IN CHAT with the player's own invite
+// link and a one-tap Share button — no Mini App trip needed. Falls back to the
+// app only if the link can't be built.
+func (h *TelegramHandler) showInvite(chatID int64, user *domain.User) {
+	if user.ReferalCode == "" || h.botUsername == "" {
+		h.appButton(chatID, "🔗 ጓደኞችዎን ጋብዘው ቦነስ ያግኙ 👇", "🔗 ጋብዝ & አግኝ / Invite", "/referral")
+		return
+	}
+	link := fmt.Sprintf("https://t.me/%s?start=ref_%s", h.botUsername, user.ReferalCode)
+	shareText := "🎯 EDL ቢንጎ ተቀላቀሉኝ! / Join me on EDL Bingo!"
+	shareURL := "https://t.me/share/url?url=" + url.QueryEscape(link) + "&text=" + url.QueryEscape(shareText)
+
+	msg := fmt.Sprintf(
+		"🔗 ጓደኛ ጋብዘው 15 ብር ያግኙ!\n"+
+			"የጋበዙት ሰው ለመጀመሪያ ጊዜ ገቢ ሲያደርግ 15 ብር ወደ ቦርሳዎ ይገባል።\n\n"+
+			"የእርስዎ ሊንክ (ለመቅዳት ይንኩት):\n%s\n\n"+
+			"Invite a friend, earn 15 birr — paid when they make their first deposit. Tap the link to copy it, or Share below. 👇",
+		link)
+	h.reply(chatID, msg, &telegram.ReplyMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{
+		{{Text: "📨 አጋራ / Share", URL: shareURL}},
+	}})
 }
 
 // showBalance answers the "Profile & balance" button IN CHAT — cash plus
