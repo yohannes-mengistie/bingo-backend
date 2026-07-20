@@ -50,13 +50,13 @@ var botFirstNames = []string{
 	"Surafel", "Tadesse", "Tamirat", "Tesfaye", "Tewodros", "Tsegaye", "Yared",
 	"Yeabsira", "Yohannes", "Yonas", "Zelalem", "Zerihun", "Alemayehu",
 	"Bekele", "Belay", "Ermias", "Getnet", "Gizachew", "Kassahun", "Mengistu",
-	"Sisay", "Wondwosen", "Yilma", "Abera", "Endalkachew", "Hana", "Kalkidan",
-	"Liya", "Mekdes", "Nardos", "Saron", "Tigist", "Selam", "Meron", "Rediet",
-	"Tsion", "Betty", "Feven", "Helen", "Sena", "Bezawit", "Blen", "Eden",
-	"Eyerusalem", "Firehiwot", "Genet", "Hiwot", "Kidist", "Lidya", "Mahlet",
-	"Marta", "Meaza", "Mihret", "Netsanet", "Rahel", "Rakeb", "Ruth", "Sara",
-	"Selamawit", "Semira", "Senait", "Seble", "Sofia", "Tizita", "Yordanos",
-	"Abeba", "Almaz", "Aster", "Birtukan", "Hirut",
+	"Sisay", "Wondwosen", "Yilma", "Abera", "Endalkachew", "Abraham", "Amare",
+	"Asrat", "Assefa", "Ayele", "Bahiru", "Behailu", "Binyam", "Chalachew", "Dagne",
+	"Damtew", "Demeke", "Endeshaw", "Eskinder", "Fekadu", "Feyisa", "Gebre", "Gemechu",
+	"Getahun", "Habte", "Haile", "Kefyalew", "Lemma", "Mamo", "Melese",
+	"Mekuria", "Mitiku", "Moges", "Muluken", "Negash", "Nigatu", "Nigus", "Petros",
+	"Sahle", "Seyoum", "Shimelis", "Sintayehu", "Tariku", "Tekle", "Temesgen",
+	"Teshome", "Tilahun", "Worku", "Yidnekachew", "Zenebe",
 }
 
 // Ethiopian surnames are patronymics — the father's given name — so the overlap
