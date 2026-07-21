@@ -450,6 +450,36 @@ func (r *transactionRepository) FindRealPlayerWinnings(ctx context.Context, limi
 	return r.scanTransactionsWithUser(rows)
 }
 
+// FindWithdrawalsByStatus lists ONLY genuine withdrawal REQUESTS (category
+// 'withdrawal') at a given status — excluding bets, which are also stored as
+// type 'withdraw' (category 'bet') and otherwise pollute the withdrawals view.
+func (r *transactionRepository) FindWithdrawalsByStatus(ctx context.Context, status domain.TransactionStatus, limit, offset int) ([]*domain.Transaction, error) {
+	query := `
+		SELECT ` + txWithUserColumns + `
+		FROM transactions t LEFT JOIN users u ON u.id = t.user_id
+		WHERE t.type = 'withdraw' AND t.category = 'withdrawal' AND t.status = $1
+		ORDER BY t.created_at DESC
+		LIMIT $2 OFFSET $3
+	`
+	rows, err := r.db.QueryContext(ctx, query, status, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find withdrawals: %w", err)
+	}
+	defer rows.Close()
+	return r.scanTransactionsWithUser(rows)
+}
+
+// CountWithdrawalsByStatus is the total for FindWithdrawalsByStatus (pagination).
+func (r *transactionRepository) CountWithdrawalsByStatus(ctx context.Context, status domain.TransactionStatus) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM transactions WHERE type='withdraw' AND category='withdrawal' AND status=$1`, status).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count withdrawals: %w", err)
+	}
+	return n, nil
+}
+
 // CountByUser is the total number of transactions for one user (pagination of
 // their history on the admin player-detail view).
 func (r *transactionRepository) CountByUser(ctx context.Context, userID uuid.UUID) (int, error) {

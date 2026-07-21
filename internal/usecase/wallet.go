@@ -490,7 +490,7 @@ func (uc *WalletUseCase) GetPendingDeposits(ctx context.Context, limit, offset i
 
 // GetPendingWithdrawals returns pending withdrawal transactions for admin
 func (uc *WalletUseCase) GetPendingWithdrawals(ctx context.Context, limit, offset int) ([]*domain.Transaction, error) {
-	return uc.transactionRepo.FindByStatusAndType(ctx, domain.TransactionStatusPending, domain.TransactionTypeWithdraw, limit, offset)
+	return uc.transactionRepo.FindWithdrawalsByStatus(ctx, domain.TransactionStatusPending, limit, offset)
 }
 
 // GetCompletedDeposits returns completed deposit transactions for admin
@@ -500,7 +500,7 @@ func (uc *WalletUseCase) GetCompletedDeposits(ctx context.Context, limit, offset
 
 // GetCompletedWithdrawals returns completed withdrawal transactions for admin
 func (uc *WalletUseCase) GetCompletedWithdrawals(ctx context.Context, limit, offset int) ([]*domain.Transaction, error) {
-	return uc.transactionRepo.FindByStatusAndType(ctx, domain.TransactionStatusCompleted, domain.TransactionTypeWithdraw, limit, offset)
+	return uc.transactionRepo.FindWithdrawalsByStatus(ctx, domain.TransactionStatusCompleted, limit, offset)
 }
 
 // GetFailedTransactions returns all failed transactions for admin
@@ -524,6 +524,11 @@ func (uc *WalletUseCase) GetAllTransactions(ctx context.Context, limit, offset i
 // CountAllTransactions is the grand total (for page-by-page navigation).
 func (uc *WalletUseCase) CountAllTransactions(ctx context.Context) (int, error) {
 	return uc.transactionRepo.CountAll(ctx)
+}
+
+// CountWithdrawalsByStatus is the total of genuine withdrawal requests at a status.
+func (uc *WalletUseCase) CountWithdrawalsByStatus(ctx context.Context, status domain.TransactionStatus) (int, error) {
+	return uc.transactionRepo.CountWithdrawalsByStatus(ctx, status)
 }
 
 // CountByStatusAndType is the total of a status+type list (for pagination of the

@@ -63,6 +63,10 @@ type TransactionRepository interface {
 	// CountByUser is the total number of a user's transactions (for pagination of
 	// their history on the admin player-detail view).
 	CountByUser(ctx context.Context, userID uuid.UUID) (int, error)
+	// FindWithdrawalsByStatus lists genuine withdrawal REQUESTS only (category
+	// 'withdrawal'), excluding bets which are also type 'withdraw'.
+	FindWithdrawalsByStatus(ctx context.Context, status TransactionStatus, limit, offset int) ([]*Transaction, error)
+	CountWithdrawalsByStatus(ctx context.Context, status TransactionStatus) (int, error)
 }
 
 // GameHistoryEntry represents a game with user's participation details.

@@ -637,7 +637,7 @@ func (h *WalletHandler) GetPendingWithdrawals(c *gin.Context) {
 		return
 	}
 
-	total, _ := h.walletUseCase.CountByStatusAndType(c.Request.Context(), domain.TransactionStatusPending, domain.TransactionTypeWithdraw)
+	total, _ := h.walletUseCase.CountWithdrawalsByStatus(c.Request.Context(), domain.TransactionStatusPending)
 	c.JSON(http.StatusOK, gin.H{
 		"transactions": transactions,
 		"count":        len(transactions),
@@ -681,7 +681,7 @@ func (h *WalletHandler) GetCompletedWithdrawals(c *gin.Context) {
 		return
 	}
 
-	total, _ := h.walletUseCase.CountByStatusAndType(c.Request.Context(), domain.TransactionStatusCompleted, domain.TransactionTypeWithdraw)
+	total, _ := h.walletUseCase.CountWithdrawalsByStatus(c.Request.Context(), domain.TransactionStatusCompleted)
 	c.JSON(http.StatusOK, gin.H{
 		"transactions": transactions,
 		"count":        len(transactions),
