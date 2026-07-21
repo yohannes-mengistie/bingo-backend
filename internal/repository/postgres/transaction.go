@@ -385,6 +385,37 @@ func (r *transactionRepository) FindAll(ctx context.Context, limit, offset int) 
 	return r.scanTransactions(rows)
 }
 
+// FindRealPlayerWinnings lists 'winnings' transactions belonging to real (non-bot)
+// players, newest first — the admin winners tab.
+func (r *transactionRepository) FindRealPlayerWinnings(ctx context.Context, limit, offset int) ([]*domain.Transaction, error) {
+	query := `
+		SELECT t.id, t.user_id, t.type, t.category, t.amount, t.status, t.transaction_type, t.transaction_id, t.reference, t.created_at
+		FROM transactions t
+		JOIN users u ON u.id = t.user_id
+		WHERE t.category = 'winnings' AND u.is_bot = false
+		ORDER BY t.created_at DESC
+		LIMIT $1 OFFSET $2
+	`
+	rows, err := r.db.QueryContext(ctx, query, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find real-player winnings: %w", err)
+	}
+	defer rows.Close()
+	return r.scanTransactions(rows)
+}
+
+// CountRealPlayerWinnings is the total for the winners list (pagination).
+func (r *transactionRepository) CountRealPlayerWinnings(ctx context.Context) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `
+		SELECT count(*) FROM transactions t JOIN users u ON u.id = t.user_id
+		WHERE t.category = 'winnings' AND u.is_bot = false`).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count real-player winnings: %w", err)
+	}
+	return n, nil
+}
+
 // UpdateStatus updates the status of a transaction
 func (r *transactionRepository) UpdateStatus(ctx context.Context, tx *sql.Tx, id uuid.UUID, status domain.TransactionStatus) error {
 	// Guard the transition on the row still being 'pending'. Every caller moves a

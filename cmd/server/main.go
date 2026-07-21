@@ -535,6 +535,7 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			// User management
 			admin.GET("/users", userHandler.GetAllUsers)
 			admin.GET("/users/:user_id", userHandler.GetUserDetail)
+			admin.GET("/users/:user_id/game-stats", gameHandler.GetUserGameStats)
 			admin.POST("/users/:user_id/role", userHandler.SetUserRole)
 			admin.POST("/users/:user_id/make-admin", userHandler.MakeAdmin)
 			admin.POST("/users/:user_id/ban", userHandler.BanUser)
@@ -608,6 +609,7 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 				transactions.GET("/completed/withdrawals", walletHandler.GetCompletedWithdrawals)
 				transactions.GET("/failed", walletHandler.GetFailedTransactions)
 				transactions.GET("/transfers", walletHandler.GetTransferTransactions)
+				transactions.GET("/winners", walletHandler.GetRealPlayerWinnings)
 			}
 
 			// Deposit operations

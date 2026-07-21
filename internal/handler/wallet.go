@@ -707,9 +707,34 @@ func (h *WalletHandler) GetAllTransactions(c *gin.Context) {
 		return
 	}
 
+	// total is the grand count of all transactions, so the admin can page through
+	// them; count stays the page size for backward compatibility.
+	total, _ := h.walletUseCase.CountAllTransactions(c.Request.Context())
+
 	c.JSON(http.StatusOK, gin.H{
 		"transactions": transactions,
 		"count":        len(transactions),
+		"total":        total,
+		"limit":        limit,
+		"offset":       offset,
+	})
+}
+
+// GetRealPlayerWinnings handles GET /admin/transactions/winners — winnings paid
+// to real (non-bot) players, paginated, so an admin can review genuine winners.
+func (h *WalletHandler) GetRealPlayerWinnings(c *gin.Context) {
+	limit, offset := getPaginationParams(c)
+
+	transactions, total, err := h.walletUseCase.GetRealPlayerWinnings(c.Request.Context(), limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch winners"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"transactions": transactions,
+		"count":        len(transactions),
+		"total":        total,
 		"limit":        limit,
 		"offset":       offset,
 	})

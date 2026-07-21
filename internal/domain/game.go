@@ -188,6 +188,16 @@ type RecentWinner struct {
 	FinishedAt time.Time `json:"finished_at"`
 }
 
+// UserGameStats is a player's lifetime play record, so an admin can tell at a
+// glance whether a pending withdrawal belongs to someone who actually plays and
+// wins — or to a farmed account that only ever received bonuses/referrals.
+type UserGameStats struct {
+	GamesPlayed int     `json:"games_played"` // distinct games they paid into
+	GamesWon    int     `json:"games_won"`    // distinct games they won
+	TotalWon    float64 `json:"total_won"`    // sum of prizes
+	TotalStaked float64 `json:"total_staked"` // sum of cash bets placed
+}
+
 // GameWinner is one winning card of a finished game, with the prize share it was
 // paid and the marks that prove the win. A game may have several (co-winners who
 // completed on the same draw and split the pot). Used to render the winning

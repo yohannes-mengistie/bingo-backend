@@ -54,6 +54,11 @@ type TransactionRepository interface {
 	// is ahead; negative = it has paid real players more than they staked (real
 	// cash exposure, e.g. real players winning bot-inflated pools).
 	RealPlayerGamePnL(ctx context.Context) (float64, error)
+	// FindRealPlayerWinnings lists completed 'winnings' transactions belonging to
+	// REAL (non-bot) players, newest first, for the admin winners tab.
+	FindRealPlayerWinnings(ctx context.Context, limit, offset int) ([]*Transaction, error)
+	// CountRealPlayerWinnings is the total for the winners list (for pagination).
+	CountRealPlayerWinnings(ctx context.Context) (int, error)
 }
 
 // GameHistoryEntry represents a game with user's participation details.
@@ -108,6 +113,9 @@ type GameRepository interface {
 	// and in total, summed across their winning cards. Backs the WIN stat on
 	// the card picker.
 	GetUserWinnings(ctx context.Context, userID uuid.UUID) (today float64, total float64, err error)
+	// GetUserGameStats returns a player's lifetime play record (games played/won,
+	// total won/staked) so an admin can verify a withdrawal is from a real winner.
+	GetUserGameStats(ctx context.Context, userID uuid.UUID) (*UserGameStats, error)
 	AddPlayer(ctx context.Context, tx *sql.Tx, player *GamePlayer) error
 	// MarkUserCardsPaidTx flips a user's reserved (unpaid) active cards to paid
 	// when the countdown ends and their stake is charged. Returns rows changed.

@@ -1116,6 +1116,11 @@ func (uc *GameUseCase) GetUserWinnings(ctx context.Context, userID uuid.UUID) (t
 	return uc.gameRepo.GetUserWinnings(ctx, userID)
 }
 
+// GetUserGameStats returns a player's lifetime play record for admin review.
+func (uc *GameUseCase) GetUserGameStats(ctx context.Context, userID uuid.UUID) (*domain.UserGameStats, error) {
+	return uc.gameRepo.GetUserGameStats(ctx, userID)
+}
+
 // finalizeWinners closes the game and splits the prize pool evenly across every
 // winning card. It is the single winner-resolution path shared by manual bingo
 // claims and automatic bingo detection.

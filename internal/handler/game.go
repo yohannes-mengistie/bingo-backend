@@ -399,6 +399,23 @@ func (h *GameHandler) GetMyGameHistory(c *gin.Context) {
 	})
 }
 
+// GetUserGameStats handles GET /admin/users/:user_id/game-stats — a player's
+// lifetime play record (games played/won, total won/staked), so an admin can
+// tell whether a pending withdrawal belongs to a genuine winner.
+func (h *GameHandler) GetUserGameStats(c *gin.Context) {
+	userID, err := uuid.Parse(c.Param("user_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+	stats, err := h.gameUseCase.GetUserGameStats(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch game stats"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"stats": stats})
+}
+
 // GetMyActiveGame handles GET /me/active-game — the live game the authenticated
 // user is currently in (WAITING/COUNTDOWN/DRAWING and still holding cards), so a
 // player who navigated away mid-game can jump back into the draw. Returns

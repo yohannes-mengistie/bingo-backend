@@ -866,6 +866,34 @@ func (r *gameRepository) MarkCardWinner(ctx context.Context, tx *sql.Tx, gameID,
 // time. Games finished BEFORE per-card winner tracking (migration 017) have
 // winner_id but no flagged cards, so those fall back to the full prize pool —
 // the same fallback FindGamesByUserID uses for history rows.
+// GetUserGameStats returns a player's lifetime play record in one query.
+func (r *gameRepository) GetUserGameStats(ctx context.Context, userID uuid.UUID) (*domain.UserGameStats, error) {
+	query := `
+		SELECT
+			(SELECT count(DISTINCT game_id) FROM game_players WHERE user_id = $1 AND paid) AS played,
+			(SELECT count(DISTINCT gid) FROM (
+				SELECT gp.game_id AS gid FROM game_players gp JOIN games g ON g.id = gp.game_id
+				 WHERE gp.user_id = $1 AND gp.is_winner AND g.state = 'FINISHED'
+				UNION
+				SELECT g.id FROM games g WHERE g.winner_id = $1 AND g.state = 'FINISHED'
+			) w) AS won,
+			(SELECT COALESCE(SUM(prize), 0) FROM (
+				SELECT gp.prize_won AS prize FROM game_players gp JOIN games g ON g.id = gp.game_id
+				 WHERE gp.user_id = $1 AND gp.is_winner AND g.state = 'FINISHED'
+				UNION ALL
+				SELECT g.prize_pool FROM games g
+				 WHERE g.winner_id = $1 AND g.state = 'FINISHED'
+				   AND NOT EXISTS (SELECT 1 FROM game_players gp2 WHERE gp2.game_id = g.id AND gp2.is_winner)
+			) wins) AS total_won,
+			(SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE user_id = $1 AND category = 'bet') AS staked
+	`
+	s := &domain.UserGameStats{}
+	if err := r.db.QueryRowContext(ctx, query, userID).Scan(&s.GamesPlayed, &s.GamesWon, &s.TotalWon, &s.TotalStaked); err != nil {
+		return nil, fmt.Errorf("failed to get user game stats: %w", err)
+	}
+	return s, nil
+}
+
 func (r *gameRepository) GetUserWinnings(ctx context.Context, userID uuid.UUID) (float64, float64, error) {
 	query := `
 		WITH wins AS (

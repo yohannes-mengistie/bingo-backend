@@ -404,6 +404,25 @@ func (uc *WalletUseCase) GetAllTransactions(ctx context.Context, limit, offset i
 	return uc.transactionRepo.FindAll(ctx, limit, offset)
 }
 
+// CountAllTransactions is the grand total (for page-by-page navigation).
+func (uc *WalletUseCase) CountAllTransactions(ctx context.Context) (int, error) {
+	return uc.transactionRepo.CountAll(ctx)
+}
+
+// GetRealPlayerWinnings lists winnings paid to real (non-bot) players, plus the
+// total for pagination. Powers the admin "Winners" tab.
+func (uc *WalletUseCase) GetRealPlayerWinnings(ctx context.Context, limit, offset int) ([]*domain.Transaction, int, error) {
+	rows, err := uc.transactionRepo.FindRealPlayerWinnings(ctx, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := uc.transactionRepo.CountRealPlayerWinnings(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	return rows, total, nil
+}
+
 // GetDashboardStats returns dashboard statistics for admin
 func (uc *WalletUseCase) GetDashboardStats(ctx context.Context) (*domain.DashboardStats, error) {
 	stats := &domain.DashboardStats{
