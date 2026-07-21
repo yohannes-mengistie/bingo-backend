@@ -159,10 +159,12 @@ type AdminGamePlayer struct {
 	JoinedAt     time.Time `json:"joined_at"`
 }
 
-// AdminGameDetail is a game plus its active players, for the admin dashboard.
+// AdminGameDetail is a game plus its active players and — once finished — who
+// won and how much, for the admin dashboard.
 type AdminGameDetail struct {
 	Game    *Game              `json:"game"`
 	Players []*AdminGamePlayer `json:"players"`
+	Winners []*GameWinner      `json:"winners"`
 }
 
 // CancelGameResult summarizes the outcome of an admin force-cancel.

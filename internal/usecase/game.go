@@ -1563,6 +1563,12 @@ func (uc *GameUseCase) GetGameDetail(ctx context.Context, gameID uuid.UUID) (*do
 		detail.Players = append(detail.Players, entry)
 	}
 
+	// Winners of a finished game (who won, which card, how much). Best-effort —
+	// an error here shouldn't break the whole detail view.
+	if winners, err := uc.gameRepo.FindWinningCards(ctx, gameID); err == nil {
+		detail.Winners = winners
+	}
+
 	return detail, nil
 }
 
