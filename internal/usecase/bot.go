@@ -444,22 +444,20 @@ func (uc *BotUseCase) joinDelayFor(gameID uuid.UUID) time.Duration {
 	return base + time.Duration(float64(base)*0.5*spread)
 }
 
-// perGameTarget varies the configured target per game so player counts differ
-// round to round — a fixed count in every game (always exactly 50) is itself a
-// tell. Derived from the game id, so it is stable across sweeps of the same game
-// (the target can't wobble tick to tick) while differing between games. Range is
-// roughly [35%, 100%] of the configured target, floored so a game can still run.
+// perGameTarget varies the per-game bot count so rooms differ round to round —
+// a fixed count in every game (always exactly 50) is itself a tell — but NEVER
+// below the configured target. cfgTarget is the FLOOR; each game adds up to ~30%
+// more on top. Derived from the game id, so it is stable across sweeps of the
+// same game (the target can't wobble tick to tick) while differing between games.
+// Range is [cfgTarget, cfgTarget*1.3].
 func (uc *BotUseCase) perGameTarget(gameID uuid.UUID, cfgTarget int) int {
 	if cfgTarget <= 0 {
 		return 0
 	}
-	frac := 0.35 + 0.65*(float64(gameID[1])/255.0) // 0.35..1.0, fixed per game
-	t := int(math.Round(float64(cfgTarget) * frac))
+	extra := float64(cfgTarget) * 0.30 * (float64(gameID[1]) / 255.0) // 0 .. 30% of target
+	t := cfgTarget + int(math.Round(extra))
 	if t < domain.MinPlayers {
 		t = domain.MinPlayers
-	}
-	if t > cfgTarget {
-		t = cfgTarget
 	}
 	return t
 }
