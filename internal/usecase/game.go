@@ -109,6 +109,25 @@ func (uc *GameUseCase) GetAvailableGames(ctx context.Context, gameType *domain.G
 	return games, nil
 }
 
+// RecordLobbyActivity marks the given tier(s) as recently browsed by a real
+// player, so the filler bots keep running games there (see BotUseCase.sweep and
+// domain.LobbyActivityWindow). Called from the lobby fetch handler. When
+// gameType is nil (a combined lobby view), both offered tiers are marked. Only
+// real players reach this path — bots never call the HTTP handlers — so it is a
+// clean "a human is here" signal. Best-effort: Redis errors are swallowed.
+func (uc *GameUseCase) RecordLobbyActivity(ctx context.Context, gameType *domain.GameType) {
+	if uc.redisService == nil {
+		return
+	}
+	tiers := []domain.GameType{domain.GameTypeRegular, domain.GameTypeVIP}
+	if gameType != nil {
+		tiers = []domain.GameType{*gameType}
+	}
+	for _, t := range tiers {
+		_ = uc.redisService.MarkTierBrowsed(ctx, string(t), domain.LobbyActivityWindow)
+	}
+}
+
 // GetInProgressGame returns the game of this type that is currently being drawn
 // (DRAWING), or nil if none. Used so the lobby can route a late / non-playing
 // user to spectate the live round instead of starting a second game — one game

@@ -1209,10 +1209,17 @@ func (r *gameRepository) CountGamesByType(ctx context.Context) (map[domain.GameT
 
 // GetTotalHouseCut calculates the total house cut from all games
 func (r *gameRepository) GetTotalHouseCut(ctx context.Context) (float64, error) {
+	// Exclude bot-only games (no real player ever joined): their "house cut" is
+	// fake money cycling between house-owned bot wallets, not real revenue.
 	query := `
 		SELECT COALESCE(SUM(prize_pool * house_cut / (1 - house_cut)), 0) as total_house_cut
-		FROM games
-		WHERE state IN ('FINISHED', 'CLOSED')
+		FROM games g
+		WHERE g.state IN ('FINISHED', 'CLOSED')
+		  AND EXISTS (
+		        SELECT 1 FROM game_players gp
+		        JOIN users u ON u.id = gp.user_id
+		        WHERE gp.game_id = g.id AND u.is_bot = false
+		  )
 	`
 
 	var totalHouseCut float64

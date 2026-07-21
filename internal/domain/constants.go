@@ -163,6 +163,14 @@ const FirstDrawDelay = 2000 * time.Millisecond
 const EmptyGameCleanupInterval = 60 * time.Second
 const EmptyGameGracePeriod = 120 * time.Second
 
+// LobbyActivityWindow is how long a tier is considered "recently browsed" after
+// a real player last opened its lobby. The filler bots will seed and run games
+// with zero real players ONLY while a tier is inside this window, so bot-only
+// games keep the lobby alive around real visitors and quietly idle once nobody
+// has looked for a while (e.g. overnight). It is written as the TTL on the
+// per-tier activity key, so expiry is automatic.
+const LobbyActivityWindow = 10 * time.Minute
+
 // WebSocket Handler Constants
 
 // WebSocketInitialStateTimeout is the timeout for fetching initial state

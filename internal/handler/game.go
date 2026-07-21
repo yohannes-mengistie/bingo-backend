@@ -35,6 +35,10 @@ func (h *GameHandler) GetGames(c *gin.Context) {
 		return
 	}
 
+	// A real player is looking at the lobby — keep this tier "recently browsed"
+	// so the filler bots run games here (and idle once nobody's around).
+	h.gameUseCase.RecordLobbyActivity(c.Request.Context(), req.GameType)
+
 	// Get available games
 	games, err := h.gameUseCase.GetAvailableGames(c.Request.Context(), req.GameType)
 	if err != nil {

@@ -39,6 +39,7 @@ func env(k, d string) string {
 type harness struct {
 	t   *testing.T
 	db  *sql.DB
+	rdb *goredis.Client
 	uc  *GameUseCase
 	ids struct {
 		users []uuid.UUID
@@ -80,7 +81,7 @@ func newHarness(t *testing.T) *harness {
 		db,
 		redisPkg.NewGameStateService(rdb),
 	)
-	return &harness{t: t, db: db, uc: uc}
+	return &harness{t: t, db: db, rdb: rdb, uc: uc}
 }
 
 // seedUser inserts a user + wallet and returns the user id. tgSuffix keeps

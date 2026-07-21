@@ -9,6 +9,7 @@ import (
 
 	"github.com/bingo/backend/internal/domain"
 	"github.com/bingo/backend/pkg/referral"
+	redisGame "github.com/bingo/backend/pkg/redis"
 	"github.com/google/uuid"
 )
 
@@ -91,6 +92,7 @@ type BotUseCase struct {
 	transactionRepo domain.TransactionRepository
 	gameRepo        domain.GameRepository
 	gameUC          *GameUseCase
+	gameState       *redisGame.GameStateService // reads the per-tier "recently browsed" marker
 	db              *sql.DB
 	settings        BotSettings
 }
@@ -103,6 +105,7 @@ func NewBotUseCase(
 	transactionRepo domain.TransactionRepository,
 	gameRepo domain.GameRepository,
 	gameUC *GameUseCase,
+	gameState *redisGame.GameStateService,
 	db *sql.DB,
 	settings BotSettings,
 ) *BotUseCase {
@@ -113,6 +116,7 @@ func NewBotUseCase(
 		transactionRepo: transactionRepo,
 		gameRepo:        gameRepo,
 		gameUC:          gameUC,
+		gameState:       gameState,
 		db:              db,
 		settings:        settings,
 	}
@@ -288,7 +292,18 @@ func (uc *BotUseCase) recordBotFunding(ctx context.Context, tx *sql.Tx, userID u
 // FillGame adds up to `requested` bots to one game, reusing JoinGame for each.
 // It enforces the core rule (never join a game with zero real players) and
 // respects free-card availability. Returns how many were actually added.
+//
+// This is the guarded, human-facing entry point (admin "add bots" button). The
+// automatic sweeper calls fill directly and may pass allowEmpty when policy
+// permits bot-only games — see sweep.
 func (uc *BotUseCase) FillGame(ctx context.Context, gameID uuid.UUID, requested int) (*domain.BotFillResult, error) {
+	return uc.fill(ctx, gameID, requested, false)
+}
+
+// fill is the shared implementation behind FillGame and the auto-sweeper. When
+// allowEmpty is false it keeps the classic guard (never seed a game with zero
+// real players); when true it may seed a bot-only game to keep the lobby alive.
+func (uc *BotUseCase) fill(ctx context.Context, gameID uuid.UUID, requested int, allowEmpty bool) (*domain.BotFillResult, error) {
 	game, err := uc.gameRepo.FindByID(ctx, gameID)
 	if err != nil {
 		return nil, fmt.Errorf("game not found: %w", err)
@@ -308,8 +323,9 @@ func (uc *BotUseCase) FillGame(ctx context.Context, gameID uuid.UUID, requested 
 
 	result := &domain.BotFillResult{GameID: gameID, Requested: requested, RealPlayers: realPlayers, BotPlayers: botPlayers}
 
-	// Hard rule: never let bots play a game with no real player in it.
-	if realPlayers < 1 {
+	// Guard: never let bots play a game with no real player in it — unless the
+	// caller explicitly opted into bot-only games (allowEmpty).
+	if !allowEmpty && realPlayers < 1 {
 		return result, nil
 	}
 
@@ -460,27 +476,43 @@ func (uc *BotUseCase) sweep(ctx context.Context) {
 		}
 		for _, game := range games {
 			realPlayers, err := uc.botRepo.CountRealPlayersInGame(ctx, game.ID)
-			// MinRealPlayers is a FLOOR: start adding bots once a game has at
-			// least this many real players (default 1 → fill the moment one
-			// person joins). No upper ceiling — bots always top the game up to
-			// TargetBots regardless of how many real players join. Empty games
-			// (0 real players) are never filled.
-			floor := cfg.MinRealPlayers
-			if floor < 1 {
-				floor = 1
-			}
-			if err != nil || realPlayers < floor {
+			if err != nil {
 				continue
 			}
 
-			// Let the room breathe before anyone "arrives". See joinDelayFor.
-			if delay := uc.joinDelayFor(game.ID); delay > 0 {
-				age, hasReal, err := uc.botRepo.SecondsSinceFirstRealPlayer(ctx, game.ID)
-				if err != nil || !hasReal {
+			// MinRealPlayers is a FLOOR: only add bots once a game holds at least
+			// this many real players. No upper ceiling — bots always top the game
+			// up to TargetBots regardless of how many real players join. Set the
+			// floor to 0 to let bots seed and run BOT-ONLY games (0 real players),
+			// which keeps the lobby looking alive to attract visitors.
+			if realPlayers < cfg.MinRealPlayers {
+				continue
+			}
+
+			if realPlayers == 0 {
+				// Bot-only game. Run these only while a real player has recently
+				// browsed this tier, so the lobby stays alive around visitors and
+				// quietly idles when nobody is around (e.g. overnight). Redis
+				// unavailable or nothing browsed → skip and let the game idle.
+				if uc.gameState == nil {
 					continue
 				}
-				if time.Duration(age*float64(time.Second)) < delay {
-					continue // still too soon — try again on a later tick
+				recent, err := uc.gameState.TierBrowsedRecently(ctx, string(tier))
+				if err != nil || !recent {
+					continue
+				}
+				// No real player to pace against, so joinDelayFor (keyed on the
+				// first real arrival) does not apply — bots may seed immediately.
+			} else {
+				// Let the room breathe before anyone "arrives". See joinDelayFor.
+				if delay := uc.joinDelayFor(game.ID); delay > 0 {
+					age, hasReal, err := uc.botRepo.SecondsSinceFirstRealPlayer(ctx, game.ID)
+					if err != nil || !hasReal {
+						continue
+					}
+					if time.Duration(age*float64(time.Second)) < delay {
+						continue // still too soon — try again on a later tick
+					}
 				}
 			}
 
@@ -495,7 +527,9 @@ func (uc *BotUseCase) sweep(ctx context.Context) {
 			if need > uc.settings.MaxJoinsPerTick {
 				need = uc.settings.MaxJoinsPerTick
 			}
-			if _, err := uc.FillGame(ctx, game.ID, need); err != nil {
+			// allowEmpty mirrors the bot-only decision above: a 0-real game only
+			// reaches here when the throttle passed, so it may be seeded.
+			if _, err := uc.fill(ctx, game.ID, need, realPlayers == 0); err != nil {
 				continue
 			}
 		}

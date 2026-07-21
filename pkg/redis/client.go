@@ -64,6 +64,13 @@ func GameCountdownKey(gameID string) string {
 	return fmt.Sprintf("game:%s:countdown", gameID)
 }
 
+// LobbyActivityKey holds a short-lived marker that a real player recently
+// browsed a tier's lobby. Presence (not value) is what matters; the key carries
+// a TTL so it disappears on its own once the tier goes quiet.
+func LobbyActivityKey(tier string) string {
+	return fmt.Sprintf("lobby:%s:activity", tier)
+}
+
 // Pub/Sub Channels
 func GameChannel(gameID string) string {
 	return fmt.Sprintf("game:%s:events", gameID)

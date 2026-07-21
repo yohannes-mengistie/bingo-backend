@@ -21,6 +21,32 @@ func NewGameStateService(client *redis.Client) *GameStateService {
 	return &GameStateService{client: client}
 }
 
+// MarkTierBrowsed records that a real player just opened this tier's lobby,
+// keeping it "recently browsed" for ttl. Called on every real lobby fetch; the
+// filler bots read it (TierBrowsedRecently) to decide whether to run games with
+// zero real players. No-op (nil error) when Redis is not configured.
+func (s *GameStateService) MarkTierBrowsed(ctx context.Context, tier string, ttl time.Duration) error {
+	if s.client == nil {
+		return nil
+	}
+	return s.client.Set(ctx, LobbyActivityKey(tier), "1", ttl).Err()
+}
+
+// TierBrowsedRecently reports whether a real player has opened this tier's lobby
+// within the activity window (i.e. the marker key still exists). Returns false
+// when Redis is unavailable, so a Redis outage makes the bots idle rather than
+// churn empty games unattended.
+func (s *GameStateService) TierBrowsedRecently(ctx context.Context, tier string) (bool, error) {
+	if s.client == nil {
+		return false, nil
+	}
+	n, err := s.client.Exists(ctx, LobbyActivityKey(tier)).Result()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 // SaveGameState saves game state to Redis
 func (s *GameStateService) SaveGameState(ctx context.Context, game *domain.Game) error {
 	if s.client == nil {

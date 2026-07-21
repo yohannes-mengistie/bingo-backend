@@ -156,7 +156,7 @@ func main() {
 	authUseCase := usecase.NewAuthUseCase(userRepo, jwtService, cfg.Admin.SecretCode, cfg.Telegram.BotToken)
 	bonusRepo := postgres.NewBonusRepository(db)
 	gameUseCase := usecase.NewGameUseCase(gameRepo, walletRepo, transactionRepo, userRepo, bonusRepo, db, gameStateService)
-	botUseCase := usecase.NewBotUseCase(botRepo, userRepo, walletRepo, transactionRepo, gameRepo, gameUseCase, db, usecase.BotSettings{
+	botUseCase := usecase.NewBotUseCase(botRepo, userRepo, walletRepo, transactionRepo, gameRepo, gameUseCase, gameStateService, db, usecase.BotSettings{
 		PoolSize:        cfg.Bots.PoolSize,
 		WalletFloat:     cfg.Bots.WalletFloat,
 		MaxJoinsPerTick: cfg.Bots.MaxJoinsPerTick,
