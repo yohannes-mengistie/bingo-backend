@@ -48,7 +48,8 @@ func (h *WalletHandler) Deposit(c *gin.Context) {
 		if err.Error() == "amount must be greater than 0" ||
 			err.Error() == "transaction_type must be one of Telebirr, CBEBirr, Mpesa" ||
 			err.Error() == "transaction_id is required" ||
-			err.Error() == "payment provider does not match transaction_type" {
+			err.Error() == "payment provider does not match transaction_type" ||
+			strings.HasPrefix(err.Error(), "minimum deposit is") {
 			statusCode = http.StatusBadRequest
 		} else if strings.HasPrefix(err.Error(), "payment verification failed:") ||
 			strings.HasPrefix(err.Error(), "verified payment amount") {
@@ -587,9 +588,11 @@ func (h *WalletHandler) GetPendingDeposits(c *gin.Context) {
 		return
 	}
 
+	total, _ := h.walletUseCase.CountByStatusAndType(c.Request.Context(), domain.TransactionStatusPending, domain.TransactionTypeDeposit)
 	c.JSON(http.StatusOK, gin.H{
 		"transactions": transactions,
 		"count":        len(transactions),
+		"total":        total,
 		"limit":        limit,
 		"offset":       offset,
 	})
@@ -607,9 +610,11 @@ func (h *WalletHandler) GetPendingWithdrawals(c *gin.Context) {
 		return
 	}
 
+	total, _ := h.walletUseCase.CountByStatusAndType(c.Request.Context(), domain.TransactionStatusPending, domain.TransactionTypeWithdraw)
 	c.JSON(http.StatusOK, gin.H{
 		"transactions": transactions,
 		"count":        len(transactions),
+		"total":        total,
 		"limit":        limit,
 		"offset":       offset,
 	})
@@ -627,9 +632,11 @@ func (h *WalletHandler) GetCompletedDeposits(c *gin.Context) {
 		return
 	}
 
+	total, _ := h.walletUseCase.CountByStatusAndType(c.Request.Context(), domain.TransactionStatusCompleted, domain.TransactionTypeDeposit)
 	c.JSON(http.StatusOK, gin.H{
 		"transactions": transactions,
 		"count":        len(transactions),
+		"total":        total,
 		"limit":        limit,
 		"offset":       offset,
 	})
@@ -647,9 +654,11 @@ func (h *WalletHandler) GetCompletedWithdrawals(c *gin.Context) {
 		return
 	}
 
+	total, _ := h.walletUseCase.CountByStatusAndType(c.Request.Context(), domain.TransactionStatusCompleted, domain.TransactionTypeWithdraw)
 	c.JSON(http.StatusOK, gin.H{
 		"transactions": transactions,
 		"count":        len(transactions),
+		"total":        total,
 		"limit":        limit,
 		"offset":       offset,
 	})
@@ -718,6 +727,31 @@ func (h *WalletHandler) GetAllTransactions(c *gin.Context) {
 		"limit":        limit,
 		"offset":       offset,
 	})
+}
+
+// GetSettings handles GET /admin/settings — operator-tunable app settings.
+func (h *WalletHandler) GetSettings(c *gin.Context) {
+	s, err := h.walletUseCase.GetSettings(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load settings"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"settings": s})
+}
+
+// UpdateSettings handles PUT /admin/settings — change app settings (e.g. minimum deposit).
+func (h *WalletHandler) UpdateSettings(c *gin.Context) {
+	var req domain.UpdateAppSettingsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+	s, err := h.walletUseCase.UpdateSettings(c.Request.Context(), req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"settings": s})
 }
 
 // GetRealPlayerWinnings handles GET /admin/transactions/winners — winnings paid

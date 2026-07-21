@@ -50,11 +50,51 @@ func NewWalletUseCase(
 	}
 }
 
+// GetSettings returns the app settings row, falling back to defaults if unset.
+func (uc *WalletUseCase) GetSettings(ctx context.Context) (*domain.AppSettings, error) {
+	s := &domain.AppSettings{MinDeposit: domain.DefaultMinDeposit}
+	err := uc.db.QueryRowContext(ctx, `SELECT min_deposit, updated_at FROM app_settings WHERE id = 1`).
+		Scan(&s.MinDeposit, &s.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return s, nil // migration not applied yet → sane default
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to read settings: %w", err)
+	}
+	return s, nil
+}
+
+// UpdateSettings applies a partial settings change from the admin dashboard.
+func (uc *WalletUseCase) UpdateSettings(ctx context.Context, req domain.UpdateAppSettingsRequest) (*domain.AppSettings, error) {
+	cur, err := uc.GetSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if req.MinDeposit != nil {
+		if *req.MinDeposit < 0 {
+			return nil, errors.New("min_deposit cannot be negative")
+		}
+		cur.MinDeposit = *req.MinDeposit
+	}
+	_, err = uc.db.ExecContext(ctx, `
+		INSERT INTO app_settings (id, min_deposit, updated_at) VALUES (1, $1, now())
+		ON CONFLICT (id) DO UPDATE SET min_deposit = $1, updated_at = now()`, cur.MinDeposit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to save settings: %w", err)
+	}
+	return uc.GetSettings(ctx)
+}
+
 // Deposit creates or completes a deposit, depending on verifier configuration.
 func (uc *WalletUseCase) Deposit(ctx context.Context, req domain.DepositRequest) (*domain.Transaction, error) {
 	// Validate amount
 	if req.Amount <= 0 {
 		return nil, errors.New("amount must be greater than 0")
+	}
+
+	// Enforce the operator-configured minimum deposit.
+	if s, err := uc.GetSettings(ctx); err == nil && req.Amount < s.MinDeposit {
+		return nil, fmt.Errorf("minimum deposit is %.0f birr", s.MinDeposit)
 	}
 
 	if !domain.IsSupportedPaymentMethod(req.TransactionType) {
@@ -407,6 +447,12 @@ func (uc *WalletUseCase) GetAllTransactions(ctx context.Context, limit, offset i
 // CountAllTransactions is the grand total (for page-by-page navigation).
 func (uc *WalletUseCase) CountAllTransactions(ctx context.Context) (int, error) {
 	return uc.transactionRepo.CountAll(ctx)
+}
+
+// CountByStatusAndType is the total of a status+type list (for pagination of the
+// pending/completed deposit & withdrawal tabs).
+func (uc *WalletUseCase) CountByStatusAndType(ctx context.Context, status domain.TransactionStatus, t domain.TransactionType) (int, error) {
+	return uc.transactionRepo.CountByStatusAndType(ctx, status, t)
 }
 
 // GetRealPlayerWinnings lists winnings paid to real (non-bot) players, plus the

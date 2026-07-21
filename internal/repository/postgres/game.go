@@ -885,10 +885,18 @@ func (r *gameRepository) GetUserGameStats(ctx context.Context, userID uuid.UUID)
 				 WHERE g.winner_id = $1 AND g.state = 'FINISHED'
 				   AND NOT EXISTS (SELECT 1 FROM game_players gp2 WHERE gp2.game_id = g.id AND gp2.is_winner)
 			) wins) AS total_won,
-			(SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE user_id = $1 AND category = 'bet') AS staked
+			(SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE user_id = $1 AND category = 'bet') AS staked,
+			(SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE user_id = $1 AND category = 'deposit' AND status = 'completed') AS deposited,
+			(SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE user_id = $1 AND category = 'withdrawal' AND status = 'completed') AS withdrawn,
+			(SELECT COALESCE(SUM(amount), 0) FROM bonus_grants WHERE user_id = $1) AS bonus_total,
+			(SELECT COALESCE(balance, 0) FROM wallets WHERE user_id = $1) AS real_balance,
+			(SELECT COALESCE(SUM(remaining), 0) FROM bonus_grants WHERE user_id = $1 AND remaining > 0 AND expires_at > now()) AS bonus_balance
 	`
 	s := &domain.UserGameStats{}
-	if err := r.db.QueryRowContext(ctx, query, userID).Scan(&s.GamesPlayed, &s.GamesWon, &s.TotalWon, &s.TotalStaked); err != nil {
+	if err := r.db.QueryRowContext(ctx, query, userID).Scan(
+		&s.GamesPlayed, &s.GamesWon, &s.TotalWon, &s.TotalStaked,
+		&s.TotalDeposited, &s.TotalWithdrawn, &s.TotalBonus, &s.RealBalance, &s.BonusBalance,
+	); err != nil {
 		return nil, fmt.Errorf("failed to get user game stats: %w", err)
 	}
 	return s, nil

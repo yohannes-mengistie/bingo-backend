@@ -188,14 +188,22 @@ type RecentWinner struct {
 	FinishedAt time.Time `json:"finished_at"`
 }
 
-// UserGameStats is a player's lifetime play record, so an admin can tell at a
-// glance whether a pending withdrawal belongs to someone who actually plays and
-// wins — or to a farmed account that only ever received bonuses/referrals.
+// UserGameStats is a player's lifetime play + money record, so an admin can tell
+// at a glance whether a pending withdrawal belongs to someone who actually plays
+// and wins — or to a farmed account whose balance came from bonuses/referrals
+// they never earned by playing. The money fields make the SOURCE of the balance
+// explicit: deposited (real cash in), bonus (play-only they were given), won
+// (from playing), staked, withdrawn (real cash already taken out).
 type UserGameStats struct {
-	GamesPlayed int     `json:"games_played"` // distinct games they paid into
-	GamesWon    int     `json:"games_won"`    // distinct games they won
-	TotalWon    float64 `json:"total_won"`    // sum of prizes
-	TotalStaked float64 `json:"total_staked"` // sum of cash bets placed
+	GamesPlayed    int     `json:"games_played"`    // distinct games they paid into
+	GamesWon       int     `json:"games_won"`       // distinct games they won
+	TotalWon       float64 `json:"total_won"`       // sum of prizes won by playing
+	TotalStaked    float64 `json:"total_staked"`    // sum of cash bets placed
+	TotalDeposited float64 `json:"total_deposited"` // real money deposited (completed)
+	TotalWithdrawn float64 `json:"total_withdrawn"` // real money already withdrawn (completed)
+	TotalBonus     float64 `json:"total_bonus"`     // play-only bonus/referral ever granted
+	RealBalance    float64 `json:"real_balance"`    // current withdrawable balance
+	BonusBalance   float64 `json:"bonus_balance"`   // current spendable play-only bonus
 }
 
 // GameWinner is one winning card of a finished game, with the prize share it was
