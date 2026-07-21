@@ -3,7 +3,6 @@ package postgres
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"time"
 
@@ -84,66 +83,6 @@ func (s *TransactionService) AdjustBalance(ctx context.Context, userID uuid.UUID
 	}
 
 	return record, nil
-}
-
-// PayReferralReward credits the referrer of referredUserID exactly once, when
-// that user's first deposit is approved. Atomic and idempotent: the
-// referral_rewarded flag is claimed and the referrer credited in a SINGLE
-// transaction, so concurrent deposit approvals can never pay twice, and a
-// failure to credit rolls the flag back. Returns the referrer's id when a
-// reward was paid, or nil when there was nothing to pay (no referrer, or
-// already rewarded).
-func (s *TransactionService) PayReferralReward(ctx context.Context, referredUserID uuid.UUID, amount float64) (*uuid.UUID, error) {
-	if amount <= 0 {
-		return nil, fmt.Errorf("referral reward must be positive")
-	}
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	// Claim the reward atomically: only the first caller to flip the flag for a
-	// referred user gets a row back, and only when a referrer is actually set.
-	var referrerID uuid.UUID
-	err = tx.QueryRowContext(ctx, `
-		UPDATE users
-		   SET referral_rewarded = true, updated_at = CURRENT_TIMESTAMP
-		 WHERE id = $1 AND referred_by IS NOT NULL AND referral_rewarded = false
-		RETURNING referred_by`, referredUserID).Scan(&referrerID)
-	if errors.Is(err, sql.ErrNoRows) {
-		// No referrer, or already rewarded — nothing to do.
-		return nil, tx.Commit()
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to claim referral reward: %w", err)
-	}
-
-	// Credit the referrer's wallet within the same transaction.
-	if _, err := s.walletRepo.LockForUpdate(ctx, tx, referrerID); err != nil {
-		return nil, fmt.Errorf("referrer wallet not found: %w", err)
-	}
-	if err := s.walletRepo.UpdateBalance(ctx, tx, referrerID, amount); err != nil {
-		return nil, fmt.Errorf("failed to credit referrer: %w", err)
-	}
-	note := "Referral reward"
-	record := &domain.Transaction{
-		UserID:    referrerID,
-		Type:      domain.TransactionTypeDeposit,
-		Category:  domain.TransactionCategoryReferralReward,
-		Amount:    amount,
-		Status:    domain.TransactionStatusCompleted,
-		Reference: &note,
-	}
-	if err := s.transactionRepo.Create(ctx, tx, record); err != nil {
-		return nil, fmt.Errorf("failed to record referral reward: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("failed to commit referral reward: %w", err)
-	}
-	return &referrerID, nil
 }
 
 func absFloat(f float64) float64 {

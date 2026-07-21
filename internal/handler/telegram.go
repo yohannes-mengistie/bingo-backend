@@ -465,9 +465,9 @@ func (h *TelegramHandler) showInvite(chatID int64, user *domain.User) {
 
 	msg := fmt.Sprintf(
 		"🔗 ጓደኛ ጋብዘው 15 ብር ያግኙ!\n"+
-			"የጋበዙት ሰው ለመጀመሪያ ጊዜ ገቢ ሲያደርግ 15 ብር ወደ ቦርሳዎ ይገባል።\n\n"+
+			"የጋበዙት ሰው አካውንት ሲከፍት 15 ብር ወደ ቦርሳዎ ይገባል።\n\n"+
 			"የእርስዎ ሊንክ (ለመቅዳት ይንኩት):\n%s\n\n"+
-			"Invite a friend, earn 15 birr — paid when they make their first deposit. Tap the link to copy it, or Share below. 👇",
+			"Invite a friend, earn 15 birr — paid as soon as they sign up. Tap the link to copy it, or Share below. 👇",
 		link)
 	h.reply(chatID, msg, &telegram.ReplyMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{
 		{{Text: "📨 አጋራ / Share", URL: shareURL}},

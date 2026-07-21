@@ -151,7 +151,7 @@ func main() {
 
 	// Initialize use cases
 	paymentVerifier := payment.NewVerifier(cfg.PaymentVerifier)
-	userUseCase := usecase.NewUserUseCase(userRepo, walletRepo, db)
+	userUseCase := usecase.NewUserUseCase(userRepo, walletRepo, transactionRepo, db)
 	walletUseCase := usecase.NewWalletUseCase(walletRepo, transactionRepo, userRepo, gameRepo, db, paymentVerifier)
 	authUseCase := usecase.NewAuthUseCase(userRepo, jwtService, cfg.Admin.SecretCode, cfg.Telegram.BotToken)
 	bonusRepo := postgres.NewBonusRepository(db)
@@ -175,9 +175,9 @@ func main() {
 		log.Printf("[telegram] could not set chat menu button: %v", err)
 	}
 	bonusUseCase := usecase.NewBonusUseCase(bonusRepo, userRepo, db, telegramBroadcastSender{bot: telegramBot})
-	// The bot exists now, so the wallet can Telegram a referrer when their
-	// reward lands on their invitee's first deposit.
-	walletUseCase.SetReferralNotifier(telegramBroadcastSender{bot: telegramBot})
+	// The bot exists now, so we can Telegram a referrer when their reward lands
+	// as soon as the person they invited signs up.
+	userUseCase.SetReferralNotifier(telegramBroadcastSender{bot: telegramBot})
 
 	// Initialize handlers
 	userHandler := handler.NewUserHandler(userUseCase)

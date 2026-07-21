@@ -27,44 +27,6 @@ type WalletUseCase struct {
 	transactionService *postgres.TransactionService
 	db                 *sql.DB
 	paymentVerifier    domain.PaymentVerifier
-	// referralNotifier tells a referrer on Telegram that they earned a reward.
-	// Optional and set after construction (the bot is built later); nil just
-	// means the referrer isn't messaged — they still see the money.
-	referralNotifier domain.BroadcastSender
-}
-
-// SetReferralNotifier wires the Telegram sender used to notify a referrer when
-// their reward lands. Called from main after the bot is constructed.
-func (uc *WalletUseCase) SetReferralNotifier(n domain.BroadcastSender) {
-	uc.referralNotifier = n
-}
-
-// settleReferral pays the referrer of a just-approved deposit's owner, if this
-// was their first deposit and a referrer is on file. After-the-fact and never
-// fatal: the deposit already succeeded, so a reward hiccup must not undo it.
-func (uc *WalletUseCase) settleReferral(ctx context.Context, depositUserID uuid.UUID) {
-	referrerID, err := uc.transactionService.PayReferralReward(ctx, depositUserID, domain.ReferralRewardAmount)
-	if err != nil {
-		log.Printf("[referral] reward on deposit by %s failed: %v", depositUserID, err)
-		return
-	}
-	if referrerID == nil {
-		return // no referrer, or already rewarded
-	}
-	if uc.referralNotifier == nil {
-		return
-	}
-	referrer, err := uc.userRepo.FindByID(ctx, *referrerID)
-	if err != nil || referrer == nil || referrer.TelegramID <= 0 {
-		return
-	}
-	msg := fmt.Sprintf(
-		"🎉 %0.f ብር የግብዣ ሽልማት አግኝተዋል!\nየጋበዙት ሰው ለመጀመሪያ ጊዜ ገቢ አድርጓል።\n\n"+
-			"You earned a %0.f birr referral reward — someone you invited just made their first deposit! 💰",
-		domain.ReferralRewardAmount, domain.ReferralRewardAmount)
-	if serr := uc.referralNotifier.SendMessage(referrer.TelegramID, msg); serr != nil {
-		log.Printf("[referral] rewarded %s but the Telegram notice failed: %v", *referrerID, serr)
-	}
 }
 
 // NewWalletUseCase creates a new wallet use case
@@ -186,11 +148,7 @@ func (uc *WalletUseCase) Deposit(ctx context.Context, req domain.DepositRequest)
 	}
 
 	if verified {
-		approved, aerr := uc.transactionService.ApproveDeposit(ctx, transaction.ID)
-		if aerr == nil {
-			uc.settleReferral(ctx, req.UserID)
-		}
-		return approved, aerr
+		return uc.transactionService.ApproveDeposit(ctx, transaction.ID)
 	}
 
 	return transaction, nil
@@ -301,11 +259,7 @@ func (uc *WalletUseCase) GetWalletByTelegramID(ctx context.Context, telegramID i
 
 // ApproveDeposit approves a pending deposit transaction and updates the wallet balance
 func (uc *WalletUseCase) ApproveDeposit(ctx context.Context, transactionID uuid.UUID) (*domain.Transaction, error) {
-	approved, err := uc.transactionService.ApproveDeposit(ctx, transactionID)
-	if err == nil && approved != nil {
-		uc.settleReferral(ctx, approved.UserID)
-	}
-	return approved, err
+	return uc.transactionService.ApproveDeposit(ctx, transactionID)
 }
 
 // AdjustBalance manually credits or debits a user's wallet (admin action).

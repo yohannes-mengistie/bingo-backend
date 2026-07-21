@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/bingo/backend/internal/domain"
@@ -15,18 +16,30 @@ import (
 )
 
 type UserUseCase struct {
-	userRepo   domain.UserRepository
-	walletRepo domain.WalletRepository
-	db         *sql.DB
+	userRepo        domain.UserRepository
+	walletRepo      domain.WalletRepository
+	transactionRepo domain.TransactionRepository
+	db              *sql.DB
+	// referralNotifier tells a referrer on Telegram that they earned a reward.
+	// Optional and set after construction (the bot is built later); nil just
+	// means the referrer isn't messaged — they still see the money.
+	referralNotifier domain.BroadcastSender
 }
 
 // NewUserUseCase creates a new user use case
-func NewUserUseCase(userRepo domain.UserRepository, walletRepo domain.WalletRepository, db *sql.DB) *UserUseCase {
+func NewUserUseCase(userRepo domain.UserRepository, walletRepo domain.WalletRepository, transactionRepo domain.TransactionRepository, db *sql.DB) *UserUseCase {
 	return &UserUseCase{
-		userRepo:   userRepo,
-		walletRepo: walletRepo,
-		db:         db,
+		userRepo:        userRepo,
+		walletRepo:      walletRepo,
+		transactionRepo: transactionRepo,
+		db:              db,
 	}
+}
+
+// SetReferralNotifier wires the Telegram sender used to congratulate a referrer
+// when their reward lands. Called from main after the bot is constructed.
+func (uc *UserUseCase) SetReferralNotifier(n domain.BroadcastSender) {
+	uc.referralNotifier = n
 }
 
 // CreateUser creates a new user and wallet together in a transaction
@@ -85,17 +98,26 @@ func (uc *UserUseCase) CreateUser(ctx context.Context, req domain.CreateUserRequ
 	defer tx.Rollback()
 
 	// Resolve the invite link's referral code to a referrer, if one came in.
-	// Best-effort: an unknown/blank code just means no referrer. The referrer is
-	// only PAID later, on this user's first deposit — see the wallet approve
-	// path — so recording the link here is safe and never gives instant money.
+	// Best-effort: an unknown/blank code just means no referrer.
 	var referredBy *uuid.UUID
+	var referrer *domain.User
 	if code := strings.TrimSpace(req.ReferrerCode); code != "" {
-		if referrer, rerr := uc.userRepo.FindByReferralCode(ctx, code); rerr == nil && referrer != nil {
-			referredBy = &referrer.ID
+		if r, rerr := uc.userRepo.FindByReferralCode(ctx, code); rerr == nil && r != nil {
+			// Self-referral guard: you cannot refer yourself. Reject a code that
+			// resolves to the same person who is registering (same Telegram ID or
+			// same phone), so nobody can pay themselves the reward with their own
+			// link. A genuinely different account is a real referral.
+			if r.TelegramID == req.TelegramID || r.PhoneNumber == normalizedPhone {
+				log.Printf("[referral] ignoring self-referral by tg_id=%d", req.TelegramID)
+			} else {
+				referredBy = &r.ID
+				referrer = r
+			}
 		}
 	}
 
-	// Create user
+	// Create user. If they were referred, the referrer is paid right below in
+	// this same transaction and referral_rewarded is flipped there.
 	user := &domain.User{
 		TelegramID:  req.TelegramID,
 		FirstName:   req.FirstName,
@@ -120,9 +142,50 @@ func (uc *UserUseCase) CreateUser(ctx context.Context, req domain.CreateUserRequ
 		return nil, nil, fmt.Errorf("failed to create wallet: %w", err)
 	}
 
+	// Pay the referrer their reward NOW, at signup — no longer gated on a first
+	// deposit. Done in the same transaction as the signup so the credit and the
+	// account are created atomically (never a referred user without the reward,
+	// nor a reward without the user). referral_rewarded is flipped so nothing can
+	// ever pay a second time for this user.
+	if referredBy != nil {
+		if _, err := uc.walletRepo.LockForUpdate(ctx, tx, *referredBy); err != nil {
+			return nil, nil, fmt.Errorf("referrer wallet not found: %w", err)
+		}
+		if err := uc.walletRepo.UpdateBalance(ctx, tx, *referredBy, domain.ReferralRewardAmount); err != nil {
+			return nil, nil, fmt.Errorf("failed to credit referrer: %w", err)
+		}
+		note := "Referral reward"
+		reward := &domain.Transaction{
+			UserID:    *referredBy,
+			Type:      domain.TransactionTypeDeposit,
+			Category:  domain.TransactionCategoryReferralReward,
+			Amount:    domain.ReferralRewardAmount,
+			Status:    domain.TransactionStatusCompleted,
+			Reference: &note,
+		}
+		if err := uc.transactionRepo.Create(ctx, tx, reward); err != nil {
+			return nil, nil, fmt.Errorf("failed to record referral reward: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE users SET referral_rewarded = true WHERE id = $1`, user.ID); err != nil {
+			return nil, nil, fmt.Errorf("failed to mark referral rewarded: %w", err)
+		}
+	}
+
 	// Commit transaction
 	if err := tx.Commit(); err != nil {
 		return nil, nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	// Congratulate the referrer on Telegram (best-effort, after commit — the
+	// money is already theirs whether or not the message goes through).
+	if referrer != nil && uc.referralNotifier != nil && referrer.TelegramID > 0 {
+		msg := fmt.Sprintf(
+			"🎉 %0.f ብር የግብዣ ሽልማት አግኝተዋል!\nየጋበዙት ሰው አካውንት ከፍቷል።\n\n"+
+				"You earned a %0.f birr referral reward — someone you invited just signed up! 💰",
+			domain.ReferralRewardAmount, domain.ReferralRewardAmount)
+		if serr := uc.referralNotifier.SendMessage(referrer.TelegramID, msg); serr != nil {
+			log.Printf("[referral] rewarded %s but the Telegram notice failed: %v", referrer.ID, serr)
+		}
 	}
 
 	return user, wallet, nil
