@@ -579,36 +579,35 @@ func (uc *GameUseCase) startCountdown(ctx context.Context, gameID uuid.UUID) {
 		"player_count": game.PlayerCount,
 	})
 
-	// Countdown ticker
+	// Run the visible countdown, then charge reservations and start drawing.
+	uc.runCountdownThenDraw(ctx, gameID, int(domain.CountdownDuration.Seconds()))
+}
+
+// runCountdownThenDraw ticks the countdown down from secondsLeft to 0 (publishing
+// each second), then starts the draw. Shared by the initial startCountdown and by
+// resumeCountdown after a restart, which passes only the seconds ACTUALLY left on
+// the clock so a redeploy mid-countdown doesn't restart the full 40s.
+func (uc *GameUseCase) runCountdownThenDraw(ctx context.Context, gameID uuid.UUID, secondsLeft int) {
 	ticker := time.NewTicker(domain.CountdownTickerInterval)
 	defer ticker.Stop()
 
-	countdownSeconds := int(domain.CountdownDuration.Seconds())
-	for i := countdownSeconds; i > 0; i-- {
+	for i := secondsLeft; i > 0; i-- {
 		<-ticker.C
 
-		// Check if game still exists and is in countdown
+		// Stop if the game left COUNTDOWN (e.g. reverted to WAITING as players left).
 		game, err := uc.gameRepo.FindByID(ctx, gameID)
 		if err != nil || game.State != domain.GameStateCountdown {
 			return
 		}
-
-		// Check if players dropped below minimum
-		// If so, the countdown ticker will exit and LeaveGame will handle reverting to WAITING
-		// This check ensures we don't continue countdown with insufficient players
 		if game.PlayerCount < domain.MinPlayers {
-			// Exit countdown - LeaveGame will handle state transition to WAITING
-			// The countdown ticker will stop, and when state changes, this goroutine exits
 			return
 		}
 
-		// Publish countdown update
 		uc.redisService.PublishEvent(ctx, gameID, domain.WebSocketEventCountdown, map[string]interface{}{
 			"secondsLeft": i - 1,
 		})
 	}
 
-	// Start drawing phase
 	uc.startDrawing(ctx, gameID)
 }
 
@@ -803,8 +802,98 @@ func (uc *GameUseCase) startDrawing(ctx context.Context, gameID uuid.UUID) {
 	utils.GoSafe("drawNumbers", func() { uc.drawNumbers(ctx, gameID) })
 }
 
-// drawNumbers draws numbers periodically
+// acquireDrawLease claims the game's draw lease, retrying long enough to outlast
+// a departing instance's lease during a deploy overlap so the survivor takes over
+// as soon as the old process is gone. Returns false if the game stops being live
+// while we wait, or we never get the lease. In normal play there is no contention,
+// so the first attempt succeeds instantly.
+func (uc *GameUseCase) acquireDrawLease(ctx context.Context, gameID uuid.UUID, token string) bool {
+	deadline := time.Now().Add(domain.DrawLeaseTTL + 10*time.Second)
+	for {
+		if ok, _ := uc.redisService.AcquireOrRenewDrawLease(ctx, gameID, token, domain.DrawLeaseTTL); ok {
+			return true
+		}
+		// Give up if the game is no longer live (cancelled/finished while we waited).
+		if g, err := uc.gameRepo.FindByID(ctx, gameID); err == nil &&
+			g.State != domain.GameStateDrawing && g.State != domain.GameStateCountdown {
+			return false
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+// ResumeActiveGames re-attaches the countdown/draw loops to games that were mid-
+// flight when this process started — i.e. games a previous process was running
+// when it was replaced by a deploy or died. Without it, a redeploy leaves any
+// live game frozen in COUNTDOWN/DRAWING forever with players' stakes locked. Safe
+// to run alongside a still-draining old instance: the draw lease guarantees a
+// single drawer, and startDrawing's row lock guarantees a single transition.
+func (uc *GameUseCase) ResumeActiveGames(ctx context.Context) {
+	drawing := domain.GameStateDrawing
+	if games, err := uc.gameRepo.FindAll(ctx, &drawing, nil, domain.MaxAvailableGamesLimit, 0); err == nil {
+		for _, g := range games {
+			id := g.ID
+			utils.GoSafe("resumeDraw", func() { uc.drawNumbers(context.Background(), id) })
+		}
+	}
+	countdown := domain.GameStateCountdown
+	if games, err := uc.gameRepo.FindAll(ctx, &countdown, nil, domain.MaxAvailableGamesLimit, 0); err == nil {
+		for _, g := range games {
+			id := g.ID
+			utils.GoSafe("resumeCountdown", func() { uc.resumeCountdown(context.Background(), id) })
+		}
+	}
+	// A WAITING game already at the minimum has no countdown running (the goroutine
+	// that would have started it died with the old process). Kick it off — start-
+	// Countdown's row lock makes this a no-op if one is somehow already underway.
+	waiting := domain.GameStateWaiting
+	if games, err := uc.gameRepo.FindAll(ctx, &waiting, nil, domain.MaxAvailableGamesLimit, 0); err == nil {
+		for _, g := range games {
+			if g.PlayerCount < domain.MinPlayers {
+				continue
+			}
+			id := g.ID
+			utils.GoSafe("resumeStartCountdown", func() { uc.startCountdown(context.Background(), id) })
+		}
+	}
+}
+
+// resumeCountdown continues a game left in COUNTDOWN, honouring the ORIGINAL end
+// time (from the Redis countdown, stored as a timezone-safe epoch) rather than
+// restarting a fresh 40s. If the clock has already run out, it goes straight to
+// drawing.
+func (uc *GameUseCase) resumeCountdown(ctx context.Context, gameID uuid.UUID) {
+	end, err := uc.redisService.GetCountdown(ctx, gameID)
+	if err != nil {
+		// No countdown record survived — the clock is effectively up.
+		uc.startDrawing(ctx, gameID)
+		return
+	}
+	remaining := int(time.Until(end).Seconds())
+	if remaining <= 0 {
+		uc.startDrawing(ctx, gameID)
+		return
+	}
+	uc.runCountdownThenDraw(ctx, gameID, remaining)
+}
+
+// drawNumbers draws numbers periodically.
+//
+// Only the process that holds this game's Redis lease draws it, so during a
+// rolling deploy (old + new instance overlap) the game is never double-drawn:
+// the new instance blocks in acquireDrawLease until the old one's lease expires,
+// then picks up exactly where it left off (drawn numbers live in Redis). If we
+// ever lose the lease mid-draw, we stop immediately so the new owner is alone.
 func (uc *GameUseCase) drawNumbers(ctx context.Context, gameID uuid.UUID) {
+	token := uuid.NewString()
+	if !uc.acquireDrawLease(ctx, gameID, token) {
+		return // another live instance owns the draw — leave it to them
+	}
+	defer uc.redisService.ReleaseDrawLease(context.Background(), gameID, token)
+
 	// Grace before the first number so players redirecting from the picker
 	// have their game socket connected and hear the first call live (see
 	// domain.FirstDrawDelay).
@@ -815,6 +904,11 @@ func (uc *GameUseCase) drawNumbers(ctx context.Context, gameID uuid.UUID) {
 
 	for {
 		<-ticker.C
+
+		// Keep our ownership fresh; if we lost it, another instance has taken over.
+		if ok, _ := uc.redisService.AcquireOrRenewDrawLease(ctx, gameID, token, domain.DrawLeaseTTL); !ok {
+			return
+		}
 
 		// Check if game is still in drawing state
 		game, err := uc.gameRepo.FindByID(ctx, gameID)

@@ -163,6 +163,14 @@ const FirstDrawDelay = 2000 * time.Millisecond
 const EmptyGameCleanupInterval = 60 * time.Second
 const EmptyGameGracePeriod = 120 * time.Second
 
+// DrawLeaseTTL is how long a drawing game's single-owner lease lives before it
+// must be renewed. Only the process holding a game's lease draws its numbers, so
+// during a rolling deploy (old + new instance briefly overlap) the game is never
+// double-drawn. Set to several draw intervals so a couple of missed renews (GC
+// pause, slow tick) don't drop the lease, while a dead process frees it within
+// this window for the surviving instance to take over. See drawNumbers.
+const DrawLeaseTTL = 9 * time.Second
+
 // LobbyActivityWindow is how long a tier is considered "recently browsed" after
 // a real player last opened its lobby. The filler bots will seed and run games
 // with zero real players ONLY while a tier is inside this window, so bot-only

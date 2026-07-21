@@ -64,6 +64,12 @@ func GameCountdownKey(gameID string) string {
 	return fmt.Sprintf("game:%s:countdown", gameID)
 }
 
+// GameDrawLeaseKey holds the single-owner lease for a game's draw loop, so only
+// one process draws it even while two overlap during a deploy. See drawNumbers.
+func GameDrawLeaseKey(gameID string) string {
+	return fmt.Sprintf("game:%s:drawlease", gameID)
+}
+
 // LobbyActivityKey holds a short-lived marker that a real player recently
 // browsed a tier's lobby. Presence (not value) is what matters; the key carries
 // a TTL so it disappears on its own once the tier goes quiet.

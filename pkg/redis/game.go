@@ -21,6 +21,50 @@ func NewGameStateService(client *redis.Client) *GameStateService {
 	return &GameStateService{client: client}
 }
 
+// acquireOrRenewLeaseScript sets the lease to our token when it is free OR
+// already ours, and (re)arms its TTL — an atomic compare-and-set-and-expire so
+// two processes can never both believe they own it. Returns 1 when we hold it.
+var acquireOrRenewLeaseScript = redis.NewScript(`
+	local v = redis.call('get', KEYS[1])
+	if v == false or v == ARGV[1] then
+		redis.call('set', KEYS[1], ARGV[1], 'PX', ARGV[2])
+		return 1
+	end
+	return 0
+`)
+
+// releaseLeaseScript deletes the lease only if we still own it, so a slow
+// process can't wipe a lease another instance has since taken over.
+var releaseLeaseScript = redis.NewScript(`
+	if redis.call('get', KEYS[1]) == ARGV[1] then
+		return redis.call('del', KEYS[1])
+	end
+	return 0
+`)
+
+// AcquireOrRenewDrawLease claims the game's draw lease for `token` (or renews it
+// if already ours) and arms it for ttl. Returns true only while we own it. When
+// Redis is absent it returns true so a single-instance dev setup still draws.
+func (s *GameStateService) AcquireOrRenewDrawLease(ctx context.Context, gameID uuid.UUID, token string, ttl time.Duration) (bool, error) {
+	if s.client == nil {
+		return true, nil
+	}
+	res, err := acquireOrRenewLeaseScript.Run(ctx, s.client,
+		[]string{GameDrawLeaseKey(gameID.String())}, token, ttl.Milliseconds()).Int64()
+	if err != nil {
+		return false, err
+	}
+	return res == 1, nil
+}
+
+// ReleaseDrawLease frees the game's draw lease if we still hold it. Best-effort.
+func (s *GameStateService) ReleaseDrawLease(ctx context.Context, gameID uuid.UUID, token string) {
+	if s.client == nil {
+		return
+	}
+	_ = releaseLeaseScript.Run(ctx, s.client, []string{GameDrawLeaseKey(gameID.String())}, token).Err()
+}
+
 // MarkTierBrowsed records that a real player just opened this tier's lobby,
 // keeping it "recently browsed" for ttl. Called on every real lobby fetch; the
 // filler bots read it (TierBrowsedRecently) to decide whether to run games with

@@ -228,6 +228,16 @@ func main() {
 	botCtx, botCancel := context.WithCancel(context.Background())
 	defer botCancel()
 
+	// Resume any game left mid-flight by the previous process (a deploy or crash).
+	// Without this, a redeploy freezes live COUNTDOWN/DRAWING games forever with
+	// players' stakes locked. Safe during a rolling deploy: the per-game draw
+	// lease means only one instance ever draws a given game. Runs in a goroutine
+	// so a slow Redis/DB can't delay startup.
+	go func() {
+		defer utils.RecoverPanic("resume-active-games")
+		gameUseCase.ResumeActiveGames(botCtx)
+	}()
+
 	// Empty-game sweeper: periodically cancel abandoned/never-joined WAITING
 	// games (0 players) so they drop out of the lobby and admin active list.
 	go func() {
