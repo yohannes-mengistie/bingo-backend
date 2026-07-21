@@ -114,8 +114,7 @@ func (h *WalletHandler) Withdraw(c *gin.Context) {
 			// what had happened here: the text still said "at least 10" while
 			// MinBalanceAfterWithdrawal had become 50, so every player who hit
 			// the floor got a server error instead of a readable 400.
-			strings.HasPrefix(err.Error(), "withdrawal not allowed:") ||
-			strings.HasPrefix(err.Error(), "daily withdrawal limit reached") {
+			strings.HasPrefix(err.Error(), "withdrawal not allowed:") {
 			statusCode = http.StatusBadRequest
 		}
 

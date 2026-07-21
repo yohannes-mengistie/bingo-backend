@@ -865,8 +865,6 @@ func withdrawErrorMessage(err error) string {
 		return "⚠️ በቂ ቀሪ ሂሳብ የለዎትም።\nYou don't have enough balance."
 	case strings.Contains(m, "remaining balance"):
 		return fmt.Sprintf("⚠️ ቢያንስ %.0f ብር በሂሳብዎ መቅረት አለበት።\nYou must keep at least %.0f birr in your wallet.", domain.MinBalanceAfterWithdrawal, domain.MinBalanceAfterWithdrawal)
-	case strings.Contains(m, "daily"):
-		return fmt.Sprintf("⚠️ የዕለታዊ የማውጣት ገደብ (%.0f ብር) ደርሷል።\nYou've reached the daily withdrawal limit (%.0f birr).", domain.MaxDailyWithdrawal, domain.MaxDailyWithdrawal)
 	case strings.Contains(m, "completed deposit"):
 		return "⚠️ ገንዘብ ለማውጣት በመጀመሪያ ቢያንስ አንድ ጊዜ ገቢ ማድረግ አለብዎት።\nYou must make at least one deposit before you can withdraw."
 	case strings.Contains(m, "minimum"):

@@ -37,9 +37,6 @@ const MaxCardsPerPlayer = 4
 // before any withdrawal is possible.
 const MinWithdrawalAmount = 50.0
 
-// MaxDailyWithdrawal caps total withdrawals per Ethiopian calendar day (birr).
-const MaxDailyWithdrawal = 2000.0
-
 // MinBalanceAfterWithdrawal is the balance a player must keep after withdrawing.
 const MinBalanceAfterWithdrawal = 50.0
 
