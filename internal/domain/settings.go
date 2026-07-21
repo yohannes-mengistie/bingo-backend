@@ -5,14 +5,18 @@ import "time"
 // AppSettings holds operator-tunable knobs edited from the admin dashboard.
 // Single row (app_settings table). Extend as more settings are added.
 type AppSettings struct {
-	MinDeposit float64   `json:"min_deposit" db:"min_deposit"`
-	UpdatedAt  time.Time `json:"updated_at" db:"updated_at"`
+	MinDeposit      float64   `json:"min_deposit" db:"min_deposit"`
+	ReferralEnabled bool      `json:"referral_enabled" db:"referral_enabled"`
+	ReferralAmount  float64   `json:"referral_amount" db:"referral_amount"`
+	UpdatedAt       time.Time `json:"updated_at" db:"updated_at"`
 }
 
 // UpdateAppSettingsRequest is the admin payload to change settings. Pointers so a
 // partial update leaves untouched fields alone.
 type UpdateAppSettingsRequest struct {
-	MinDeposit *float64 `json:"min_deposit,omitempty"`
+	MinDeposit      *float64 `json:"min_deposit,omitempty"`
+	ReferralEnabled *bool    `json:"referral_enabled,omitempty"`
+	ReferralAmount  *float64 `json:"referral_amount,omitempty"`
 }
 
 // WithdrawalRollbackResult reports how a rejected withdrawal was split back: the

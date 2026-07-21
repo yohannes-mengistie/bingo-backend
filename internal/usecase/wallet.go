@@ -55,11 +55,12 @@ func NewWalletUseCase(
 
 // GetSettings returns the app settings row, falling back to defaults if unset.
 func (uc *WalletUseCase) GetSettings(ctx context.Context) (*domain.AppSettings, error) {
-	s := &domain.AppSettings{MinDeposit: domain.DefaultMinDeposit}
-	err := uc.db.QueryRowContext(ctx, `SELECT min_deposit, updated_at FROM app_settings WHERE id = 1`).
-		Scan(&s.MinDeposit, &s.UpdatedAt)
+	s := &domain.AppSettings{MinDeposit: domain.DefaultMinDeposit, ReferralEnabled: true, ReferralAmount: domain.ReferralRewardAmount}
+	err := uc.db.QueryRowContext(ctx,
+		`SELECT min_deposit, referral_enabled, referral_amount, updated_at FROM app_settings WHERE id = 1`).
+		Scan(&s.MinDeposit, &s.ReferralEnabled, &s.ReferralAmount, &s.UpdatedAt)
 	if err == sql.ErrNoRows {
-		return s, nil // migration not applied yet → sane default
+		return s, nil // migration not applied yet → sane defaults
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to read settings: %w", err)
@@ -79,9 +80,20 @@ func (uc *WalletUseCase) UpdateSettings(ctx context.Context, req domain.UpdateAp
 		}
 		cur.MinDeposit = *req.MinDeposit
 	}
+	if req.ReferralEnabled != nil {
+		cur.ReferralEnabled = *req.ReferralEnabled
+	}
+	if req.ReferralAmount != nil {
+		if *req.ReferralAmount < 0 {
+			return nil, errors.New("referral_amount cannot be negative")
+		}
+		cur.ReferralAmount = *req.ReferralAmount
+	}
 	_, err = uc.db.ExecContext(ctx, `
-		INSERT INTO app_settings (id, min_deposit, updated_at) VALUES (1, $1, now())
-		ON CONFLICT (id) DO UPDATE SET min_deposit = $1, updated_at = now()`, cur.MinDeposit)
+		INSERT INTO app_settings (id, min_deposit, referral_enabled, referral_amount, updated_at)
+		VALUES (1, $1, $2, $3, now())
+		ON CONFLICT (id) DO UPDATE SET min_deposit = $1, referral_enabled = $2, referral_amount = $3, updated_at = now()`,
+		cur.MinDeposit, cur.ReferralEnabled, cur.ReferralAmount)
 	if err != nil {
 		return nil, fmt.Errorf("failed to save settings: %w", err)
 	}

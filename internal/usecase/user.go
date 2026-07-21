@@ -142,19 +142,30 @@ func (uc *UserUseCase) CreateUser(ctx context.Context, req domain.CreateUserRequ
 		return nil, nil, fmt.Errorf("failed to create wallet: %w", err)
 	}
 
+	// Referral policy is admin-controlled (app_settings): a master on/off switch
+	// and a tunable amount, defaulting to on / ReferralRewardAmount when the row
+	// or columns aren't there yet.
+	referralEnabled := true
+	rewardAmount := domain.ReferralRewardAmount
+	_ = uc.db.QueryRowContext(ctx, `SELECT referral_enabled, referral_amount FROM app_settings WHERE id = 1`).
+		Scan(&referralEnabled, &rewardAmount)
+
 	// Reward the referrer NOW, at signup — as PLAY-ONLY bonus, not withdrawable
 	// cash. Bonus can buy game cards but can never be cashed out, so a referrer
 	// (or a farmer) can't sign people up and immediately withdraw the reward; the
 	// only way to turn it into money is to actually play and win. Granted in the
 	// same transaction as the signup so account + reward are atomic, and
-	// referral_rewarded is flipped so it can never be granted twice.
-	if referredBy != nil {
-		if _, err := uc.bonusRepo.Grant(ctx, tx, *referredBy, domain.ReferralRewardAmount, "Referral reward"); err != nil {
+	// referral_rewarded is flipped so it can never be granted twice. Skipped
+	// entirely when the admin has turned referral rewards OFF.
+	rewarded := false
+	if referredBy != nil && referralEnabled && rewardAmount > 0 {
+		if _, err := uc.bonusRepo.Grant(ctx, tx, *referredBy, rewardAmount, "Referral reward"); err != nil {
 			return nil, nil, fmt.Errorf("failed to grant referral bonus: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE users SET referral_rewarded = true WHERE id = $1`, user.ID); err != nil {
 			return nil, nil, fmt.Errorf("failed to mark referral rewarded: %w", err)
 		}
+		rewarded = true
 	}
 
 	// Commit transaction
@@ -164,11 +175,11 @@ func (uc *UserUseCase) CreateUser(ctx context.Context, req domain.CreateUserRequ
 
 	// Congratulate the referrer on Telegram (best-effort, after commit — the
 	// money is already theirs whether or not the message goes through).
-	if referrer != nil && uc.referralNotifier != nil && referrer.TelegramID > 0 {
+	if rewarded && referrer != nil && uc.referralNotifier != nil && referrer.TelegramID > 0 {
 		msg := fmt.Sprintf(
 			"🎉 %0.f ብር የመጫወቻ ቦነስ አግኝተዋል!\nየጋበዙት ሰው አካውንት ከፍቷል። ይህ ቦነስ ካርድ ለመግዛት ይጠቅማል፤ አሸንፈው ወደ ጥሬ ገንዘብ ይቀይሩት።\n\n"+
 				"You earned a %0.f birr PLAY bonus — someone you invited just signed up! Use it to buy cards; win to turn it into cash. 🎮",
-			domain.ReferralRewardAmount, domain.ReferralRewardAmount)
+			rewardAmount, rewardAmount)
 		if serr := uc.referralNotifier.SendMessage(referrer.TelegramID, msg); serr != nil {
 			log.Printf("[referral] rewarded %s but the Telegram notice failed: %v", referrer.ID, serr)
 		}
