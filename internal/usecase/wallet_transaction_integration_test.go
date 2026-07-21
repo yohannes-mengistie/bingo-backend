@@ -19,6 +19,7 @@ func (h *harness) walletUC() *WalletUseCase {
 		postgres.NewTransactionRepository(h.db),
 		postgres.NewUserRepository(h.db),
 		postgres.NewGameRepository(h.db),
+		postgres.NewBonusRepository(h.db),
 		h.db,
 		nil,
 	)

@@ -14,3 +14,13 @@ type AppSettings struct {
 type UpdateAppSettingsRequest struct {
 	MinDeposit *float64 `json:"min_deposit,omitempty"`
 }
+
+// WithdrawalRollbackResult reports how a rejected withdrawal was split back: the
+// genuine (deposit/winnings-backed) part returned to withdrawable cash, and the
+// remainder — money the player never earned by playing — returned as play-only
+// bonus instead. See WalletUseCase.RejectWithdrawalToBonus.
+type WithdrawalRollbackResult struct {
+	Amount       float64 `json:"amount"`        // the withdrawal that was rolled back
+	RealRefunded float64 `json:"real_refunded"` // returned to withdrawable balance
+	BonusGranted float64 `json:"bonus_granted"` // returned as play-only bonus
+}

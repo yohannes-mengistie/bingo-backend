@@ -404,6 +404,16 @@ func (r *transactionRepository) FindRealPlayerWinnings(ctx context.Context, limi
 	return r.scanTransactions(rows)
 }
 
+// CountByUser is the total number of transactions for one user (pagination of
+// their history on the admin player-detail view).
+func (r *transactionRepository) CountByUser(ctx context.Context, userID uuid.UUID) (int, error) {
+	var n int
+	if err := r.db.QueryRowContext(ctx, `SELECT count(*) FROM transactions WHERE user_id = $1`, userID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("failed to count user transactions: %w", err)
+	}
+	return n, nil
+}
+
 // CountRealPlayerWinnings is the total for the winners list (pagination).
 func (r *transactionRepository) CountRealPlayerWinnings(ctx context.Context) (int, error) {
 	var n int

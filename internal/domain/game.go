@@ -204,6 +204,7 @@ type UserGameStats struct {
 	TotalBonus     float64 `json:"total_bonus"`     // play-only bonus/referral ever granted
 	RealBalance    float64 `json:"real_balance"`    // current withdrawable balance
 	BonusBalance   float64 `json:"bonus_balance"`   // current spendable play-only bonus
+	ReferredCount  int     `json:"referred_count"`  // how many players this user invited
 }
 
 // GameWinner is one winning card of a finished game, with the prize share it was

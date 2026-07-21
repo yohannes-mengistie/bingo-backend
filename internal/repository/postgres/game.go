@@ -890,12 +890,13 @@ func (r *gameRepository) GetUserGameStats(ctx context.Context, userID uuid.UUID)
 			(SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE user_id = $1 AND category = 'withdrawal' AND status = 'completed') AS withdrawn,
 			(SELECT COALESCE(SUM(amount), 0) FROM bonus_grants WHERE user_id = $1) AS bonus_total,
 			(SELECT COALESCE(balance, 0) FROM wallets WHERE user_id = $1) AS real_balance,
-			(SELECT COALESCE(SUM(remaining), 0) FROM bonus_grants WHERE user_id = $1 AND remaining > 0 AND expires_at > now()) AS bonus_balance
+			(SELECT COALESCE(SUM(remaining), 0) FROM bonus_grants WHERE user_id = $1 AND remaining > 0 AND expires_at > now()) AS bonus_balance,
+			(SELECT count(*) FROM users WHERE referred_by = $1) AS referred_count
 	`
 	s := &domain.UserGameStats{}
 	if err := r.db.QueryRowContext(ctx, query, userID).Scan(
 		&s.GamesPlayed, &s.GamesWon, &s.TotalWon, &s.TotalStaked,
-		&s.TotalDeposited, &s.TotalWithdrawn, &s.TotalBonus, &s.RealBalance, &s.BonusBalance,
+		&s.TotalDeposited, &s.TotalWithdrawn, &s.TotalBonus, &s.RealBalance, &s.BonusBalance, &s.ReferredCount,
 	); err != nil {
 		return nil, fmt.Errorf("failed to get user game stats: %w", err)
 	}

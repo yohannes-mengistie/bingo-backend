@@ -59,6 +59,9 @@ type TransactionRepository interface {
 	FindRealPlayerWinnings(ctx context.Context, limit, offset int) ([]*Transaction, error)
 	// CountRealPlayerWinnings is the total for the winners list (for pagination).
 	CountRealPlayerWinnings(ctx context.Context) (int, error)
+	// CountByUser is the total number of a user's transactions (for pagination of
+	// their history on the admin player-detail view).
+	CountByUser(ctx context.Context, userID uuid.UUID) (int, error)
 }
 
 // GameHistoryEntry represents a game with user's participation details.

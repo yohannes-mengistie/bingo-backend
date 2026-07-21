@@ -540,6 +540,33 @@ func (h *WalletHandler) RejectWithdrawal(c *gin.Context) {
 	})
 }
 
+// RejectWithdrawalToBonus handles POST /admin/transactions/:id/reject-to-bonus —
+// rolls back a pending withdrawal, returning the genuine (deposit/winnings-backed)
+// portion to withdrawable cash and the rest as play-only bonus.
+func (h *WalletHandler) RejectWithdrawalToBonus(c *gin.Context) {
+	transactionID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid transaction ID"})
+		return
+	}
+	res, err := h.walletUseCase.RejectWithdrawalToBonus(c.Request.Context(), transactionID)
+	if err != nil {
+		statusCode := http.StatusInternalServerError
+		if strings.HasPrefix(err.Error(), "transaction not found") {
+			statusCode = http.StatusNotFound
+		} else if err.Error() == "transaction is not a withdrawal" ||
+			strings.HasPrefix(err.Error(), "transaction is not pending") {
+			statusCode = http.StatusBadRequest
+		}
+		c.JSON(statusCode, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message": fmt.Sprintf("Rolled back: %.0f to balance, %.0f to bonus", res.RealRefunded, res.BonusGranted),
+		"result":  res,
+	})
+}
+
 // CancelTransaction handles the POST /admin/transactions/:id/cancel endpoint
 func (h *WalletHandler) CancelTransaction(c *gin.Context) {
 	transactionIDStr := c.Param("id")
@@ -720,6 +747,29 @@ func (h *WalletHandler) GetAllTransactions(c *gin.Context) {
 	// them; count stays the page size for backward compatibility.
 	total, _ := h.walletUseCase.CountAllTransactions(c.Request.Context())
 
+	c.JSON(http.StatusOK, gin.H{
+		"transactions": transactions,
+		"count":        len(transactions),
+		"total":        total,
+		"limit":        limit,
+		"offset":       offset,
+	})
+}
+
+// GetUserTransactions handles GET /admin/users/:user_id/transactions — one
+// player's full transaction history (paginated) for the player-detail view.
+func (h *WalletHandler) GetUserTransactions(c *gin.Context) {
+	userID, err := uuid.Parse(c.Param("user_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+	limit, offset := getPaginationParams(c)
+	transactions, total, err := h.walletUseCase.GetUserTransactions(c.Request.Context(), userID, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch transactions"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"transactions": transactions,
 		"count":        len(transactions),

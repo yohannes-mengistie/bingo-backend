@@ -155,7 +155,7 @@ func main() {
 	// Referral rewards are granted as play-only bonus (see CreateUser), so the
 	// user use case needs the bonus repo.
 	userUseCase := usecase.NewUserUseCase(userRepo, walletRepo, bonusRepo, db)
-	walletUseCase := usecase.NewWalletUseCase(walletRepo, transactionRepo, userRepo, gameRepo, db, paymentVerifier)
+	walletUseCase := usecase.NewWalletUseCase(walletRepo, transactionRepo, userRepo, gameRepo, bonusRepo, db, paymentVerifier)
 	authUseCase := usecase.NewAuthUseCase(userRepo, jwtService, cfg.Admin.SecretCode, cfg.Telegram.BotToken)
 	gameUseCase := usecase.NewGameUseCase(gameRepo, walletRepo, transactionRepo, userRepo, bonusRepo, db, gameStateService)
 	botUseCase := usecase.NewBotUseCase(botRepo, userRepo, walletRepo, transactionRepo, gameRepo, gameUseCase, gameStateService, db, usecase.BotSettings{
@@ -536,6 +536,7 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			admin.GET("/users", userHandler.GetAllUsers)
 			admin.GET("/users/:user_id", userHandler.GetUserDetail)
 			admin.GET("/users/:user_id/game-stats", gameHandler.GetUserGameStats)
+			admin.GET("/users/:user_id/transactions", walletHandler.GetUserTransactions)
 
 			// App settings (minimum deposit, …) — editable from the admin dashboard.
 			admin.GET("/settings", walletHandler.GetSettings)
@@ -623,6 +624,7 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			// Withdrawal operations
 			admin.POST("/transactions/:id/approve-withdrawal", walletHandler.ApproveWithdrawal)
 			admin.POST("/transactions/:id/reject-withdrawal", walletHandler.RejectWithdrawal)
+			admin.POST("/transactions/:id/reject-to-bonus", walletHandler.RejectWithdrawalToBonus)
 
 			// General operations
 			admin.POST("/transactions/:id/cancel", walletHandler.CancelTransaction)

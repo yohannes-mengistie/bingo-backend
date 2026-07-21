@@ -24,6 +24,7 @@ type WalletUseCase struct {
 	transactionRepo    domain.TransactionRepository
 	userRepo           domain.UserRepository
 	gameRepo           domain.GameRepository
+	bonusRepo          domain.BonusRepository
 	transactionService *postgres.TransactionService
 	db                 *sql.DB
 	paymentVerifier    domain.PaymentVerifier
@@ -35,6 +36,7 @@ func NewWalletUseCase(
 	transactionRepo domain.TransactionRepository,
 	userRepo domain.UserRepository,
 	gameRepo domain.GameRepository,
+	bonusRepo domain.BonusRepository,
 	db *sql.DB,
 	paymentVerifier domain.PaymentVerifier,
 ) *WalletUseCase {
@@ -44,6 +46,7 @@ func NewWalletUseCase(
 		transactionRepo:    transactionRepo,
 		userRepo:           userRepo,
 		gameRepo:           gameRepo,
+		bonusRepo:          bonusRepo,
 		transactionService: transactionService,
 		db:                 db,
 		paymentVerifier:    paymentVerifier,
@@ -322,6 +325,80 @@ func (uc *WalletUseCase) RejectWithdrawal(ctx context.Context, transactionID uui
 	return uc.transactionService.RejectWithdrawal(ctx, transactionID)
 }
 
+// RejectWithdrawalToBonus rejects a pending withdrawal but SPLITS the refund: the
+// part backed by genuine money (deposits + winnings, minus what's already been
+// paid out and what they already hold as cash) returns to withdrawable balance;
+// the remainder — money that came from referral/bonus, never earned by playing —
+// returns as play-only BONUS instead. So a real winner is made whole in cash,
+// while a farmer's referral money can't be cashed out (only played).
+//
+// The whole split runs in one DB transaction so the balance credit, the bonus
+// grant and the status flip commit together.
+func (uc *WalletUseCase) RejectWithdrawalToBonus(ctx context.Context, transactionID uuid.UUID) (*domain.WithdrawalRollbackResult, error) {
+	t, err := uc.transactionRepo.FindByID(ctx, transactionID)
+	if err != nil {
+		return nil, fmt.Errorf("transaction not found: %w", err)
+	}
+	if t.Type != domain.TransactionTypeWithdraw {
+		return nil, errors.New("transaction is not a withdrawal")
+	}
+	if t.Status != domain.TransactionStatusPending {
+		return nil, fmt.Errorf("transaction is not pending (current status: %s)", t.Status)
+	}
+
+	// Genuine entitlement = everything they deposited or genuinely won, minus
+	// genuine cash already paid out. Stable during this operation, so read it up
+	// front (the balance itself is read under the wallet lock below).
+	var genuineIn, alreadyWithdrawn float64
+	err = uc.db.QueryRowContext(ctx, `
+		SELECT
+			(SELECT COALESCE(SUM(amount),0) FROM transactions WHERE user_id=$1 AND category='deposit'   AND status='completed')
+		  + (SELECT COALESCE(SUM(amount),0) FROM transactions WHERE user_id=$1 AND category='winnings'),
+			(SELECT COALESCE(SUM(amount),0) FROM transactions WHERE user_id=$1 AND category='withdrawal' AND status='completed')
+	`, t.UserID).Scan(&genuineIn, &alreadyWithdrawn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compute entitlement: %w", err)
+	}
+	genuineEntitlement := genuineIn - alreadyWithdrawn
+
+	tx, err := uc.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	wallet, err := uc.walletRepo.LockForUpdate(ctx, tx, t.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("wallet not found: %w", err)
+	}
+
+	// Cash they may still hold as withdrawable = entitlement minus what's already
+	// sitting in their balance. The refund tops the cash side up to that ceiling;
+	// anything above it in this withdrawal is referral/bonus money → bonus.
+	headroom := math.Max(0, genuineEntitlement-wallet.Balance)
+	realBack := math.Min(t.Amount, headroom)
+	bonusBack := t.Amount - realBack
+
+	if realBack > 0 {
+		if err := uc.walletRepo.UpdateBalance(ctx, tx, t.UserID, realBack); err != nil {
+			return nil, fmt.Errorf("failed to refund balance: %w", err)
+		}
+	}
+	if bonusBack > 0 {
+		if _, err := uc.bonusRepo.Grant(ctx, tx, t.UserID, bonusBack, "Withdrawal rolled back — referral/bonus portion"); err != nil {
+			return nil, fmt.Errorf("failed to grant bonus: %w", err)
+		}
+	}
+	if err := uc.transactionRepo.UpdateStatus(ctx, tx, transactionID, domain.TransactionStatusFailed); err != nil {
+		return nil, fmt.Errorf("failed to update transaction status: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit: %w", err)
+	}
+
+	return &domain.WithdrawalRollbackResult{Amount: t.Amount, RealRefunded: realBack, BonusGranted: bonusBack}, nil
+}
+
 // CancelTransaction cancels a pending transaction (for deposits, no balance change; for withdrawals, refund balance)
 func (uc *WalletUseCase) CancelTransaction(ctx context.Context, transactionID uuid.UUID) (*domain.Transaction, error) {
 	return uc.transactionService.CancelTransaction(ctx, transactionID)
@@ -453,6 +530,21 @@ func (uc *WalletUseCase) CountAllTransactions(ctx context.Context) (int, error) 
 // pending/completed deposit & withdrawal tabs).
 func (uc *WalletUseCase) CountByStatusAndType(ctx context.Context, status domain.TransactionStatus, t domain.TransactionType) (int, error) {
 	return uc.transactionRepo.CountByStatusAndType(ctx, status, t)
+}
+
+// GetUserTransactions returns one user's full transaction history (paginated
+// with a grand total) for the admin player-detail view — deposits, withdrawals,
+// bets, winnings, bonuses and referral rewards in one place.
+func (uc *WalletUseCase) GetUserTransactions(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*domain.Transaction, int, error) {
+	rows, err := uc.transactionRepo.FindByUserID(ctx, userID, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := uc.transactionRepo.CountByUser(ctx, userID)
+	if err != nil {
+		return nil, 0, err
+	}
+	return rows, total, nil
 }
 
 // GetRealPlayerWinnings lists winnings paid to real (non-bot) players, plus the
