@@ -526,6 +526,28 @@ func (uc *WalletUseCase) CountAllTransactions(ctx context.Context) (int, error) 
 	return uc.transactionRepo.CountAll(ctx)
 }
 
+// GetHouseCutDetail is the drill-down behind the dashboard house-cut figure:
+// total, real-player P&L, and per-tier / per-day breakdowns.
+func (uc *WalletUseCase) GetHouseCutDetail(ctx context.Context) (*domain.HouseCutDetail, error) {
+	total, err := uc.gameRepo.GetTotalHouseCut(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pnl, err := uc.transactionRepo.RealPlayerGamePnL(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byTier, err := uc.gameRepo.HouseCutByTier(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byDay, err := uc.gameRepo.HouseCutByDay(ctx, 14)
+	if err != nil {
+		return nil, err
+	}
+	return &domain.HouseCutDetail{TotalHouseCut: total, RealPlayerPnl: pnl, ByTier: byTier, ByDay: byDay}, nil
+}
+
 // CountWithdrawalsByStatus is the total of genuine withdrawal requests at a status.
 func (uc *WalletUseCase) CountWithdrawalsByStatus(ctx context.Context, status domain.TransactionStatus) (int, error) {
 	return uc.transactionRepo.CountWithdrawalsByStatus(ctx, status)

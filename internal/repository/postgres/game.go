@@ -1268,6 +1268,60 @@ func (r *gameRepository) GetTotalHouseCut(ctx context.Context) (float64, error) 
 	return totalHouseCut, nil
 }
 
+// realGameFilter is the WHERE fragment shared by the house-cut breakdowns —
+// finished games that had at least one real (non-bot) player, so bot-only games
+// don't inflate revenue.
+const realGameFilter = `g.state IN ('FINISHED','CLOSED') AND EXISTS (
+	SELECT 1 FROM game_players gp JOIN users u ON u.id = gp.user_id
+	WHERE gp.game_id = g.id AND u.is_bot = false)`
+
+// HouseCutByTier breaks the house cut down per game tier (real-player games).
+func (r *gameRepository) HouseCutByTier(ctx context.Context) ([]domain.HouseCutTier, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT g.game_type, count(*),
+		       COALESCE(SUM(g.prize_pool * g.house_cut / (1 - g.house_cut)), 0)
+		FROM games g WHERE `+realGameFilter+`
+		GROUP BY g.game_type ORDER BY g.game_type`)
+	if err != nil {
+		return nil, fmt.Errorf("house cut by tier: %w", err)
+	}
+	defer rows.Close()
+	var out []domain.HouseCutTier
+	for rows.Next() {
+		var t domain.HouseCutTier
+		if err := rows.Scan(&t.Tier, &t.Games, &t.HouseCut); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// HouseCutByDay breaks the house cut down per Ethiopian day for the last `days`.
+func (r *gameRepository) HouseCutByDay(ctx context.Context, days int) ([]domain.HouseCutDay, error) {
+	rows, err := r.db.QueryContext(ctx, fmt.Sprintf(`
+		SELECT (g.finished_at AT TIME ZONE 'UTC' AT TIME ZONE 'Africa/Addis_Ababa')::date::text AS day,
+		       count(*),
+		       COALESCE(SUM(g.prize_pool * g.house_cut / (1 - g.house_cut)), 0)
+		FROM games g
+		WHERE %s AND g.finished_at IS NOT NULL
+		  AND g.finished_at > now() - interval '%d days'
+		GROUP BY day ORDER BY day DESC`, realGameFilter, days))
+	if err != nil {
+		return nil, fmt.Errorf("house cut by day: %w", err)
+	}
+	defer rows.Close()
+	var out []domain.HouseCutDay
+	for rows.Next() {
+		var d domain.HouseCutDay
+		if err := rows.Scan(&d.Day, &d.Games, &d.HouseCut); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
 // FindRecentWinners returns the most recently finished games that had a winner,
 // joined to the winner's name, newest first.
 func (r *gameRepository) FindRecentWinners(ctx context.Context, limit int) ([]*domain.RecentWinner, error) {

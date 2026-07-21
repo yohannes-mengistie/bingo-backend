@@ -160,6 +160,10 @@ type GameRepository interface {
 	FindActiveGameByUserID(ctx context.Context, userID uuid.UUID) (*GameHistoryEntry, error)
 	CountGamesByType(ctx context.Context) (map[GameType]int, error)
 	GetTotalHouseCut(ctx context.Context) (float64, error)
+	// HouseCutByTier / HouseCutByDay break the house cut down for the dashboard
+	// drill-down (real-player games only, matching GetTotalHouseCut).
+	HouseCutByTier(ctx context.Context) ([]HouseCutTier, error)
+	HouseCutByDay(ctx context.Context, days int) ([]HouseCutDay, error)
 	// FindRecentWinners returns the most recently finished games that had a
 	// winner, with the winner's display name and prize, for the lobby feed.
 	FindRecentWinners(ctx context.Context, limit int) ([]*RecentWinner, error)

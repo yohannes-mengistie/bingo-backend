@@ -779,6 +779,17 @@ func (h *WalletHandler) GetUserTransactions(c *gin.Context) {
 	})
 }
 
+// GetHouseCutDetail handles GET /admin/dashboard/house-cut — the drill-down
+// behind the dashboard house-cut figure (per tier, per day, and real-player P&L).
+func (h *WalletHandler) GetHouseCutDetail(c *gin.Context) {
+	detail, err := h.walletUseCase.GetHouseCutDetail(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load house-cut detail"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"detail": detail})
+}
+
 // GetSettings handles GET /admin/settings — operator-tunable app settings.
 func (h *WalletHandler) GetSettings(c *gin.Context) {
 	s, err := h.walletUseCase.GetSettings(c.Request.Context())

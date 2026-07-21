@@ -188,6 +188,30 @@ type RecentWinner struct {
 	FinishedAt time.Time `json:"finished_at"`
 }
 
+// HouseCutTier is the house cut earned from one game tier (real-player games).
+type HouseCutTier struct {
+	Tier     GameType `json:"tier"`
+	Games    int      `json:"games"`
+	HouseCut float64  `json:"house_cut"`
+}
+
+// HouseCutDay is the house cut earned on one day (Ethiopian date).
+type HouseCutDay struct {
+	Day      string  `json:"day"`
+	Games    int     `json:"games"`
+	HouseCut float64 `json:"house_cut"`
+}
+
+// HouseCutDetail is the drill-down behind the dashboard house-cut figure, so an
+// admin can see where revenue comes from (per tier, per day) and the real-player
+// P&L — the actual cash exposure — all in one place.
+type HouseCutDetail struct {
+	TotalHouseCut float64        `json:"total_house_cut"`
+	RealPlayerPnl float64        `json:"real_player_pnl"`
+	ByTier        []HouseCutTier `json:"by_tier"`
+	ByDay         []HouseCutDay  `json:"by_day"`
+}
+
 // UserGameStats is a player's lifetime play + money record, so an admin can tell
 // at a glance whether a pending withdrawal belongs to someone who actually plays
 // and wins — or to a farmed account whose balance came from bonuses/referrals

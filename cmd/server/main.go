@@ -555,6 +555,7 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			{
 				stats.GET("/dashboard", walletHandler.GetDashboardStats)
 			}
+			admin.GET("/dashboard/house-cut", walletHandler.GetHouseCutDetail)
 
 			// Bonus wallet: policy, grants, and the house's live liability.
 			bonus := admin.Group("/bonus")
