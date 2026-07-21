@@ -130,6 +130,11 @@ type Transaction struct {
 	TransactionID   *string             `json:"transaction_id,omitempty" db:"transaction_id"`
 	Reference       *string             `json:"reference,omitempty" db:"reference"`
 	CreatedAt       time.Time           `json:"created_at" db:"created_at"`
+	// PlayerName / PlayerPhone are populated only by the admin list queries that
+	// JOIN users, so the dashboard can label each row with who it belongs to
+	// without loading every user client-side.
+	PlayerName  *string `json:"player_name,omitempty"`
+	PlayerPhone *string `json:"player_phone,omitempty"`
 }
 
 // DepositRequest represents the data needed to create a deposit.

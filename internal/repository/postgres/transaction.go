@@ -4,12 +4,58 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/bingo/backend/internal/domain"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 )
+
+// txWithUserColumns is the SELECT list for admin lists that also want the
+// player's name/phone (JOIN users u ON u.id = t.user_id). Pair with
+// scanTransactionsWithUser.
+const txWithUserColumns = `t.id, t.user_id, t.type, t.category, t.amount, t.status, t.transaction_type, t.transaction_id, t.reference, t.created_at, u.first_name, u.last_name, u.phone_number`
+
+// scanTransactionsWithUser scans the base transaction columns plus the joined
+// player name/phone, so admin rows carry who they belong to.
+func (r *transactionRepository) scanTransactionsWithUser(rows *sql.Rows) ([]*domain.Transaction, error) {
+	var out []*domain.Transaction
+	for rows.Next() {
+		t := &domain.Transaction{}
+		var category, transactionType, transactionID, reference sql.NullString
+		var firstName, lastName, phone sql.NullString
+		if err := rows.Scan(
+			&t.ID, &t.UserID, &t.Type, &category, &t.Amount, &t.Status,
+			&transactionType, &transactionID, &reference, &t.CreatedAt,
+			&firstName, &lastName, &phone,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan transaction: %w", err)
+		}
+		if category.Valid {
+			t.Category = domain.TransactionCategory(category.String)
+		}
+		if transactionType.Valid {
+			pm := domain.PaymentMethod(transactionType.String)
+			t.TransactionType = &pm
+		}
+		if transactionID.Valid {
+			t.TransactionID = &transactionID.String
+		}
+		if reference.Valid {
+			t.Reference = &reference.String
+		}
+		if name := strings.TrimSpace(firstName.String + " " + lastName.String); name != "" {
+			t.PlayerName = &name
+		}
+		if phone.Valid && phone.String != "" {
+			p := phone.String
+			t.PlayerPhone = &p
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
 
 type transactionRepository struct {
 	db *sql.DB
@@ -304,10 +350,10 @@ func (r *transactionRepository) scanTransactions(rows *sql.Rows) ([]*domain.Tran
 // FindByStatusAndType finds transactions by status and type
 func (r *transactionRepository) FindByStatusAndType(ctx context.Context, status domain.TransactionStatus, transactionType domain.TransactionType, limit, offset int) ([]*domain.Transaction, error) {
 	query := `
-		SELECT id, user_id, type, category, amount, status, transaction_type, transaction_id, reference, created_at
-		FROM transactions
-		WHERE status = $1 AND type = $2
-		ORDER BY created_at DESC
+		SELECT ` + txWithUserColumns + `
+		FROM transactions t LEFT JOIN users u ON u.id = t.user_id
+		WHERE t.status = $1 AND t.type = $2
+		ORDER BY t.created_at DESC
 		LIMIT $3 OFFSET $4
 	`
 
@@ -317,16 +363,16 @@ func (r *transactionRepository) FindByStatusAndType(ctx context.Context, status 
 	}
 	defer rows.Close()
 
-	return r.scanTransactions(rows)
+	return r.scanTransactionsWithUser(rows)
 }
 
 // FindByStatus finds transactions by status
 func (r *transactionRepository) FindByStatus(ctx context.Context, status domain.TransactionStatus, limit, offset int) ([]*domain.Transaction, error) {
 	query := `
-		SELECT id, user_id, type, category, amount, status, transaction_type, transaction_id, reference, created_at
-		FROM transactions
-		WHERE status = $1
-		ORDER BY created_at DESC
+		SELECT ` + txWithUserColumns + `
+		FROM transactions t LEFT JOIN users u ON u.id = t.user_id
+		WHERE t.status = $1
+		ORDER BY t.created_at DESC
 		LIMIT $2 OFFSET $3
 	`
 
@@ -336,7 +382,7 @@ func (r *transactionRepository) FindByStatus(ctx context.Context, status domain.
 	}
 	defer rows.Close()
 
-	return r.scanTransactions(rows)
+	return r.scanTransactionsWithUser(rows)
 }
 
 // FindByTypes finds transactions by multiple types
@@ -346,10 +392,10 @@ func (r *transactionRepository) FindByTypes(ctx context.Context, transactionType
 	}
 
 	query := `
-		SELECT id, user_id, type, category, amount, status, transaction_type, transaction_id, reference, created_at
-		FROM transactions
-		WHERE type = ANY($1)
-		ORDER BY created_at DESC
+		SELECT ` + txWithUserColumns + `
+		FROM transactions t LEFT JOIN users u ON u.id = t.user_id
+		WHERE t.type = ANY($1)
+		ORDER BY t.created_at DESC
 		LIMIT $2 OFFSET $3
 	`
 
@@ -364,15 +410,15 @@ func (r *transactionRepository) FindByTypes(ctx context.Context, transactionType
 	}
 	defer rows.Close()
 
-	return r.scanTransactions(rows)
+	return r.scanTransactionsWithUser(rows)
 }
 
 // FindAll finds all transactions with pagination
 func (r *transactionRepository) FindAll(ctx context.Context, limit, offset int) ([]*domain.Transaction, error) {
 	query := `
-		SELECT id, user_id, type, category, amount, status, transaction_type, transaction_id, reference, created_at
-		FROM transactions
-		ORDER BY created_at DESC
+		SELECT ` + txWithUserColumns + `
+		FROM transactions t LEFT JOIN users u ON u.id = t.user_id
+		ORDER BY t.created_at DESC
 		LIMIT $1 OFFSET $2
 	`
 
@@ -382,14 +428,14 @@ func (r *transactionRepository) FindAll(ctx context.Context, limit, offset int) 
 	}
 	defer rows.Close()
 
-	return r.scanTransactions(rows)
+	return r.scanTransactionsWithUser(rows)
 }
 
 // FindRealPlayerWinnings lists 'winnings' transactions belonging to real (non-bot)
 // players, newest first — the admin winners tab.
 func (r *transactionRepository) FindRealPlayerWinnings(ctx context.Context, limit, offset int) ([]*domain.Transaction, error) {
 	query := `
-		SELECT t.id, t.user_id, t.type, t.category, t.amount, t.status, t.transaction_type, t.transaction_id, t.reference, t.created_at
+		SELECT ` + txWithUserColumns + `
 		FROM transactions t
 		JOIN users u ON u.id = t.user_id
 		WHERE t.category = 'winnings' AND u.is_bot = false
@@ -401,7 +447,7 @@ func (r *transactionRepository) FindRealPlayerWinnings(ctx context.Context, limi
 		return nil, fmt.Errorf("failed to find real-player winnings: %w", err)
 	}
 	defer rows.Close()
-	return r.scanTransactions(rows)
+	return r.scanTransactionsWithUser(rows)
 }
 
 // CountByUser is the total number of transactions for one user (pagination of
