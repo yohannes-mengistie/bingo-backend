@@ -464,10 +464,10 @@ func (h *TelegramHandler) showInvite(chatID int64, user *domain.User) {
 	shareURL := "https://t.me/share/url?url=" + url.QueryEscape(link) + "&text=" + url.QueryEscape(shareText)
 
 	msg := fmt.Sprintf(
-		"🔗 ጓደኛ ጋብዘው 15 ብር ያግኙ!\n"+
-			"የጋበዙት ሰው አካውንት ሲከፍት 15 ብር ወደ ቦርሳዎ ይገባል።\n\n"+
+		"🔗 ጓደኛ ጋብዘው 15 ብር የመጫወቻ ቦነስ ያግኙ!\n"+
+			"የጋበዙት ሰው አካውንት ሲከፍት 15 ብር የመጫወቻ ቦነስ ያገኛሉ (ካርድ ለመግዛት፤ አሸንፈው ወደ ገንዘብ ይቀይሩት)።\n\n"+
 			"የእርስዎ ሊንክ (ለመቅዳት ይንኩት):\n%s\n\n"+
-			"Invite a friend, earn 15 birr — paid as soon as they sign up. Tap the link to copy it, or Share below. 👇",
+			"Invite a friend, get a 15 birr PLAY bonus when they sign up — play it to win real cash. Tap the link to copy it, or Share below. 👇",
 		link)
 	h.reply(chatID, msg, &telegram.ReplyMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{
 		{{Text: "📨 አጋራ / Share", URL: shareURL}},

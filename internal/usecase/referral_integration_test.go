@@ -15,26 +15,14 @@ func (h *harness) userUC() *UserUseCase {
 	return NewUserUseCase(
 		postgres.NewUserRepository(h.db),
 		postgres.NewWalletRepository(h.db),
-		postgres.NewTransactionRepository(h.db),
+		postgres.NewBonusRepository(h.db),
 		h.db,
 	)
 }
 
-func (h *harness) refRewardCount(userID string) int {
-	h.t.Helper()
-	var n int
-	if err := h.db.QueryRow(
-		`SELECT count(*) FROM transactions WHERE user_id=$1 AND category='referral_reward'`, userID,
-	).Scan(&n); err != nil {
-		h.t.Fatalf("count referral rewards: %v", err)
-	}
-	return n
-}
-
-// The reward is now paid the moment the invited user signs up — no deposit
-// required. The referrer's balance jumps by ReferralRewardAmount, a
-// referral_reward transaction is recorded, and the link is stamped on the
-// invited user.
+// The reward is granted the moment the invited user signs up — as PLAY-ONLY
+// bonus, NOT withdrawable cash. So the referrer's real (withdrawable) balance is
+// unchanged, but their bonus balance goes up by ReferralRewardAmount.
 func TestIntegration_Referral_PaidAtSignup(t *testing.T) {
 	h := newHarness(t)
 	defer h.cleanup()
@@ -58,17 +46,20 @@ func TestIntegration_Referral_PaidAtSignup(t *testing.T) {
 	}
 	h.ids.users = append(h.ids.users, invited.ID)
 
-	// Referrer paid immediately: started at DefaultUserBalance, now +reward.
-	want := domain.DefaultUserBalance + domain.ReferralRewardAmount
-	if got := h.balance(referrer.ID); got != want {
-		t.Fatalf("referrer balance = %.2f, want %.2f (paid at signup)", got, want)
+	// Real (withdrawable) balance is UNCHANGED — the reward is not cash.
+	if got := h.balance(referrer.ID); got != domain.DefaultUserBalance {
+		t.Fatalf("referrer real balance = %.2f, want %.2f (reward must be bonus, not cash)", got, domain.DefaultUserBalance)
 	}
-	if n := h.refRewardCount(referrer.ID.String()); n != 1 {
-		t.Fatalf("referrer referral_reward transactions = %d, want 1", n)
+	// The reward landed as play-only bonus instead.
+	if got := h.bonusBalance(referrer.ID); got != domain.ReferralRewardAmount {
+		t.Fatalf("referrer bonus balance = %.2f, want %.2f", got, domain.ReferralRewardAmount)
 	}
-	// Invited user is not self-credited.
+	// Invited user is not self-rewarded.
 	if got := h.balance(invited.ID); got != domain.DefaultUserBalance {
 		t.Fatalf("invited balance = %.2f, want %.2f", got, domain.DefaultUserBalance)
+	}
+	if got := h.bonusBalance(invited.ID); got != 0 {
+		t.Fatalf("invited bonus balance = %.2f, want 0", got)
 	}
 	// Link recorded + flagged rewarded so it can never pay twice.
 	if invited.ReferredBy == nil || *invited.ReferredBy != referrer.ID {

@@ -16,23 +16,23 @@ import (
 )
 
 type UserUseCase struct {
-	userRepo        domain.UserRepository
-	walletRepo      domain.WalletRepository
-	transactionRepo domain.TransactionRepository
-	db              *sql.DB
+	userRepo   domain.UserRepository
+	walletRepo domain.WalletRepository
+	bonusRepo  domain.BonusRepository
+	db         *sql.DB
 	// referralNotifier tells a referrer on Telegram that they earned a reward.
 	// Optional and set after construction (the bot is built later); nil just
-	// means the referrer isn't messaged — they still see the money.
+	// means the referrer isn't messaged — they still see the bonus.
 	referralNotifier domain.BroadcastSender
 }
 
 // NewUserUseCase creates a new user use case
-func NewUserUseCase(userRepo domain.UserRepository, walletRepo domain.WalletRepository, transactionRepo domain.TransactionRepository, db *sql.DB) *UserUseCase {
+func NewUserUseCase(userRepo domain.UserRepository, walletRepo domain.WalletRepository, bonusRepo domain.BonusRepository, db *sql.DB) *UserUseCase {
 	return &UserUseCase{
-		userRepo:        userRepo,
-		walletRepo:      walletRepo,
-		transactionRepo: transactionRepo,
-		db:              db,
+		userRepo:   userRepo,
+		walletRepo: walletRepo,
+		bonusRepo:  bonusRepo,
+		db:         db,
 	}
 }
 
@@ -142,29 +142,15 @@ func (uc *UserUseCase) CreateUser(ctx context.Context, req domain.CreateUserRequ
 		return nil, nil, fmt.Errorf("failed to create wallet: %w", err)
 	}
 
-	// Pay the referrer their reward NOW, at signup — no longer gated on a first
-	// deposit. Done in the same transaction as the signup so the credit and the
-	// account are created atomically (never a referred user without the reward,
-	// nor a reward without the user). referral_rewarded is flipped so nothing can
-	// ever pay a second time for this user.
+	// Reward the referrer NOW, at signup — as PLAY-ONLY bonus, not withdrawable
+	// cash. Bonus can buy game cards but can never be cashed out, so a referrer
+	// (or a farmer) can't sign people up and immediately withdraw the reward; the
+	// only way to turn it into money is to actually play and win. Granted in the
+	// same transaction as the signup so account + reward are atomic, and
+	// referral_rewarded is flipped so it can never be granted twice.
 	if referredBy != nil {
-		if _, err := uc.walletRepo.LockForUpdate(ctx, tx, *referredBy); err != nil {
-			return nil, nil, fmt.Errorf("referrer wallet not found: %w", err)
-		}
-		if err := uc.walletRepo.UpdateBalance(ctx, tx, *referredBy, domain.ReferralRewardAmount); err != nil {
-			return nil, nil, fmt.Errorf("failed to credit referrer: %w", err)
-		}
-		note := "Referral reward"
-		reward := &domain.Transaction{
-			UserID:    *referredBy,
-			Type:      domain.TransactionTypeDeposit,
-			Category:  domain.TransactionCategoryReferralReward,
-			Amount:    domain.ReferralRewardAmount,
-			Status:    domain.TransactionStatusCompleted,
-			Reference: &note,
-		}
-		if err := uc.transactionRepo.Create(ctx, tx, reward); err != nil {
-			return nil, nil, fmt.Errorf("failed to record referral reward: %w", err)
+		if _, err := uc.bonusRepo.Grant(ctx, tx, *referredBy, domain.ReferralRewardAmount, "Referral reward"); err != nil {
+			return nil, nil, fmt.Errorf("failed to grant referral bonus: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE users SET referral_rewarded = true WHERE id = $1`, user.ID); err != nil {
 			return nil, nil, fmt.Errorf("failed to mark referral rewarded: %w", err)
@@ -180,8 +166,8 @@ func (uc *UserUseCase) CreateUser(ctx context.Context, req domain.CreateUserRequ
 	// money is already theirs whether or not the message goes through).
 	if referrer != nil && uc.referralNotifier != nil && referrer.TelegramID > 0 {
 		msg := fmt.Sprintf(
-			"🎉 %0.f ብር የግብዣ ሽልማት አግኝተዋል!\nየጋበዙት ሰው አካውንት ከፍቷል።\n\n"+
-				"You earned a %0.f birr referral reward — someone you invited just signed up! 💰",
+			"🎉 %0.f ብር የመጫወቻ ቦነስ አግኝተዋል!\nየጋበዙት ሰው አካውንት ከፍቷል። ይህ ቦነስ ካርድ ለመግዛት ይጠቅማል፤ አሸንፈው ወደ ጥሬ ገንዘብ ይቀይሩት።\n\n"+
+				"You earned a %0.f birr PLAY bonus — someone you invited just signed up! Use it to buy cards; win to turn it into cash. 🎮",
 			domain.ReferralRewardAmount, domain.ReferralRewardAmount)
 		if serr := uc.referralNotifier.SendMessage(referrer.TelegramID, msg); serr != nil {
 			log.Printf("[referral] rewarded %s but the Telegram notice failed: %v", referrer.ID, serr)

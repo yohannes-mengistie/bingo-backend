@@ -151,10 +151,12 @@ func main() {
 
 	// Initialize use cases
 	paymentVerifier := payment.NewVerifier(cfg.PaymentVerifier)
-	userUseCase := usecase.NewUserUseCase(userRepo, walletRepo, transactionRepo, db)
+	bonusRepo := postgres.NewBonusRepository(db)
+	// Referral rewards are granted as play-only bonus (see CreateUser), so the
+	// user use case needs the bonus repo.
+	userUseCase := usecase.NewUserUseCase(userRepo, walletRepo, bonusRepo, db)
 	walletUseCase := usecase.NewWalletUseCase(walletRepo, transactionRepo, userRepo, gameRepo, db, paymentVerifier)
 	authUseCase := usecase.NewAuthUseCase(userRepo, jwtService, cfg.Admin.SecretCode, cfg.Telegram.BotToken)
-	bonusRepo := postgres.NewBonusRepository(db)
 	gameUseCase := usecase.NewGameUseCase(gameRepo, walletRepo, transactionRepo, userRepo, bonusRepo, db, gameStateService)
 	botUseCase := usecase.NewBotUseCase(botRepo, userRepo, walletRepo, transactionRepo, gameRepo, gameUseCase, gameStateService, db, usecase.BotSettings{
 		PoolSize:        cfg.Bots.PoolSize,
