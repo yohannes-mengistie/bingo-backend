@@ -201,6 +201,32 @@ func (r *userRepository) FindByReferralCode(ctx context.Context, referralCode st
 	return user, nil
 }
 
+// FindReferredBy returns everyone this user invited (referred_by = userID),
+// newest first — for the "invited players" section on the admin profile.
+func (r *userRepository) FindReferredBy(ctx context.Context, userID uuid.UUID) ([]*domain.User, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, telegram_id, first_name, last_name, phone_number, referal_code, role, created_at
+		FROM users WHERE referred_by = $1 ORDER BY created_at DESC`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find referred users: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*domain.User
+	for rows.Next() {
+		u := &domain.User{}
+		var lastName sql.NullString
+		if err := rows.Scan(&u.ID, &u.TelegramID, &u.FirstName, &lastName, &u.PhoneNumber, &u.ReferalCode, &u.Role, &u.CreatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan referred user: %w", err)
+		}
+		if lastName.Valid {
+			u.LastName = &lastName.String
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
 // FindByID finds a user by their ID
 func (r *userRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain.User, error) {
 	query := `

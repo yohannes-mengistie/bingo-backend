@@ -178,6 +178,18 @@ func (uc *UserUseCase) CreateUser(ctx context.Context, req domain.CreateUserRequ
 }
 
 // GetUserByID returns a user by their ID (password stripped)
+// GetReferredUsers returns everyone this user invited, for the admin profile.
+func (uc *UserUseCase) GetReferredUsers(ctx context.Context, userID uuid.UUID) ([]*domain.User, error) {
+	users, err := uc.userRepo.FindReferredBy(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	for _, u := range users {
+		u.Password = nil
+	}
+	return users, nil
+}
+
 func (uc *UserUseCase) GetUserByID(ctx context.Context, userID uuid.UUID) (*domain.User, error) {
 	user, err := uc.userRepo.FindByID(ctx, userID)
 	if err != nil {

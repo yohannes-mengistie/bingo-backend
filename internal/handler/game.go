@@ -399,6 +399,29 @@ func (h *GameHandler) GetMyGameHistory(c *gin.Context) {
 	})
 }
 
+// GetUserGamesAdmin handles GET /admin/users/:user_id/games — a player's game
+// history (with game ids to link to), for the admin profile view.
+func (h *GameHandler) GetUserGamesAdmin(c *gin.Context) {
+	userID, err := uuid.Parse(c.Param("user_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+	limit, offset := 20, 0
+	if v := parseInt(c.Query("limit")); v > 0 {
+		limit = v
+	}
+	if v := parseInt(c.Query("offset")); v > 0 {
+		offset = v
+	}
+	history, err := h.gameUseCase.GetGameHistory(c.Request.Context(), userID, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch game history"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"games": history, "count": len(history)})
+}
+
 // GetUserGameStats handles GET /admin/users/:user_id/game-stats — a player's
 // lifetime play record (games played/won, total won/staked), so an admin can
 // tell whether a pending withdrawal belongs to a genuine winner.

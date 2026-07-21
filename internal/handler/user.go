@@ -259,6 +259,22 @@ func (h *UserHandler) GetUserDetail(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"user": detail})
 }
 
+// GetReferredUsers handles GET /admin/users/:user_id/referrals — everyone this
+// player invited, so an admin can open each invitee's profile.
+func (h *UserHandler) GetReferredUsers(c *gin.Context) {
+	userID, err := uuid.Parse(c.Param("user_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+	users, err := h.userUseCase.GetReferredUsers(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch referred users"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"users": users, "count": len(users)})
+}
+
 // SetUserRole handles POST /admin/users/:user_id/role — promote/demote.
 func (h *UserHandler) SetUserRole(c *gin.Context) {
 	userID, err := uuid.Parse(c.Param("user_id"))

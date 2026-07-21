@@ -15,6 +15,7 @@ type UserRepository interface {
 	FindByPhone(ctx context.Context, phone string) (*User, error)
 	FindByReferralCode(ctx context.Context, referralCode string) (*User, error)
 	FindByID(ctx context.Context, id uuid.UUID) (*User, error)
+	FindReferredBy(ctx context.Context, userID uuid.UUID) ([]*User, error)
 	FindAll(ctx context.Context, limit, offset int) ([]*User, error)
 	SetAdminCredentialsByTelegramID(ctx context.Context, telegramID int64, hashedPassword string) error
 	Update(ctx context.Context, user *User) error

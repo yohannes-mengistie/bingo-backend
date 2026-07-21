@@ -537,6 +537,8 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			admin.GET("/users/:user_id", userHandler.GetUserDetail)
 			admin.GET("/users/:user_id/game-stats", gameHandler.GetUserGameStats)
 			admin.GET("/users/:user_id/transactions", walletHandler.GetUserTransactions)
+			admin.GET("/users/:user_id/games", gameHandler.GetUserGamesAdmin)
+			admin.GET("/users/:user_id/referrals", userHandler.GetReferredUsers)
 
 			// App settings (minimum deposit, …) — editable from the admin dashboard.
 			admin.GET("/settings", walletHandler.GetSettings)
