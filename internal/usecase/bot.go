@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"math/rand"
 	"time"
 
@@ -443,6 +444,77 @@ func (uc *BotUseCase) joinDelayFor(gameID uuid.UUID) time.Duration {
 	return base + time.Duration(float64(base)*0.5*spread)
 }
 
+// perGameTarget varies the configured target per game so player counts differ
+// round to round — a fixed count in every game (always exactly 50) is itself a
+// tell. Derived from the game id, so it is stable across sweeps of the same game
+// (the target can't wobble tick to tick) while differing between games. Range is
+// roughly [35%, 100%] of the configured target, floored so a game can still run.
+func (uc *BotUseCase) perGameTarget(gameID uuid.UUID, cfgTarget int) int {
+	if cfgTarget <= 0 {
+		return 0
+	}
+	frac := 0.35 + 0.65*(float64(gameID[1])/255.0) // 0.35..1.0, fixed per game
+	t := int(math.Round(float64(cfgTarget) * frac))
+	if t < domain.MinPlayers {
+		t = domain.MinPlayers
+	}
+	if t > cfgTarget {
+		t = cfgTarget
+	}
+	return t
+}
+
+// desiredBotsNow returns how many bots SHOULD be present in this game right now.
+// Instead of rushing to the full target and then sitting frozen (the count hits
+// 50 at countdown-20s and never moves — obviously fake), it seeds just enough to
+// cross MinPlayers and kick off the countdown, then RAMPS the count up across the
+// countdown, reaching the (per-game, varied) target a little before 0s, with a
+// small bursty wobble. The sweeper turns this into per-tick joins:
+// need = desiredBotsNow - botsInGame.
+//
+// remaining is the countdown time left (only meaningful when inCountdown). It is
+// derived from the Redis countdown, stored as a Unix epoch, so it is immune to
+// the app-vs-Postgres timezone skew that makes DB timestamps unusable for
+// app-side clock math here.
+func (uc *BotUseCase) desiredBotsNow(gameID uuid.UUID, cfgTarget int, inCountdown bool, remaining time.Duration) int {
+	target := uc.perGameTarget(gameID, cfgTarget)
+	if target <= 0 {
+		return 0
+	}
+
+	if !inCountdown {
+		// Pre-countdown: seed just enough to cross MinPlayers and start it; the
+		// rest arrive paced during the countdown.
+		if target < domain.MinPlayers {
+			return target
+		}
+		return domain.MinPlayers
+	}
+
+	if remaining <= 0 {
+		return target
+	}
+	// progress 0→1 across the countdown. Reach the full target a touch early
+	// (÷0.85) so the count isn't still visibly climbing in the final seconds.
+	progress := 1 - remaining.Seconds()/domain.CountdownDuration.Seconds()
+	if progress < 0 {
+		progress = 0
+	}
+	scaled := progress / 0.85
+	if scaled > 1 {
+		scaled = 1
+	}
+	desired := int(math.Ceil(float64(target) * scaled))
+	desired += rand.Intn(3) - 1 // -1..+1: arrivals come in small bursts, not a line
+	if desired < domain.MinPlayers {
+		desired = domain.MinPlayers // never below the starter that kicked the countdown
+	}
+	if desired > target {
+		desired = target
+	}
+	return desired
+}
+
 // Run drives the automatic filler until ctx is cancelled. Each tick it reads the
 // admin policy and, for every WAITING/COUNTDOWN game in the configured tiers
 // that has at least one real player but fewer than min_real_players, adds bots
@@ -520,7 +592,21 @@ func (uc *BotUseCase) sweep(ctx context.Context) {
 			if err != nil {
 				continue
 			}
-			need := cfg.TargetBots - botPlayers
+			// Pace toward a per-game, varied target instead of snapping to a fixed
+			// TargetBots — see desiredBotsNow. This is what makes the room fill
+			// gradually over the countdown and land on a different count each game.
+			// Countdown time left comes from Redis (epoch-based), not the DB
+			// timestamps, which are in a different timezone frame here.
+			inCountdown := game.State == domain.GameStateCountdown
+			var remaining time.Duration
+			if inCountdown && uc.gameState != nil {
+				if end, gerr := uc.gameState.GetCountdown(ctx, game.ID); gerr == nil {
+					remaining = time.Until(end)
+				} else {
+					remaining = domain.CountdownDuration // key missing → treat as fresh
+				}
+			}
+			need := uc.desiredBotsNow(game.ID, cfg.TargetBots, inCountdown, remaining) - botPlayers
 			if need <= 0 {
 				continue
 			}

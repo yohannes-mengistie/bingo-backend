@@ -71,12 +71,16 @@ func TestIntegration_Ambient_ThrottledWhenNotBrowsed(t *testing.T) {
 
 // The counterpart: once a real player has browsed the tier (the marker exists),
 // the sweep seeds bots into the empty game so a visitor sees an active lobby.
+// Arrivals are PACED (see desiredBotsNow): a pre-countdown game gets only enough
+// bots to cross MinPlayers and trigger the countdown; the rest ramp in during the
+// countdown. So a single sweep of a fresh WAITING game seeds exactly MinPlayers
+// bots — never the full target of 50 at once.
 func TestIntegration_Ambient_FillsAfterBrowse(t *testing.T) {
 	h := newHarness(t)
 	defer h.cleanup()
 	ctx := context.Background()
 
-	uc, botRepo := h.botUC(3)
+	uc, botRepo := h.botUC(50)
 	gameID := h.seedWaitingGame()
 
 	// A real player just opened the REGULAR lobby.
@@ -90,13 +94,10 @@ func TestIntegration_Ambient_FillsAfterBrowse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count bots: %v", err)
 	}
-	if got != 3 {
-		t.Fatalf("expected 3 bots after a browse, got %d", got)
-	}
-	// No real player joined, yet the game reached the start threshold on bots
-	// alone — proving a bot-only game can run.
-	if got < domain.MinPlayers {
-		t.Fatalf("bot-only game did not reach MinPlayers (%d): got %d", domain.MinPlayers, got)
+	// A bot-only game reached the start threshold on bots alone — proving it can
+	// run — but was NOT slammed to the full target of 50 in one tick.
+	if got != domain.MinPlayers {
+		t.Fatalf("expected paced seed of MinPlayers (%d) bots, got %d", domain.MinPlayers, got)
 	}
 }
 
