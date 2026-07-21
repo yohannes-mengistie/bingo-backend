@@ -459,6 +459,13 @@ func (uc *BotUseCase) perGameTarget(gameID uuid.UUID, cfgTarget int) int {
 	if t < domain.MinPlayers {
 		t = domain.MinPlayers
 	}
+	// Never target more bots than the pool holds — otherwise the room can never
+	// reach the target (it runs out of distinct bots) and the count just stalls.
+	// So configuring the target AT the pool size defeats the upward variation:
+	// leave headroom (e.g. target 200 with a 300 pool) for counts to vary.
+	if uc.settings.PoolSize > 0 && t > uc.settings.PoolSize {
+		t = uc.settings.PoolSize
+	}
 	return t
 }
 
