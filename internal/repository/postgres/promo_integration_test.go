@@ -48,7 +48,12 @@ func TestIntegrationPromoRedeem(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	repo := NewPromoRepository(db, NewWalletRepository(db), NewTransactionRepository(db))
+	repo := NewPromoRepository(db, NewWalletRepository(db), NewTransactionRepository(db), NewBonusRepository(db))
+	bonusOf := func(uid uuid.UUID) float64 {
+		var b float64
+		db.QueryRow(`SELECT COALESCE(SUM(remaining),0) FROM bonus_grants WHERE user_id=$1`, uid).Scan(&b)
+		return b
+	}
 
 	// Seed two throwaway users with wallets, and a capped promo code.
 	code := fmt.Sprintf("PRT%d", time.Now().UnixNano()%1e9)
@@ -85,25 +90,31 @@ func TestIntegrationPromoRedeem(t *testing.T) {
 	if err != nil || amount != 50 {
 		t.Fatalf("redeem #1: amount=%v err=%v, want 50/nil", amount, err)
 	}
+	// Promo credits PLAY-ONLY bonus now, not withdrawable cash: wallet stays 0,
+	// the 50 lands in bonus_grants.
 	var balance float64
-	if err := db.QueryRow(`SELECT balance FROM wallets WHERE user_id = $1`, users[0]).Scan(&balance); err != nil || balance != 50 {
-		t.Fatalf("balance after redeem = %v (err %v), want 50", balance, err)
+	db.QueryRow(`SELECT balance FROM wallets WHERE user_id = $1`, users[0]).Scan(&balance)
+	if balance != 0 {
+		t.Fatalf("wallet balance after redeem = %v, want 0 (promo is bonus)", balance)
+	}
+	if b := bonusOf(users[0]); b != 50 {
+		t.Fatalf("bonus after redeem = %v, want 50", b)
 	}
 	var txCount int
+	// Audit trail is the bonus grant (reason carries the promo code).
 	if err := db.QueryRow(`
-		SELECT COUNT(*) FROM transactions
-		WHERE user_id = $1 AND category = 'admin_credit' AND amount = 50 AND status = 'completed'
+		SELECT COUNT(*) FROM bonus_grants
+		WHERE user_id = $1 AND amount = 50 AND reason LIKE 'Promo code:%'
 	`, users[0]).Scan(&txCount); err != nil || txCount != 1 {
-		t.Fatalf("audit transaction count = %d (err %v), want 1", txCount, err)
+		t.Fatalf("audit bonus-grant count = %d (err %v), want 1", txCount, err)
 	}
 
 	// Same user again → already redeemed, balance unchanged.
 	if _, err := repo.Redeem(ctx, code, users[0]); !errors.Is(err, domain.ErrPromoAlreadyRedeemed) {
 		t.Fatalf("redeem #2 err = %v, want ErrPromoAlreadyRedeemed", err)
 	}
-	db.QueryRow(`SELECT balance FROM wallets WHERE user_id = $1`, users[0]).Scan(&balance)
-	if balance != 50 {
-		t.Fatalf("balance after duplicate redeem = %v, want 50", balance)
+	if b := bonusOf(users[0]); b != 50 {
+		t.Fatalf("bonus after duplicate redeem = %v, want 50 (unchanged)", b)
 	}
 
 	// Second user takes the last slot (cap 2)…

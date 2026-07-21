@@ -18,10 +18,11 @@ type promoRepository struct {
 	db              *sql.DB
 	walletRepo      domain.WalletRepository
 	transactionRepo domain.TransactionRepository
+	bonusRepo       domain.BonusRepository
 }
 
-func NewPromoRepository(db *sql.DB, walletRepo domain.WalletRepository, transactionRepo domain.TransactionRepository) domain.PromoRepository {
-	return &promoRepository{db: db, walletRepo: walletRepo, transactionRepo: transactionRepo}
+func NewPromoRepository(db *sql.DB, walletRepo domain.WalletRepository, transactionRepo domain.TransactionRepository, bonusRepo domain.BonusRepository) domain.PromoRepository {
+	return &promoRepository{db: db, walletRepo: walletRepo, transactionRepo: transactionRepo, bonusRepo: bonusRepo}
 }
 
 // Redeem validates and applies a promo code for one user, all inside a single
@@ -88,25 +89,11 @@ func (r *promoRepository) Redeem(ctx context.Context, code string, userID uuid.U
 		return 0, fmt.Errorf("failed to count redemption: %w", err)
 	}
 
-	// Credit the wallet and leave an audit-trail transaction, exactly like a
-	// manual admin credit.
-	if _, err := r.walletRepo.LockForUpdate(ctx, tx, userID); err != nil {
-		return 0, fmt.Errorf("wallet not found: %w", err)
-	}
-	if err := r.walletRepo.UpdateBalance(ctx, tx, userID, amount); err != nil {
-		return 0, fmt.Errorf("failed to credit bonus: %w", err)
-	}
-	note := "Promo code: " + code
-	record := &domain.Transaction{
-		UserID:    userID,
-		Type:      domain.TransactionTypeDeposit,
-		Category:  domain.TransactionCategoryAdminCredit,
-		Amount:    amount,
-		Status:    domain.TransactionStatusCompleted,
-		Reference: &note,
-	}
-	if err := r.transactionRepo.Create(ctx, tx, record); err != nil {
-		return 0, fmt.Errorf("failed to record bonus transaction: %w", err)
+	// Grant the promo as PLAY-ONLY BONUS, not withdrawable cash — consistent with
+	// referral rewards and campaigns, and so a promo can't be cashed out for free
+	// house money. The bonus_grants row is its own audit trail.
+	if _, err := r.bonusRepo.Grant(ctx, tx, userID, amount, "Promo code: "+code); err != nil {
+		return 0, fmt.Errorf("failed to grant promo bonus: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {

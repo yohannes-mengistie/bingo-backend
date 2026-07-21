@@ -131,15 +131,24 @@ func (uc *UserUseCase) CreateUser(ctx context.Context, req domain.CreateUserRequ
 		return nil, nil, fmt.Errorf("failed to create user: %w", err)
 	}
 
-	// Create wallet with default balance
+	// Create wallet. The welcome credit is granted as PLAY-ONLY BONUS below, not
+	// as withdrawable cash — otherwise every fake account is 10 birr of free real
+	// money that can be transferred to a hub and cashed out (Sybil farming). As
+	// bonus it still lets a new player try a game, but can never be withdrawn.
 	wallet := &domain.Wallet{
 		UserID:      user.ID,
-		Balance:     domain.DefaultUserBalance,
+		Balance:     0,
 		DemoBalance: 0.0,
 	}
 
 	if err := uc.walletRepo.Create(ctx, tx, wallet); err != nil {
 		return nil, nil, fmt.Errorf("failed to create wallet: %w", err)
+	}
+
+	if domain.DefaultUserBalance > 0 {
+		if _, err := uc.bonusRepo.Grant(ctx, tx, user.ID, domain.DefaultUserBalance, "Welcome bonus"); err != nil {
+			return nil, nil, fmt.Errorf("failed to grant welcome bonus: %w", err)
+		}
 	}
 
 	// Referral policy is admin-controlled (app_settings): a master on/off switch

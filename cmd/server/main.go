@@ -192,7 +192,7 @@ func main() {
 	wsHandler := handler.NewWebSocketHandler(redisClient.GetClient(), gameStateService, gameUseCase, allowOrigins)
 
 	// Promo codes: created by admins, redeemed through the bot menu.
-	promoRepo := postgres.NewPromoRepository(db, walletRepo, transactionRepo)
+	promoRepo := postgres.NewPromoRepository(db, walletRepo, transactionRepo, bonusRepo)
 	promoHandler := handler.NewPromoHandler(promoRepo)
 
 	// Admin broadcasts over the same bot token as the game's own messages.

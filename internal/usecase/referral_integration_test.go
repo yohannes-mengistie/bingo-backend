@@ -46,20 +46,21 @@ func TestIntegration_Referral_PaidAtSignup(t *testing.T) {
 	}
 	h.ids.users = append(h.ids.users, invited.ID)
 
-	// Real (withdrawable) balance is UNCHANGED — the reward is not cash.
-	if got := h.balance(referrer.ID); got != domain.DefaultUserBalance {
-		t.Fatalf("referrer real balance = %.2f, want %.2f (reward must be bonus, not cash)", got, domain.DefaultUserBalance)
+	// Real (withdrawable) balance stays 0 — neither the welcome credit nor the
+	// referral reward is cash; both are play-only bonus.
+	if got := h.balance(referrer.ID); got != 0 {
+		t.Fatalf("referrer real balance = %.2f, want 0 (rewards must be bonus, not cash)", got)
 	}
-	// The reward landed as play-only bonus instead.
-	if got := h.bonusBalance(referrer.ID); got != domain.ReferralRewardAmount {
-		t.Fatalf("referrer bonus balance = %.2f, want %.2f", got, domain.ReferralRewardAmount)
+	// Referrer's bonus = welcome credit + the referral reward.
+	if got := h.bonusBalance(referrer.ID); got != domain.DefaultUserBalance+domain.ReferralRewardAmount {
+		t.Fatalf("referrer bonus balance = %.2f, want %.2f", got, domain.DefaultUserBalance+domain.ReferralRewardAmount)
 	}
-	// Invited user is not self-rewarded.
-	if got := h.balance(invited.ID); got != domain.DefaultUserBalance {
-		t.Fatalf("invited balance = %.2f, want %.2f", got, domain.DefaultUserBalance)
+	// Invited user gets only the welcome bonus (not self-rewarded), 0 cash.
+	if got := h.balance(invited.ID); got != 0 {
+		t.Fatalf("invited balance = %.2f, want 0", got)
 	}
-	if got := h.bonusBalance(invited.ID); got != 0 {
-		t.Fatalf("invited bonus balance = %.2f, want 0", got)
+	if got := h.bonusBalance(invited.ID); got != domain.DefaultUserBalance {
+		t.Fatalf("invited bonus balance = %.2f, want %.2f (welcome only)", got, domain.DefaultUserBalance)
 	}
 	// Link recorded + flagged rewarded so it can never pay twice.
 	if invited.ReferredBy == nil || *invited.ReferredBy != referrer.ID {
@@ -92,7 +93,11 @@ func TestIntegration_Referral_NoCode_NoReward(t *testing.T) {
 	if solo.ReferredBy != nil {
 		t.Fatalf("solo should have no referrer")
 	}
-	if got := h.balance(solo.ID); got != domain.DefaultUserBalance {
-		t.Fatalf("solo balance = %.2f, want %.2f", got, domain.DefaultUserBalance)
+	// Welcome credit is play-only bonus now: 0 cash, DefaultUserBalance bonus.
+	if got := h.balance(solo.ID); got != 0 {
+		t.Fatalf("solo real balance = %.2f, want 0", got)
+	}
+	if got := h.bonusBalance(solo.ID); got != domain.DefaultUserBalance {
+		t.Fatalf("solo bonus balance = %.2f, want %.2f (welcome)", got, domain.DefaultUserBalance)
 	}
 }
