@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -798,6 +799,30 @@ func (h *WalletHandler) GetSettings(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"settings": s})
+}
+
+// MaintenanceStatus reports whether maintenance mode is on and its message. Used
+// by the maintenance middleware. Fails open (false) on error so a settings read
+// failure can never lock players out.
+func (h *WalletHandler) MaintenanceStatus(ctx context.Context) (bool, string) {
+	s, err := h.walletUseCase.GetSettings(ctx)
+	if err != nil {
+		return false, ""
+	}
+	return s.MaintenanceMode, s.MaintenanceMessage
+}
+
+// GetPublicStatus handles GET /status — an UNAUTHENTICATED endpoint the player
+// Mini App polls to learn whether it should show a maintenance screen. It exposes
+// only the maintenance flag and message, never any operator/financial settings.
+func (h *WalletHandler) GetPublicStatus(c *gin.Context) {
+	s, err := h.walletUseCase.GetSettings(c.Request.Context())
+	if err != nil {
+		// Fail open: never take the app down just because this read failed.
+		c.JSON(http.StatusOK, gin.H{"maintenance": false, "message": ""})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"maintenance": s.MaintenanceMode, "message": s.MaintenanceMessage})
 }
 
 // UpdateSettings handles PUT /admin/settings — change app settings (e.g. minimum deposit).

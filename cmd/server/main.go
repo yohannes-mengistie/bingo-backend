@@ -443,6 +443,10 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			wallet.GET("/:user_id/transfers", walletHandler.GetTransferHistory)
 		}
 
+		// Public app status (no auth): the Mini App polls this to decide whether to
+		// show the maintenance screen.
+		api.GET("/status", walletHandler.GetPublicStatus)
+
 		// Public game reads (spectating / lobby — no auth needed)
 		games := api.Group("/games")
 		{
@@ -464,6 +468,11 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 		// Authenticated website endpoints (JWT required; user_id comes from the token)
 		authed := api.Group("")
 		authed.Use(middleware.AuthMiddleware(jwtService))
+		// Maintenance gate: while maintenance mode is on, player mutations (join,
+		// deposit, withdraw, transfer, …) are rejected with 503. Reads pass through
+		// so the app can load and render the maintenance screen. Admin and
+		// bot-facing groups are unaffected.
+		authed.Use(middleware.Maintenance(walletHandler.MaintenanceStatus))
 		{
 			// Profile
 			authed.GET("/me", userHandler.GetMe)

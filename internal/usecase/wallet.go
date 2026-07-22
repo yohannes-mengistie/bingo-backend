@@ -57,8 +57,8 @@ func NewWalletUseCase(
 func (uc *WalletUseCase) GetSettings(ctx context.Context) (*domain.AppSettings, error) {
 	s := &domain.AppSettings{MinDeposit: domain.DefaultMinDeposit, ReferralEnabled: true, ReferralAmount: domain.ReferralRewardAmount}
 	err := uc.db.QueryRowContext(ctx,
-		`SELECT min_deposit, referral_enabled, referral_amount, updated_at FROM app_settings WHERE id = 1`).
-		Scan(&s.MinDeposit, &s.ReferralEnabled, &s.ReferralAmount, &s.UpdatedAt)
+		`SELECT min_deposit, referral_enabled, referral_amount, maintenance_mode, maintenance_message, updated_at FROM app_settings WHERE id = 1`).
+		Scan(&s.MinDeposit, &s.ReferralEnabled, &s.ReferralAmount, &s.MaintenanceMode, &s.MaintenanceMessage, &s.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return s, nil // migration not applied yet → sane defaults
 	}
@@ -89,11 +89,17 @@ func (uc *WalletUseCase) UpdateSettings(ctx context.Context, req domain.UpdateAp
 		}
 		cur.ReferralAmount = *req.ReferralAmount
 	}
+	if req.MaintenanceMode != nil {
+		cur.MaintenanceMode = *req.MaintenanceMode
+	}
+	if req.MaintenanceMessage != nil {
+		cur.MaintenanceMessage = strings.TrimSpace(*req.MaintenanceMessage)
+	}
 	_, err = uc.db.ExecContext(ctx, `
-		INSERT INTO app_settings (id, min_deposit, referral_enabled, referral_amount, updated_at)
-		VALUES (1, $1, $2, $3, now())
-		ON CONFLICT (id) DO UPDATE SET min_deposit = $1, referral_enabled = $2, referral_amount = $3, updated_at = now()`,
-		cur.MinDeposit, cur.ReferralEnabled, cur.ReferralAmount)
+		INSERT INTO app_settings (id, min_deposit, referral_enabled, referral_amount, maintenance_mode, maintenance_message, updated_at)
+		VALUES (1, $1, $2, $3, $4, $5, now())
+		ON CONFLICT (id) DO UPDATE SET min_deposit = $1, referral_enabled = $2, referral_amount = $3, maintenance_mode = $4, maintenance_message = $5, updated_at = now()`,
+		cur.MinDeposit, cur.ReferralEnabled, cur.ReferralAmount, cur.MaintenanceMode, cur.MaintenanceMessage)
 	if err != nil {
 		return nil, fmt.Errorf("failed to save settings: %w", err)
 	}
