@@ -818,11 +818,16 @@ func (h *WalletHandler) MaintenanceStatus(ctx context.Context) (bool, string) {
 func (h *WalletHandler) GetPublicStatus(c *gin.Context) {
 	s, err := h.walletUseCase.GetSettings(c.Request.Context())
 	if err != nil {
-		// Fail open: never take the app down just because this read failed.
-		c.JSON(http.StatusOK, gin.H{"maintenance": false, "message": ""})
+		// Fail open: never take the app down just because this read failed. Use the
+		// default minimum deposit so the deposit form still shows a sane figure.
+		c.JSON(http.StatusOK, gin.H{"maintenance": false, "message": "", "min_deposit": domain.DefaultMinDeposit})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"maintenance": s.MaintenanceMode, "message": s.MaintenanceMessage})
+	c.JSON(http.StatusOK, gin.H{
+		"maintenance": s.MaintenanceMode,
+		"message":     s.MaintenanceMessage,
+		"min_deposit": s.MinDeposit,
+	})
 }
 
 // UpdateSettings handles PUT /admin/settings — change app settings (e.g. minimum deposit).

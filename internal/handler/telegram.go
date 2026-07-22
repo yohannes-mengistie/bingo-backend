@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -531,6 +532,15 @@ func (h *TelegramHandler) clearDeposit(chatID int64) {
 // methods with a configured house account are offered — a method with no
 // account has nowhere for the player to pay and could never auto-verify, so it
 // falls back to the Mini App wallet instead.
+// minDeposit returns the operator-configured minimum deposit, falling back to the
+// default if settings can't be read, so a deposit prompt always shows a figure.
+func (h *TelegramHandler) minDeposit(ctx context.Context) float64 {
+	if s, err := h.walletUseCase.GetSettings(ctx); err == nil && s.MinDeposit > 0 {
+		return s.MinDeposit
+	}
+	return domain.DefaultMinDeposit
+}
+
 func (h *TelegramHandler) startDeposit(c *gin.Context, msg *telegram.Message, _ uuid.UUID) {
 	var rows [][]telegram.InlineKeyboardButton
 	for _, m := range domain.SupportedPaymentMethods {
@@ -587,12 +597,15 @@ func (h *TelegramHandler) handleCallback(c *gin.Context, cq *telegram.CallbackQu
 		h.clearWithdraw(chatID) // one wallet action at a time
 		h.setDeposit(chatID, &depositConvo{step: depAwaitingAmount, method: method})
 		_ = h.bot.AnswerCallbackQuery(cq.ID, "")
+		minDep := h.minDeposit(c.Request.Context())
 		h.reply(chatID, fmt.Sprintf(
 			"✅ %s ተመርጧል።\n\n"+
 				"1️⃣ ገንዘቡን ወደዚህ ቁጥር ይላኩ፦\n📱 %s\n\n"+
-				"2️⃣ ከዚያ የላኩትን መጠን (በ ብር) ይጻፉ።\n\n"+
-				"Send the money to %s, then type the amount you sent (in birr).",
-			depositMethodLabel(method), account, account), nil)
+				"2️⃣ ከዚያ የላኩትን መጠን (በ ብር) ይጻፉ።\n"+
+				"⚠️ ዝቅተኛው የማስገቢያ መጠን %.0f ብር ነው።\n\n"+
+				"Send the money to %s, then type the amount you sent (in birr).\n"+
+				"Minimum deposit is %.0f birr.",
+			depositMethodLabel(method), account, minDep, account, minDep), nil)
 
 	case data == "wd:cancel":
 		h.clearWithdraw(chatID)
@@ -670,6 +683,12 @@ func (h *TelegramHandler) handleDepositInput(c *gin.Context, msg *telegram.Messa
 		amount, err := strconv.ParseFloat(strings.TrimSpace(text), 64)
 		if err != nil || amount <= 0 {
 			h.reply(msg.Chat.ID, "❓ እባክዎ የላኩትን መጠን በቁጥር ይጻፉ (ለምሳሌ 100)።\nPlease type the amount you sent as a number (e.g. 100).", nil)
+			return
+		}
+		if minDep := h.minDeposit(c.Request.Context()); amount < minDep {
+			h.reply(msg.Chat.ID, fmt.Sprintf(
+				"⚠️ ዝቅተኛው የማስገቢያ መጠን %.0f ብር ነው። እባክዎ %.0f ብር ወይም ከዚያ በላይ ያስገቡ።\n\nThe minimum deposit is %.0f birr. Please enter %.0f or more.",
+				minDep, minDep, minDep, minDep), nil)
 			return
 		}
 		convo.amount = amount
