@@ -14,7 +14,30 @@ type AppSettings struct {
 	// usable. MaintenanceMessage is an optional operator note shown to players.
 	MaintenanceMode    bool      `json:"maintenance_mode" db:"maintenance_mode"`
 	MaintenanceMessage string    `json:"maintenance_message" db:"maintenance_message"`
-	UpdatedAt          time.Time `json:"updated_at" db:"updated_at"`
+	// Per-method deposit switches. When a method is off, players cannot submit a
+	// deposit with it (the API rejects it and the pickers hide it), so a channel
+	// whose external verification has broken can be closed instantly without
+	// taking the whole app down. Withdrawals are deliberately NOT gated by these,
+	// so closing a broken deposit channel never traps a player's balance.
+	DepositTelebirrEnabled bool      `json:"deposit_telebirr_enabled" db:"deposit_telebirr_enabled"`
+	DepositCBEBirrEnabled  bool      `json:"deposit_cbebirr_enabled" db:"deposit_cbebirr_enabled"`
+	DepositMpesaEnabled    bool      `json:"deposit_mpesa_enabled" db:"deposit_mpesa_enabled"`
+	UpdatedAt              time.Time `json:"updated_at" db:"updated_at"`
+}
+
+// DepositMethodEnabled reports whether players may currently deposit with method
+// m. An unknown method reads as disabled (fail closed for anything unexpected).
+func (s *AppSettings) DepositMethodEnabled(m PaymentMethod) bool {
+	switch m {
+	case PaymentMethodTelebirr:
+		return s.DepositTelebirrEnabled
+	case PaymentMethodCBEBirr:
+		return s.DepositCBEBirrEnabled
+	case PaymentMethodMpesa:
+		return s.DepositMpesaEnabled
+	default:
+		return false
+	}
 }
 
 // UpdateAppSettingsRequest is the admin payload to change settings. Pointers so a
@@ -25,6 +48,10 @@ type UpdateAppSettingsRequest struct {
 	ReferralAmount     *float64 `json:"referral_amount,omitempty"`
 	MaintenanceMode    *bool    `json:"maintenance_mode,omitempty"`
 	MaintenanceMessage *string  `json:"maintenance_message,omitempty"`
+
+	DepositTelebirrEnabled *bool `json:"deposit_telebirr_enabled,omitempty"`
+	DepositCBEBirrEnabled  *bool `json:"deposit_cbebirr_enabled,omitempty"`
+	DepositMpesaEnabled    *bool `json:"deposit_mpesa_enabled,omitempty"`
 }
 
 // WithdrawalRollbackResult reports how a rejected withdrawal was split back: the

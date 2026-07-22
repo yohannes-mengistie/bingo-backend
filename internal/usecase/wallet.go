@@ -19,6 +19,12 @@ import (
 // payment reference (transaction_id) is already tied to an active deposit.
 var errDuplicateReference = errors.New("this transaction reference was already used")
 
+// ErrDepositMethodDisabled is returned when a player tries to deposit with a
+// payment method an admin has switched off (e.g. its external verification is
+// broken). The handler maps this to 503 so the Mini App shows a clean
+// "temporarily unavailable" message rather than a hard error.
+var ErrDepositMethodDisabled = errors.New("deposit method is temporarily disabled")
+
 type WalletUseCase struct {
 	walletRepo         domain.WalletRepository
 	transactionRepo    domain.TransactionRepository
@@ -55,10 +61,22 @@ func NewWalletUseCase(
 
 // GetSettings returns the app settings row, falling back to defaults if unset.
 func (uc *WalletUseCase) GetSettings(ctx context.Context) (*domain.AppSettings, error) {
-	s := &domain.AppSettings{MinDeposit: domain.DefaultMinDeposit, ReferralEnabled: true, ReferralAmount: domain.ReferralRewardAmount}
+	s := &domain.AppSettings{
+		MinDeposit:      domain.DefaultMinDeposit,
+		ReferralEnabled: true,
+		ReferralAmount:  domain.ReferralRewardAmount,
+		// Deposit channels default to ON — a fresh install accepts every
+		// supported method until an admin turns one off.
+		DepositTelebirrEnabled: true,
+		DepositCBEBirrEnabled:  true,
+		DepositMpesaEnabled:    true,
+	}
 	err := uc.db.QueryRowContext(ctx,
-		`SELECT min_deposit, referral_enabled, referral_amount, maintenance_mode, maintenance_message, updated_at FROM app_settings WHERE id = 1`).
-		Scan(&s.MinDeposit, &s.ReferralEnabled, &s.ReferralAmount, &s.MaintenanceMode, &s.MaintenanceMessage, &s.UpdatedAt)
+		`SELECT min_deposit, referral_enabled, referral_amount, maintenance_mode, maintenance_message,
+		        deposit_telebirr_enabled, deposit_cbebirr_enabled, deposit_mpesa_enabled, updated_at
+		 FROM app_settings WHERE id = 1`).
+		Scan(&s.MinDeposit, &s.ReferralEnabled, &s.ReferralAmount, &s.MaintenanceMode, &s.MaintenanceMessage,
+			&s.DepositTelebirrEnabled, &s.DepositCBEBirrEnabled, &s.DepositMpesaEnabled, &s.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return s, nil // migration not applied yet → sane defaults
 	}
@@ -95,11 +113,24 @@ func (uc *WalletUseCase) UpdateSettings(ctx context.Context, req domain.UpdateAp
 	if req.MaintenanceMessage != nil {
 		cur.MaintenanceMessage = strings.TrimSpace(*req.MaintenanceMessage)
 	}
+	if req.DepositTelebirrEnabled != nil {
+		cur.DepositTelebirrEnabled = *req.DepositTelebirrEnabled
+	}
+	if req.DepositCBEBirrEnabled != nil {
+		cur.DepositCBEBirrEnabled = *req.DepositCBEBirrEnabled
+	}
+	if req.DepositMpesaEnabled != nil {
+		cur.DepositMpesaEnabled = *req.DepositMpesaEnabled
+	}
 	_, err = uc.db.ExecContext(ctx, `
-		INSERT INTO app_settings (id, min_deposit, referral_enabled, referral_amount, maintenance_mode, maintenance_message, updated_at)
-		VALUES (1, $1, $2, $3, $4, $5, now())
-		ON CONFLICT (id) DO UPDATE SET min_deposit = $1, referral_enabled = $2, referral_amount = $3, maintenance_mode = $4, maintenance_message = $5, updated_at = now()`,
-		cur.MinDeposit, cur.ReferralEnabled, cur.ReferralAmount, cur.MaintenanceMode, cur.MaintenanceMessage)
+		INSERT INTO app_settings (id, min_deposit, referral_enabled, referral_amount, maintenance_mode, maintenance_message,
+		                          deposit_telebirr_enabled, deposit_cbebirr_enabled, deposit_mpesa_enabled, updated_at)
+		VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, now())
+		ON CONFLICT (id) DO UPDATE SET min_deposit = $1, referral_enabled = $2, referral_amount = $3, maintenance_mode = $4,
+		    maintenance_message = $5, deposit_telebirr_enabled = $6, deposit_cbebirr_enabled = $7, deposit_mpesa_enabled = $8,
+		    updated_at = now()`,
+		cur.MinDeposit, cur.ReferralEnabled, cur.ReferralAmount, cur.MaintenanceMode, cur.MaintenanceMessage,
+		cur.DepositTelebirrEnabled, cur.DepositCBEBirrEnabled, cur.DepositMpesaEnabled)
 	if err != nil {
 		return nil, fmt.Errorf("failed to save settings: %w", err)
 	}
@@ -113,13 +144,24 @@ func (uc *WalletUseCase) Deposit(ctx context.Context, req domain.DepositRequest)
 		return nil, errors.New("amount must be greater than 0")
 	}
 
-	// Enforce the operator-configured minimum deposit.
-	if s, err := uc.GetSettings(ctx); err == nil && req.Amount < s.MinDeposit {
-		return nil, fmt.Errorf("minimum deposit is %.0f birr", s.MinDeposit)
-	}
-
 	if !domain.IsSupportedPaymentMethod(req.TransactionType) {
 		return nil, errors.New("transaction_type must be one of Telebirr, CBEBirr, Mpesa")
+	}
+
+	// Read operator settings once for both the minimum-deposit floor and the
+	// per-method deposit switch. Fail open on a read error (never block a deposit
+	// just because the settings row couldn't be read), consistent with the rest
+	// of the settings-gated paths.
+	if s, err := uc.GetSettings(ctx); err == nil {
+		if req.Amount < s.MinDeposit {
+			return nil, fmt.Errorf("minimum deposit is %.0f birr", s.MinDeposit)
+		}
+		// Admin has switched this channel off (e.g. its verification is broken).
+		// Reject cleanly so players stop paying into a method whose receipts can't
+		// be confirmed, rather than losing money into a dead path.
+		if !s.DepositMethodEnabled(req.TransactionType) {
+			return nil, fmt.Errorf("%w: %s deposits are temporarily unavailable", ErrDepositMethodDisabled, req.TransactionType)
+		}
 	}
 
 	// Canonicalize the payment reference to uppercase. Provider references

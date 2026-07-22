@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -59,6 +60,10 @@ func (h *WalletHandler) Deposit(c *gin.Context) {
 			statusCode = http.StatusNotFound
 		} else if err.Error() == "this transaction reference was already used" {
 			statusCode = http.StatusConflict
+		} else if errors.Is(err, usecase.ErrDepositMethodDisabled) {
+			// Admin turned this deposit channel off — a temporary condition, not a
+			// bad request. 503 lets the client show a "try another method" message.
+			statusCode = http.StatusServiceUnavailable
 		}
 
 		c.JSON(statusCode, gin.H{
@@ -819,14 +824,29 @@ func (h *WalletHandler) GetPublicStatus(c *gin.Context) {
 	s, err := h.walletUseCase.GetSettings(c.Request.Context())
 	if err != nil {
 		// Fail open: never take the app down just because this read failed. Use the
-		// default minimum deposit so the deposit form still shows a sane figure.
-		c.JSON(http.StatusOK, gin.H{"maintenance": false, "message": "", "min_deposit": domain.DefaultMinDeposit})
+		// default minimum deposit so the deposit form still shows a sane figure, and
+		// treat every deposit method as available so a blip can't hide the pickers.
+		c.JSON(http.StatusOK, gin.H{
+			"maintenance": false, "message": "", "min_deposit": domain.DefaultMinDeposit,
+			"deposit_methods": gin.H{
+				string(domain.PaymentMethodTelebirr): true,
+				string(domain.PaymentMethodCBEBirr):  true,
+				string(domain.PaymentMethodMpesa):    true,
+			},
+		})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"maintenance": s.MaintenanceMode,
 		"message":     s.MaintenanceMessage,
 		"min_deposit": s.MinDeposit,
+		// Per-method deposit availability so the Mini App can hide a channel an
+		// admin has switched off. Keyed by the exact PaymentMethod identifier.
+		"deposit_methods": gin.H{
+			string(domain.PaymentMethodTelebirr): s.DepositTelebirrEnabled,
+			string(domain.PaymentMethodCBEBirr):  s.DepositCBEBirrEnabled,
+			string(domain.PaymentMethodMpesa):    s.DepositMpesaEnabled,
+		},
 	})
 }
 

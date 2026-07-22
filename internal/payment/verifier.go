@@ -85,7 +85,17 @@ func (v *Verifier) Verify(ctx context.Context, req domain.PaymentVerificationReq
 	// the house participated in.
 	endpoint := "/verify"
 	payload := map[string]string{"reference": reference}
-	if req.Method == domain.PaymentMethodCBEBirr || req.Method == domain.PaymentMethodMpesa {
+	// dedicated marks the newer per-provider endpoints (/verify-cbebirr,
+	// /verify-mpesa). Unlike the mature universal /verify, these have proven
+	// flaky in production: a valid receipt can come back as a raw non-2xx (404/
+	// 422) or with a provider string we don't recognise. For those methods we
+	// therefore treat an AMBIGUOUS response (an HTTP error status, or an
+	// unresolved provider) as "verifier unavailable" so a real player's deposit
+	// falls back to manual admin review instead of being rejected outright.
+	// EXPLICIT negatives (the body says the receipt was not verified, a wrong
+	// status, or money paid to a different account) are still hard rejections.
+	dedicated := req.Method == domain.PaymentMethodCBEBirr || req.Method == domain.PaymentMethodMpesa
+	if dedicated {
 		house := v.houseAccounts[req.Method]
 		if house == "" {
 			// Without the house number we cannot even look the receipt up —
@@ -135,8 +145,14 @@ func (v *Verifier) Verify(ctx context.Context, req domain.PaymentVerificationReq
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		// Remaining non-2xx (400/404/422, etc.) — the verifier rejected the
-		// request or receipt. This IS a definitive negative verdict.
+		// Remaining non-2xx (400/404/422, etc.). On the universal /verify
+		// (Telebirr) this is a definitive negative verdict. On the flakier
+		// dedicated M-Pesa/CBE endpoints it is too often a false negative on a
+		// real receipt, so we route it to manual review instead of bouncing the
+		// player — the admin can confirm, and nothing is auto-credited either way.
+		if dedicated {
+			return nil, fmt.Errorf("%w: %s verifier returned status %d: %s", domain.ErrVerifierUnavailable, req.Method, resp.StatusCode, responseMessage(decoded))
+		}
 		return nil, fmt.Errorf("verifier returned status %d: %s", resp.StatusCode, responseMessage(decoded))
 	}
 
@@ -158,6 +174,12 @@ func (v *Verifier) Verify(ctx context.Context, req domain.PaymentVerificationReq
 
 	provider := normalizeProvider(stringValue(decoded["provider"]), req.Method)
 	if provider == "" {
+		// On the dedicated endpoints we already know the method from the URL we
+		// called, so an unrecognised provider string is not a reason to bounce a
+		// real receipt — fall back to manual review rather than a hard failure.
+		if dedicated {
+			return nil, fmt.Errorf("%w: %s response had an unrecognised provider, deposit needs manual review", domain.ErrVerifierUnavailable, req.Method)
+		}
 		return nil, errors.New("verifier response did not include a supported provider")
 	}
 

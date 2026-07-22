@@ -542,9 +542,16 @@ func (h *TelegramHandler) minDeposit(ctx context.Context) float64 {
 }
 
 func (h *TelegramHandler) startDeposit(c *gin.Context, msg *telegram.Message, _ uuid.UUID) {
+	// A method an admin has switched off is dropped from the picker, same as a
+	// method with no configured house account — the player is never offered a
+	// channel they can't actually pay into.
+	settings, _ := h.walletUseCase.GetSettings(c.Request.Context())
 	var rows [][]telegram.InlineKeyboardButton
 	for _, m := range domain.SupportedPaymentMethods {
 		if strings.TrimSpace(h.depositAccounts[m]) == "" {
+			continue
+		}
+		if settings != nil && !settings.DepositMethodEnabled(m) {
 			continue
 		}
 		rows = append(rows, []telegram.InlineKeyboardButton{
@@ -589,7 +596,11 @@ func (h *TelegramHandler) handleCallback(c *gin.Context, cq *telegram.CallbackQu
 	case strings.HasPrefix(data, "dep:"):
 		method := domain.PaymentMethod(strings.TrimPrefix(data, "dep:"))
 		account := strings.TrimSpace(h.depositAccounts[method])
-		if !domain.IsSupportedPaymentMethod(method) || account == "" {
+		// Re-check availability at tap time: the account must be configured and the
+		// admin must not have switched this channel off since the menu was shown.
+		settings, _ := h.walletUseCase.GetSettings(c.Request.Context())
+		methodDisabled := settings != nil && !settings.DepositMethodEnabled(method)
+		if !domain.IsSupportedPaymentMethod(method) || account == "" || methodDisabled {
 			_ = h.bot.AnswerCallbackQuery(cq.ID, "")
 			h.reply(chatID, "ይህ መንገድ አሁን አይገኝም።\nThat method isn't available right now.", h.mainMenu())
 			return

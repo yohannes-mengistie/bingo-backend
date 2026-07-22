@@ -331,6 +331,47 @@ func TestVerifierMpesaNoHouseAccountFallsBackToManual(t *testing.T) {
 	}
 }
 
+// The dedicated M-Pesa endpoint is flaky: a real receipt sometimes comes back as
+// a raw non-2xx. That must NOT bounce the player — it falls back to manual admin
+// review so a genuine deposit can still be approved.
+func TestVerifierMpesaNon2xxFallsBackToManual(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"success": false, "message": "receipt not found"}`))
+	}))
+	defer server.Close()
+
+	verifier := NewVerifier(config.PaymentVerifierConfig{BaseURL: server.URL, APIKey: "test-key", MpesaAccount: "0712341122"})
+	_, err := verifier.Verify(context.Background(), domain.PaymentVerificationRequest{
+		Method:    domain.PaymentMethodMpesa,
+		Reference: "SGH12ABCD3",
+	})
+	if !errors.Is(err, domain.ErrVerifierUnavailable) {
+		t.Fatalf("expected manual-review fallback (ErrVerifierUnavailable) for a dedicated-endpoint non-2xx, got %v", err)
+	}
+}
+
+// The mature universal /verify (Telebirr) is trusted, so a non-2xx there stays a
+// definitive rejection — the dedicated-endpoint leniency must not leak to it.
+func TestVerifierTelebirrNon2xxIsDefinitive(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"success": false, "message": "receipt not found"}`))
+	}))
+	defer server.Close()
+
+	verifier := NewVerifier(config.PaymentVerifierConfig{BaseURL: server.URL, APIKey: "test-key", TelebirrAccount: "0997709691"})
+	_, err := verifier.Verify(context.Background(), telebirrReq("CE626EJRNS"))
+	if err == nil {
+		t.Fatal("a 404 from the universal /verify should be a definitive rejection")
+	}
+	if errors.Is(err, domain.ErrVerifierUnavailable) {
+		t.Fatalf("Telebirr non-2xx must stay definitive, not manual fallback: %v", err)
+	}
+}
+
 func TestVerifierAccountBinding(t *testing.T) {
 	body := `{
 		"success": true,
