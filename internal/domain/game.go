@@ -101,6 +101,8 @@ type GamePlayer struct {
 	// BonusExpiresAt is the deadline of the grant this card consumed, so a
 	// refund is reinstated under the original deadline rather than a fresh one.
 	BonusExpiresAt *time.Time `json:"bonus_expires_at,omitempty" db:"bonus_expires_at"`
+	// IsBot is true when the owning user is a house-controlled filler bot.
+	IsBot bool `json:"is_bot" db:"is_bot"`
 }
 
 // BingoCard represents a 5x5 bingo card

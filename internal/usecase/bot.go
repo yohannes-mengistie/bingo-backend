@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/bingo/backend/internal/domain"
-	"github.com/bingo/backend/pkg/referral"
 	redisGame "github.com/bingo/backend/pkg/redis"
+	"github.com/bingo/backend/pkg/referral"
 	"github.com/google/uuid"
 )
 
@@ -80,6 +80,7 @@ type BotSettings struct {
 	MaxJoinsPerTick int           // bots added per game per sweep (spaces out joins)
 	JoinDelay       time.Duration // hold bots back this long after the first real player joins
 	CheckInterval   time.Duration // how often the auto-filler sweeps
+	WinRate         float64       // probability (0-1) that bots win when they have a valid bingo alongside humans
 }
 
 // BotUseCase seeds a pool of house-owned filler bots and joins them into games
@@ -153,6 +154,15 @@ func (uc *BotUseCase) UpdateConfig(ctx context.Context, req domain.UpdateBotConf
 	}
 	if req.Tiers != nil {
 		cfg.Tiers = *req.Tiers
+	}
+	if req.WinRate != nil {
+		if *req.WinRate < 0 || *req.WinRate > 1 {
+			return nil, fmt.Errorf("win_rate must be between 0 and 1")
+		}
+		cfg.WinRate = *req.WinRate
+	}
+	if req.BotAlwaysWin != nil {
+		cfg.BotAlwaysWin = *req.BotAlwaysWin
 	}
 	if err := uc.botRepo.UpdateConfig(ctx, cfg); err != nil {
 		return nil, err

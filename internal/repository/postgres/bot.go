@@ -137,7 +137,7 @@ func (r *botRepository) countPlayersInGame(ctx context.Context, gameID uuid.UUID
 // GetConfig returns the single policy row (id = 1).
 func (r *botRepository) GetConfig(ctx context.Context) (*domain.BotConfig, error) {
 	query := `
-		SELECT enabled, min_real_players, target_bots, tiers, updated_at
+		SELECT enabled, min_real_players, target_bots, tiers, win_rate, bot_always_win, updated_at
 		FROM bot_config
 		WHERE id = 1
 	`
@@ -147,12 +147,12 @@ func (r *botRepository) GetConfig(ctx context.Context) (*domain.BotConfig, error
 		&cfg.MinRealPlayers,
 		&cfg.TargetBots,
 		&cfg.Tiers,
+		&cfg.WinRate,
+		&cfg.BotAlwaysWin,
 		&cfg.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
-		// Row missing (e.g. migration not yet applied) — fall back to safe
-		// defaults with auto-fill OFF rather than erroring.
-		return &domain.BotConfig{Enabled: false, MinRealPlayers: 1, TargetBots: 30, Tiers: "REGULAR,VIP"}, nil
+		return &domain.BotConfig{Enabled: false, MinRealPlayers: 1, TargetBots: 30, Tiers: "REGULAR,VIP", WinRate: 0.8, BotAlwaysWin: false}, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to read bot config: %w", err)
@@ -163,16 +163,18 @@ func (r *botRepository) GetConfig(ctx context.Context) (*domain.BotConfig, error
 // UpdateConfig persists the single policy row, creating it if absent.
 func (r *botRepository) UpdateConfig(ctx context.Context, cfg *domain.BotConfig) error {
 	query := `
-		INSERT INTO bot_config (id, enabled, min_real_players, target_bots, tiers, updated_at)
-		VALUES (1, $1, $2, $3, $4, CURRENT_TIMESTAMP)
+		INSERT INTO bot_config (id, enabled, min_real_players, target_bots, tiers, win_rate, bot_always_win, updated_at)
+		VALUES (1, $1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
 		ON CONFLICT (id) DO UPDATE SET
 			enabled = EXCLUDED.enabled,
 			min_real_players = EXCLUDED.min_real_players,
 			target_bots = EXCLUDED.target_bots,
 			tiers = EXCLUDED.tiers,
+			win_rate = EXCLUDED.win_rate,
+			bot_always_win = EXCLUDED.bot_always_win,
 			updated_at = CURRENT_TIMESTAMP
 	`
-	if _, err := r.db.ExecContext(ctx, query, cfg.Enabled, cfg.MinRealPlayers, cfg.TargetBots, cfg.Tiers); err != nil {
+	if _, err := r.db.ExecContext(ctx, query, cfg.Enabled, cfg.MinRealPlayers, cfg.TargetBots, cfg.Tiers, cfg.WinRate, cfg.BotAlwaysWin); err != nil {
 		return fmt.Errorf("failed to update bot config: %w", err)
 	}
 	return nil

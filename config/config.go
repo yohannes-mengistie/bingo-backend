@@ -70,6 +70,7 @@ type BotsConfig struct {
 	MaxJoinsPerTick int     // bots added per game per sweep (spaces out joins)
 	CheckInterval   int     // seconds between auto-fill sweeps
 	JoinDelay       int     // seconds to hold bots back after the first real player joins
+	WinRate         float64 // probability that bots win co-winner situations (0-1)
 }
 
 // InternalConfig gates the server-to-server ("bot-facing") /user, /wallet and
@@ -188,6 +189,7 @@ func Load() (*Config, error) {
 			MaxJoinsPerTick: getEnvInt("BOT_MAX_JOINS_PER_TICK", 5),
 			CheckInterval:   getEnvInt("BOT_CHECK_INTERVAL_SECONDS", 5),
 			JoinDelay:       getEnvInt("BOT_JOIN_DELAY_SECONDS", 5),
+			WinRate:         parseWinRate(getEnv("BOT_WIN_RATE", "0.8")),
 		},
 		RateLimits: RateLimitsConfig{
 			// Per-IP, so a blunt instrument here (see the type comment): the
@@ -267,6 +269,15 @@ func getEnvInt(key string, defaultValue int) int {
 		}
 	}
 	return defaultValue
+}
+
+func parseWinRate(value string) float64 {
+	if parsed, err := strconv.ParseFloat(value, 64); err == nil {
+		if parsed >= 0 && parsed <= 1 {
+			return parsed
+		}
+	}
+	return 0.8
 }
 
 // parseRedisConfig parses Redis configuration from REDIS_URL or individual environment variables

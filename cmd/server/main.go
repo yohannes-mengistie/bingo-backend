@@ -157,13 +157,14 @@ func main() {
 	userUseCase := usecase.NewUserUseCase(userRepo, walletRepo, bonusRepo, db)
 	walletUseCase := usecase.NewWalletUseCase(walletRepo, transactionRepo, userRepo, gameRepo, bonusRepo, db, paymentVerifier)
 	authUseCase := usecase.NewAuthUseCase(userRepo, jwtService, cfg.Admin.SecretCode, cfg.Telegram.BotToken)
-	gameUseCase := usecase.NewGameUseCase(gameRepo, walletRepo, transactionRepo, userRepo, bonusRepo, db, gameStateService)
+	gameUseCase := usecase.NewGameUseCase(gameRepo, walletRepo, transactionRepo, userRepo, bonusRepo, botRepo, db, gameStateService)
 	botUseCase := usecase.NewBotUseCase(botRepo, userRepo, walletRepo, transactionRepo, gameRepo, gameUseCase, gameStateService, db, usecase.BotSettings{
 		PoolSize:        cfg.Bots.PoolSize,
 		WalletFloat:     cfg.Bots.WalletFloat,
 		MaxJoinsPerTick: cfg.Bots.MaxJoinsPerTick,
 		CheckInterval:   time.Duration(cfg.Bots.CheckInterval) * time.Second,
 		JoinDelay:       time.Duration(cfg.Bots.JoinDelay) * time.Second,
+		WinRate:         cfg.Bots.WinRate,
 	})
 	supportUseCase := usecase.NewSupportUseCase(supportRepo)
 	// One bot client, shared by everything that messages players: the game's

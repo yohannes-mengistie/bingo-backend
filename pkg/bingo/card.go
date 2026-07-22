@@ -53,7 +53,6 @@ func GenerateAllCards() []*BingoCard {
 func generateFixedCards() map[int]*BingoCard {
 	cards := make(map[int]*BingoCard, domain.TotalCards)
 
-
 	// Parse card data into BingoCard structures
 	for cardID := domain.MinCardID; cardID <= domain.MaxCardID; cardID++ {
 		card := &BingoCard{
@@ -269,4 +268,82 @@ func GetLetterForNumber(num int) string {
 	default:
 		return ""
 	}
+}
+
+// CompletingBingoNumbers returns all undrawn numbers that would complete at
+// least one valid bingo pattern (row, column, or diagonal) on the card. The
+// center cell (value 0) is treated as already marked.
+func CompletingBingoNumbers(card *BingoCard, drawnSet map[int]bool) []int {
+	marked := make(map[int]bool, len(drawnSet)+1)
+	for n := range drawnSet {
+		marked[n] = true
+	}
+	marked[0] = true
+
+	completing := make([]int, 0)
+
+	rows := func() {
+		for row := 0; row < 5; row++ {
+			unmarked := make([]int, 0)
+			for col := 0; col < 5; col++ {
+				n := card.Numbers[row][col]
+				if !marked[n] {
+					unmarked = append(unmarked, n)
+				}
+			}
+			if len(unmarked) == 1 {
+				completing = append(completing, unmarked[0])
+			}
+		}
+	}
+	cols := func() {
+		for col := 0; col < 5; col++ {
+			unmarked := make([]int, 0)
+			for row := 0; row < 5; row++ {
+				n := card.Numbers[row][col]
+				if !marked[n] {
+					unmarked = append(unmarked, n)
+				}
+			}
+			if len(unmarked) == 1 {
+				completing = append(completing, unmarked[0])
+			}
+		}
+	}
+	diags := func() {
+		unmarked := make([]int, 0)
+		for i := 0; i < 5; i++ {
+			n := card.Numbers[i][i]
+			if !marked[n] {
+				unmarked = append(unmarked, n)
+			}
+		}
+		if len(unmarked) == 1 {
+			completing = append(completing, unmarked[0])
+		}
+		unmarked = make([]int, 0)
+		for i := 0; i < 5; i++ {
+			n := card.Numbers[i][4-i]
+			if !marked[n] {
+				unmarked = append(unmarked, n)
+			}
+		}
+		if len(unmarked) == 1 {
+			completing = append(completing, unmarked[0])
+		}
+	}
+
+	rows()
+	cols()
+	diags()
+
+	seen := make(map[int]bool)
+	uniq := make([]int, 0, len(completing))
+	for _, n := range completing {
+		if !seen[n] {
+			seen[n] = true
+			uniq = append(uniq, n)
+		}
+	}
+	return uniq
 }

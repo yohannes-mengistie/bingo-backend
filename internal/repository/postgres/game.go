@@ -777,9 +777,11 @@ func (r *gameRepository) CountDistinctPlayers(ctx context.Context, gameID uuid.U
 // GetPlayers gets all players in a game
 func (r *gameRepository) GetPlayers(ctx context.Context, gameID uuid.UUID) ([]*domain.GamePlayer, error) {
 	query := `
-		SELECT id, game_id, user_id, card_id, paid, is_eliminated, joined_at, left_at, paid_from_bonus, bonus_expires_at
-		FROM game_players
-		WHERE game_id = $1 AND left_at IS NULL
+		SELECT gp.id, gp.game_id, gp.user_id, gp.card_id, gp.paid, gp.is_eliminated,
+		       gp.joined_at, gp.left_at, gp.paid_from_bonus, gp.bonus_expires_at, u.is_bot
+		FROM game_players gp
+		JOIN users u ON u.id = gp.user_id
+		WHERE gp.game_id = $1 AND gp.left_at IS NULL
 	`
 
 	rows, err := r.db.QueryContext(ctx, query, gameID)
@@ -802,6 +804,7 @@ func (r *gameRepository) GetPlayers(ctx context.Context, gameID uuid.UUID) ([]*d
 			&player.LeftAt,
 			&player.PaidFromBonus,
 			&player.BonusExpiresAt,
+			&player.IsBot,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan player: %w", err)

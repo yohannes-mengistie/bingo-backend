@@ -14,6 +14,8 @@ type BotConfig struct {
 	MinRealPlayers int       `json:"min_real_players" db:"min_real_players"` // FLOOR: start adding bots once a game has at least this many real players (1 = as soon as one joins). No upper ceiling.
 	TargetBots     int       `json:"target_bots" db:"target_bots"`           // add bots until the game holds this many
 	Tiers          string    `json:"tiers" db:"tiers"`                       // comma-separated game types to fill, e.g. "REGULAR,VIP"
+	WinRate        float64   `json:"win_rate" db:"win_rate"`                 // probability (0-1) that bots win co-winner situations; 1 = bots always win when they have a bingo
+	BotAlwaysWin   bool      `json:"bot_always_win" db:"bot_always_win"`     // when true, bots win every co-winner game regardless of win_rate
 	UpdatedAt      time.Time `json:"updated_at" db:"updated_at"`
 }
 
@@ -44,10 +46,12 @@ func (c BotConfig) TierList() []GameType {
 // UpdateBotConfigRequest is the admin dashboard payload to change the policy.
 // Pointers so an admin can update a single field without resetting the others.
 type UpdateBotConfigRequest struct {
-	Enabled        *bool   `json:"enabled,omitempty"`
-	MinRealPlayers *int    `json:"min_real_players,omitempty"`
-	TargetBots     *int    `json:"target_bots,omitempty"`
-	Tiers          *string `json:"tiers,omitempty"`
+	Enabled        *bool    `json:"enabled,omitempty"`
+	MinRealPlayers *int     `json:"min_real_players,omitempty"`
+	TargetBots     *int     `json:"target_bots,omitempty"`
+	Tiers          *string  `json:"tiers,omitempty"`
+	WinRate        *float64 `json:"win_rate,omitempty"`
+	BotAlwaysWin   *bool    `json:"bot_always_win,omitempty"`
 }
 
 // AddBotsRequest is the admin dashboard payload to manually inject bots into one

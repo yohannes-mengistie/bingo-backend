@@ -78,6 +78,7 @@ func newHarness(t *testing.T) *harness {
 		postgres.NewTransactionRepository(db),
 		postgres.NewUserRepository(db),
 		postgres.NewBonusRepository(db),
+		postgres.NewBotRepository(db),
 		db,
 		redisPkg.NewGameStateService(rdb),
 	)
@@ -100,6 +101,25 @@ func (h *harness) seedUser(name string, tgSuffix int64) uuid.UUID {
 	}
 	if _, err := h.db.Exec(`INSERT INTO wallets (user_id, balance) VALUES ($1, 0)`, id); err != nil {
 		h.t.Fatalf("seed wallet: %v", err)
+	}
+	h.ids.users = append(h.ids.users, id)
+	return id
+}
+
+func (h *harness) seedBot(name string, suffix int64) uuid.UUID {
+	h.t.Helper()
+	id := uuid.New()
+	tg := int64(botTelegramIDBase) - suffix
+	_, err := h.db.Exec(
+		`INSERT INTO users (id, telegram_id, first_name, phone_number, referal_code, role, is_bot)
+		 VALUES ($1,$2,$3,$4,$5,'user',true)`,
+		id, tg, name, "BOT-"+itoa(suffix), "BOTREF"+itoa(suffix),
+	)
+	if err != nil {
+		h.t.Fatalf("seed bot: %v", err)
+	}
+	if _, err := h.db.Exec(`INSERT INTO wallets (user_id, balance) VALUES ($1, 0)`, id); err != nil {
+		h.t.Fatalf("seed bot wallet: %v", err)
 	}
 	h.ids.users = append(h.ids.users, id)
 	return id
@@ -150,6 +170,24 @@ func (h *harness) drawTopRow(gameID uuid.UUID, cardID int) {
 			h.t.Fatalf("add drawn number: %v", err)
 		}
 	}
+}
+
+func (h *harness) drawSequenceUntilAutoBingo(ctx context.Context, gameID uuid.UUID, game *domain.Game, numbers []int) (int, bool) {
+	h.t.Helper()
+	for i, n := range numbers {
+		err := h.uc.redisService.AddDrawnNumber(ctx, gameID, domain.DrawnNumber{
+			Letter:  domain.BingoLetter(bingo.GetLetterForNumber(n)),
+			Number:  n,
+			DrawnAt: time.Now(),
+		})
+		if err != nil {
+			h.t.Fatalf("add drawn number: %v", err)
+		}
+		if h.uc.checkAutoBingo(ctx, gameID, game) {
+			return i, true
+		}
+	}
+	return -1, false
 }
 
 func (h *harness) balance(userID uuid.UUID) float64 {
@@ -222,6 +260,77 @@ func TestIntegration_AutoBingo_SingleWinner(t *testing.T) {
 		t.Fatalf("expected card flagged winner with prize_won=18, got is_winner=%v prize_won=%v", isWinner, prizeWon)
 	}
 	t.Logf("single-winner OK: FINISHED, %s paid 18, card flagged", user)
+}
+
+func TestIntegration_AutoBingo_FixedDrawSequenceBotWinsFirst(t *testing.T) {
+	h := newHarness(t)
+	defer h.cleanup()
+	ctx := context.Background()
+
+	bot := h.seedBot("FixedDrawBot", 9201)
+	human := h.seedUser("FixedDrawHuman", 9202)
+	gameID := h.seedDrawingGame(18)
+	h.addPlayer(gameID, bot, 1, 0)
+	h.addPlayer(gameID, human, 2, 1)
+
+	botCard := bingo.GenerateCard(1)
+	fixedDraw := []int{
+		botCard.Numbers[0][0],
+		botCard.Numbers[0][1],
+		botCard.Numbers[0][2],
+		botCard.Numbers[0][3],
+		botCard.Numbers[0][4],
+	}
+
+	game, err := h.uc.gameRepo.FindByID(ctx, gameID)
+	if err != nil {
+		t.Fatalf("find game: %v", err)
+	}
+	resolvedAt, resolved := h.drawSequenceUntilAutoBingo(ctx, gameID, game, fixedDraw)
+	if !resolved {
+		t.Fatalf("expected fixed draw sequence to auto-resolve the game")
+	}
+	if resolvedAt != len(fixedDraw)-1 {
+		t.Fatalf("auto-bingo resolved after draw %d, want %d", resolvedAt+1, len(fixedDraw))
+	}
+
+	g2, err := h.uc.gameRepo.FindByID(ctx, gameID)
+	if err != nil {
+		t.Fatalf("find resolved game: %v", err)
+	}
+	if g2.State != domain.GameStateFinished {
+		t.Fatalf("expected FINISHED, got %s", g2.State)
+	}
+	if g2.WinnerID == nil || *g2.WinnerID != bot {
+		t.Fatalf("expected bot winner %s, got %v", bot, g2.WinnerID)
+	}
+	if got := h.balance(bot); got != 18 {
+		t.Fatalf("expected bot to receive full pot 18, got %v", got)
+	}
+	if got := h.balance(human); got != 0 {
+		t.Fatalf("expected human balance to remain 0, got %v", got)
+	}
+
+	var botWinner, humanWinner bool
+	var botPrize, humanPrize float64
+	if err := h.db.QueryRow(
+		`SELECT is_winner, prize_won::float8 FROM game_players WHERE game_id=$1 AND user_id=$2`,
+		gameID, bot,
+	).Scan(&botWinner, &botPrize); err != nil {
+		t.Fatalf("read bot card outcome: %v", err)
+	}
+	if err := h.db.QueryRow(
+		`SELECT is_winner, prize_won::float8 FROM game_players WHERE game_id=$1 AND user_id=$2`,
+		gameID, human,
+	).Scan(&humanWinner, &humanPrize); err != nil {
+		t.Fatalf("read human card outcome: %v", err)
+	}
+	if !botWinner || botPrize != 18 {
+		t.Fatalf("expected bot card flagged winner with prize_won=18, got is_winner=%v prize_won=%v", botWinner, botPrize)
+	}
+	if humanWinner || humanPrize != 0 {
+		t.Fatalf("expected human card not to win, got is_winner=%v prize_won=%v", humanWinner, humanPrize)
+	}
 }
 
 func TestIntegration_AutoBingo_SplitPot(t *testing.T) {
