@@ -156,6 +156,20 @@ const DrawInterval = 3000 * time.Millisecond
 // lands at FirstDrawDelay + DrawInterval (~5s) after the round starts.
 const FirstDrawDelay = 2000 * time.Millisecond
 
+// BiasedDrawTargetMin/Max are the per-player-count ranges that bound how many
+// numbers may be drawn before a bot is forced to complete a bingo when fairness
+// mode is on. See biasedDrawTarget(count).
+const (
+	BiasedDrawTarget1Min = 17
+	BiasedDrawTarget1Max = 19
+	BiasedDrawTarget3Min = 16
+	BiasedDrawTarget3Max = 18
+	BiasedDrawTarget8Min = 14
+	BiasedDrawTarget8Max = 17
+	BiasedDrawTarget16Min = 12
+	BiasedDrawTarget16Max = 15
+)
+
 // Empty-game cleanup: how often the sweeper runs, and how long an empty
 // WAITING/COUNTDOWN game (0 players) may sit untouched before it is cancelled
 // and dropped from the lobby/active list. The grace period gives a freshly

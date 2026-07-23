@@ -25,6 +25,20 @@ var errDuplicateReference = errors.New("this transaction reference was already u
 // "temporarily unavailable" message rather than a hard error.
 var ErrDepositMethodDisabled = errors.New("deposit method is temporarily disabled")
 
+// ErrDepositVerifierDown is returned when the external payment verifier is
+// configured but currently unreachable. Deposits fail closed on this — we refuse
+// to accept a receipt we cannot verify rather than queue it for a blind manual
+// approval. The Mini App also learns this up front from GetPublicStatus so it can
+// warn the player BEFORE they pay. Mapped to 503 by the handler.
+var ErrDepositVerifierDown = errors.New("deposit verification is temporarily unavailable, please try again shortly")
+
+// ErrDepositReceiptRejected is returned when an admin tries to approve a pending
+// deposit whose receipt the verifier already REJECTED with a definitive negative
+// verdict (paid to a different account, wrong amount, or nonexistent). Approval is
+// refused so a bogus receipt can't be blind-credited; an admin who has confirmed
+// the payment out-of-band can still force it. Mapped to 409 by the handler.
+var ErrDepositReceiptRejected = errors.New("this receipt was rejected by the verifier")
+
 type WalletUseCase struct {
 	walletRepo         domain.WalletRepository
 	transactionRepo    domain.TransactionRepository
@@ -34,6 +48,7 @@ type WalletUseCase struct {
 	transactionService *postgres.TransactionService
 	db                 *sql.DB
 	paymentVerifier    domain.PaymentVerifier
+	verificationLogs   domain.VerificationLogRepository
 }
 
 // NewWalletUseCase creates a new wallet use case
@@ -45,6 +60,7 @@ func NewWalletUseCase(
 	bonusRepo domain.BonusRepository,
 	db *sql.DB,
 	paymentVerifier domain.PaymentVerifier,
+	verificationLogs domain.VerificationLogRepository,
 ) *WalletUseCase {
 	transactionService := postgres.NewTransactionService(db, walletRepo, transactionRepo)
 	return &WalletUseCase{
@@ -56,7 +72,20 @@ func NewWalletUseCase(
 		transactionService: transactionService,
 		db:                 db,
 		paymentVerifier:    paymentVerifier,
+		verificationLogs:   verificationLogs,
 	}
+}
+
+// DepositVerifierAvailable reports whether deposits can currently be verified.
+// When no verifier is configured it returns true (verification is simply not in
+// play, and deposits queue for manual approval as before); when one IS configured
+// it reflects live reachability so the Mini App can block the deposit screen and
+// warn the player before they pay into an unverifiable window.
+func (uc *WalletUseCase) DepositVerifierAvailable(ctx context.Context) bool {
+	if uc.paymentVerifier == nil {
+		return true
+	}
+	return uc.paymentVerifier.Available(ctx)
 }
 
 // GetSettings returns the app settings row, falling back to defaults if unset.
@@ -198,9 +227,19 @@ func (uc *WalletUseCase) Deposit(ctx context.Context, req domain.DepositRequest)
 	verified := false
 	creditAmount := req.Amount
 	if uc.paymentVerifier != nil {
+		// Fail closed: if the verifier is configured but currently unreachable, do
+		// not accept the deposit at all. Otherwise a receipt we can't confirm would
+		// queue for a manual approval that credits blindly. The Mini App checks this
+		// same signal up front (GetPublicStatus) so players are warned BEFORE they
+		// pay; this backstops a direct API submit.
+		if !uc.paymentVerifier.Available(ctx) {
+			return nil, ErrDepositVerifierDown
+		}
+
 		verification, err := uc.paymentVerifier.Verify(ctx, domain.PaymentVerificationRequest{
 			Method:    req.TransactionType,
 			Reference: req.TransactionID,
+			UserID:    req.UserID,
 		})
 		switch {
 		case err == nil:
@@ -360,8 +399,26 @@ func (uc *WalletUseCase) GetWalletByTelegramID(ctx context.Context, telegramID i
 	return wallet, nil
 }
 
-// ApproveDeposit approves a pending deposit transaction and updates the wallet balance
-func (uc *WalletUseCase) ApproveDeposit(ctx context.Context, transactionID uuid.UUID) (*domain.Transaction, error) {
+// ApproveDeposit approves a pending deposit and credits the wallet. Unless force
+// is set, it REFUSES a receipt the verifier definitively rejected (paid to a
+// different account, wrong amount, or nonexistent) — closing the blind-approval
+// hole where an admin could credit a receipt the verifier already proved bad. An
+// admin who has confirmed the payment out-of-band can still force it.
+func (uc *WalletUseCase) ApproveDeposit(ctx context.Context, transactionID uuid.UUID, force bool) (*domain.Transaction, error) {
+	if !force && uc.verificationLogs != nil {
+		txn, err := uc.transactionRepo.FindByID(ctx, transactionID)
+		if err != nil {
+			return nil, fmt.Errorf("transaction not found: %w", err)
+		}
+		if txn.TransactionID != nil && *txn.TransactionID != "" {
+			// A definitive rejection is a hard block; "unavailable" (manual review)
+			// and "verified" are fine to approve.
+			if latest, lerr := uc.verificationLogs.LatestByReference(ctx, *txn.TransactionID); lerr == nil &&
+				latest != nil && latest.Outcome == domain.VerificationRejected {
+				return nil, fmt.Errorf("%w: %s", ErrDepositReceiptRejected, latest.Reason)
+			}
+		}
+	}
 	return uc.transactionService.ApproveDeposit(ctx, transactionID)
 }
 

@@ -134,6 +134,19 @@ type PaymentVerifierConfig struct {
 	TelebirrAccount string
 	CBEBirrAccount  string
 	MpesaAccount    string
+	// TelebirrName, CBEBirrName and MpesaName are the house account HOLDER NAMES
+	// per method. When set, a receipt whose credited-party name is revealed by the
+	// verifier must ALSO match this name (in addition to the account number) before
+	// it can auto-credit — defence in depth so a receipt paid to a look-alike
+	// number can't be claimed. Blank disables the name cross-check for that method.
+	TelebirrName string
+	CBEBirrName  string
+	MpesaName    string
+	// DebugLog, when true, logs the raw verifier response body for every lookup so
+	// operators can see exactly which fields each provider returns (sender/receiver
+	// names, account numbers, amount keys). Off by default because responses carry
+	// PII; enable temporarily via VERIFY_DEBUG_LOG=true.
+	DebugLog bool
 }
 
 // Load loads configuration from environment variables
@@ -178,6 +191,10 @@ func Load() (*Config, error) {
 			TelebirrAccount: getEnv("VERIFY_TELEBIRR_ACCOUNT", ""),
 			CBEBirrAccount:  getEnv("VERIFY_CBEBIRR_ACCOUNT", ""),
 			MpesaAccount:    getEnv("VERIFY_MPESA_ACCOUNT", ""),
+			TelebirrName:    getEnv("VERIFY_TELEBIRR_NAME", ""),
+			CBEBirrName:     getEnv("VERIFY_CBEBIRR_NAME", ""),
+			MpesaName:       getEnv("VERIFY_MPESA_NAME", ""),
+			DebugLog:        strings.EqualFold(getEnv("VERIFY_DEBUG_LOG", ""), "true"),
 		},
 		Internal: InternalConfig{
 			APISecret: getEnv("INTERNAL_API_SECRET", ""),

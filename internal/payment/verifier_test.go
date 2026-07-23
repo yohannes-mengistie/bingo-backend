@@ -494,3 +494,153 @@ func TestVerifierRejectsUnsupportedProvider(t *testing.T) {
 		t.Fatal("expected unsupported provider error")
 	}
 }
+
+// cbeServer returns a test server answering /verify-cbebirr with a genuine,
+// house-credited receipt whose holder name is "TEST USER NAME".
+func cbeServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"creditAccount": "251912345678 - TEST USER NAME",
+			"receiverName": "251912345678 - TEST USER NAME",
+			"transactionStatus": "Completed",
+			"receiptNumber": "TEST123ABC2025",
+			"reference": "FT25211JYPQX",
+			"amount": "500.00"
+		}`))
+	}))
+}
+
+// #2: when the configured house holder name matches the receipt's credited-party
+// name, the deposit verifies as normal (name check passes on top of the number).
+func TestVerifierReceiverNameMatches(t *testing.T) {
+	server := cbeServer(t)
+	defer server.Close()
+
+	verifier := NewVerifier(config.PaymentVerifierConfig{
+		BaseURL:        server.URL,
+		APIKey:         "k",
+		CBEBirrAccount: "0912345678",
+		CBEBirrName:    "Test User Name",
+	})
+	result, err := verifier.Verify(context.Background(), domain.PaymentVerificationRequest{
+		Method:    domain.PaymentMethodCBEBirr,
+		Reference: "TEST123ABC",
+	})
+	if err != nil {
+		t.Fatalf("Verify returned error: %v", err)
+	}
+	if result.Amount != 500 {
+		t.Fatalf("amount = %v, want 500", result.Amount)
+	}
+}
+
+// #2: a genuine, house-credited receipt whose holder name does NOT match the
+// configured house name is rejected — defence against a look-alike account
+// number that happens to match on trailing digits.
+func TestVerifierReceiverNameMismatchRejected(t *testing.T) {
+	server := cbeServer(t)
+	defer server.Close()
+
+	verifier := NewVerifier(config.PaymentVerifierConfig{
+		BaseURL:        server.URL,
+		APIKey:         "k",
+		CBEBirrAccount: "0912345678",
+		CBEBirrName:    "Different Company PLC",
+	})
+	_, err := verifier.Verify(context.Background(), domain.PaymentVerificationRequest{
+		Method:    domain.PaymentMethodCBEBirr,
+		Reference: "TEST123ABC",
+	})
+	if err == nil {
+		t.Fatal("expected rejection on holder-name mismatch, got nil")
+	}
+	if errors.Is(err, domain.ErrVerifierUnavailable) {
+		t.Fatalf("name mismatch should be a hard reject, not manual fallback: %v", err)
+	}
+}
+
+// fakeRecorder captures verification-log entries for assertions.
+type fakeRecorder struct{ entries []*domain.VerificationLog }
+
+func (f *fakeRecorder) Record(_ context.Context, e *domain.VerificationLog) {
+	f.entries = append(f.entries, e)
+}
+
+// The audit recorder is invoked with the verdict and raw body for every lookup —
+// a verified receipt records outcome=verified with the raw response captured.
+func TestVerifierRecordsAuditLog(t *testing.T) {
+	server := cbeServer(t)
+	defer server.Close()
+
+	rec := &fakeRecorder{}
+	verifier := NewVerifierWithRecorder(config.PaymentVerifierConfig{
+		BaseURL:        server.URL,
+		APIKey:         "k",
+		CBEBirrAccount: "0912345678",
+	}, rec)
+
+	if _, err := verifier.Verify(context.Background(), domain.PaymentVerificationRequest{
+		Method:    domain.PaymentMethodCBEBirr,
+		Reference: "TEST123ABC",
+	}); err != nil {
+		t.Fatalf("Verify returned error: %v", err)
+	}
+
+	if len(rec.entries) != 1 {
+		t.Fatalf("recorded %d entries, want 1", len(rec.entries))
+	}
+	got := rec.entries[0]
+	if got.Outcome != domain.VerificationVerified {
+		t.Fatalf("outcome = %q, want verified", got.Outcome)
+	}
+	if got.RawResponse == "" {
+		t.Fatal("raw response was not captured in the audit log")
+	}
+	if got.Amount == nil || *got.Amount != 500 {
+		t.Fatalf("amount = %v, want 500", got.Amount)
+	}
+}
+
+// A definitive rejection is recorded as outcome=rejected (not unavailable).
+func TestVerifierRecordsRejection(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success": false, "message": "not found"}`))
+	}))
+	defer server.Close()
+
+	rec := &fakeRecorder{}
+	verifier := NewVerifierWithRecorder(config.PaymentVerifierConfig{
+		BaseURL: server.URL, APIKey: "k", TelebirrAccount: "0997709691",
+	}, rec)
+
+	if _, err := verifier.Verify(context.Background(), telebirrReq("CE626EJRNS")); err == nil {
+		t.Fatal("expected rejection")
+	}
+	if len(rec.entries) != 1 || rec.entries[0].Outcome != domain.VerificationRejected {
+		t.Fatalf("want one rejected entry, got %+v", rec.entries)
+	}
+}
+
+// #1: Available() reflects host reachability so deposit entry can fail closed.
+func TestVerifierAvailable(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer up.Close()
+
+	reachable := NewVerifier(config.PaymentVerifierConfig{BaseURL: up.URL, APIKey: "k"})
+	if !reachable.Available(context.Background()) {
+		t.Fatal("expected Available()=true for a reachable verifier host")
+	}
+
+	// A host that never answers (closed server) is unavailable → deposits fail closed.
+	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	down.Close()
+	unreachable := NewVerifier(config.PaymentVerifierConfig{BaseURL: down.URL, APIKey: "k"})
+	if unreachable.Available(context.Background()) {
+		t.Fatal("expected Available()=false for an unreachable verifier host")
+	}
+}

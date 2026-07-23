@@ -79,6 +79,7 @@ func newHarness(t *testing.T) *harness {
 		postgres.NewUserRepository(db),
 		postgres.NewBonusRepository(db),
 		postgres.NewBotRepository(db),
+		nil,
 		db,
 		redisPkg.NewGameStateService(rdb),
 	)

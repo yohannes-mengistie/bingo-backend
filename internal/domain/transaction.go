@@ -112,11 +112,67 @@ type PaymentVerificationResult struct {
 type PaymentVerificationRequest struct {
 	Method    PaymentMethod
 	Reference string
+	// UserID is the player the lookup is for. It is not sent to the verifier; it
+	// only tags the audit-log row so an admin can see who submitted a receipt.
+	UserID uuid.UUID
+}
+
+// VerificationOutcome classifies a verifier lookup for the admin audit log.
+type VerificationOutcome string
+
+const (
+	VerificationVerified    VerificationOutcome = "verified"    // auto-credited
+	VerificationRejected    VerificationOutcome = "rejected"    // definitive negative verdict
+	VerificationUnavailable VerificationOutcome = "unavailable" // no verdict → manual review
+)
+
+// VerificationLog is one recorded verifier lookup, surfaced in the admin
+// dashboard so operators can inspect what the verifier actually returned for a
+// receipt (raw provider JSON + verdict) when investigating a disputed deposit.
+type VerificationLog struct {
+	ID          uuid.UUID           `json:"id" db:"id"`
+	UserID      *uuid.UUID          `json:"user_id,omitempty" db:"user_id"`
+	Method      PaymentMethod       `json:"method" db:"method"`
+	Reference   string              `json:"reference" db:"reference"`
+	Outcome     VerificationOutcome `json:"outcome" db:"outcome"`
+	Reason      string              `json:"reason" db:"reason"`
+	Amount      *float64            `json:"amount,omitempty" db:"amount"`
+	RawResponse string              `json:"raw_response" db:"raw_response"`
+	CreatedAt   time.Time           `json:"created_at" db:"created_at"`
+}
+
+// VerificationRecorder persists verifier lookups for the admin audit log. The
+// verifier calls Record after every lookup; a nil recorder disables logging.
+// Implementations must be best-effort: a logging failure must never break a
+// deposit.
+type VerificationRecorder interface {
+	Record(ctx context.Context, entry *VerificationLog)
+}
+
+// VerificationLogRepository is the admin-side reader for the audit log, plus the
+// recorder the verifier writes through.
+type VerificationLogRepository interface {
+	VerificationRecorder
+	List(ctx context.Context, reference string, limit, offset int) ([]*VerificationLog, int, error)
+	// LatestByReference returns the most recent lookup for a receipt reference, or
+	// nil when none exists. Used to block approval of a definitively-rejected
+	// receipt. Reference match is case-insensitive.
+	LatestByReference(ctx context.Context, reference string) (*VerificationLog, error)
 }
 
 type PaymentVerifier interface {
 	Verify(ctx context.Context, req PaymentVerificationRequest) (*PaymentVerificationResult, error)
+	// Available reports whether the verifier is reachable right now. Deposit entry
+	// is gated on this so a player is never asked to pay into a window in which
+	// their receipt could not be verified (which would leave them asking "where is
+	// my money?"). The result is cached briefly so it doesn't add a network round
+	// trip to every check.
+	Available(ctx context.Context) bool
 }
+
+// Compile-time assurance that a repository satisfying VerificationLogRepository
+// can be passed anywhere a plain VerificationRecorder is expected.
+var _ VerificationRecorder = (VerificationLogRepository)(nil)
 
 // Transaction represents a transaction entity in the domain
 type Transaction struct {

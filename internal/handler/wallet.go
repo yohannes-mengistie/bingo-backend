@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/bingo/backend/internal/domain"
@@ -16,12 +17,16 @@ import (
 
 type WalletHandler struct {
 	walletUseCase *usecase.WalletUseCase
+	// verificationLogs backs the admin verifier-audit endpoint. May be nil when
+	// no verifier is configured (the endpoint then simply returns no rows).
+	verificationLogs domain.VerificationLogRepository
 }
 
-// NewWalletHandler creates a new wallet handler
-func NewWalletHandler(walletUseCase *usecase.WalletUseCase) *WalletHandler {
+// NewWalletHandler creates a new wallet handler.
+func NewWalletHandler(walletUseCase *usecase.WalletUseCase, verificationLogs domain.VerificationLogRepository) *WalletHandler {
 	return &WalletHandler{
-		walletUseCase: walletUseCase,
+		walletUseCase:    walletUseCase,
+		verificationLogs: verificationLogs,
 	}
 }
 
@@ -63,6 +68,10 @@ func (h *WalletHandler) Deposit(c *gin.Context) {
 		} else if errors.Is(err, usecase.ErrDepositMethodDisabled) {
 			// Admin turned this deposit channel off — a temporary condition, not a
 			// bad request. 503 lets the client show a "try another method" message.
+			statusCode = http.StatusServiceUnavailable
+		} else if errors.Is(err, usecase.ErrDepositVerifierDown) {
+			// Verifier configured but unreachable — fail closed. 503 so the client
+			// shows a "try again shortly" message rather than a hard error.
 			statusCode = http.StatusServiceUnavailable
 		}
 
@@ -417,11 +426,19 @@ func (h *WalletHandler) ApproveDeposit(c *gin.Context) {
 		return
 	}
 
-	transaction, err := h.walletUseCase.ApproveDeposit(c.Request.Context(), transactionID)
+	// ?force=true lets an admin who has confirmed the payment out-of-band credit a
+	// receipt the verifier rejected. Without it, a rejected receipt is refused.
+	force := c.Query("force") == "true"
+
+	transaction, err := h.walletUseCase.ApproveDeposit(c.Request.Context(), transactionID, force)
 	if err != nil {
 		statusCode := http.StatusInternalServerError
 		if err.Error() == "transaction not found" {
 			statusCode = http.StatusNotFound
+		} else if errors.Is(err, usecase.ErrDepositReceiptRejected) {
+			// The verifier gave a definitive negative verdict on this receipt.
+			// 409 so the UI can show the reason and offer an explicit force-approve.
+			statusCode = http.StatusConflict
 		} else if err.Error() == "transaction is not a deposit" ||
 			err.Error() == "transaction is not pending (current status: completed)" ||
 			err.Error() == "transaction is not pending (current status: failed)" ||
@@ -833,6 +850,9 @@ func (h *WalletHandler) GetPublicStatus(c *gin.Context) {
 				string(domain.PaymentMethodCBEBirr):  true,
 				string(domain.PaymentMethodMpesa):    true,
 			},
+			// Reflect live verifier reachability even on the settings-read fallback so
+			// the deposit screen still fails closed when the verifier is down.
+			"deposit_verifier_available": h.walletUseCase.DepositVerifierAvailable(c.Request.Context()),
 		})
 		return
 	}
@@ -847,6 +867,10 @@ func (h *WalletHandler) GetPublicStatus(c *gin.Context) {
 			string(domain.PaymentMethodCBEBirr):  s.DepositCBEBirrEnabled,
 			string(domain.PaymentMethodMpesa):    s.DepositMpesaEnabled,
 		},
+		// Live reachability of the external payment verifier. When false the Mini
+		// App should block the deposit form up front so a player is never asked to
+		// pay into a window in which their receipt can't be verified.
+		"deposit_verifier_available": h.walletUseCase.DepositVerifierAvailable(c.Request.Context()),
 	})
 }
 
@@ -947,4 +971,38 @@ func (h *WalletHandler) AdjustBalance(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Balance adjusted", "transaction": txn})
+}
+
+// GetVerificationLogs handles GET /admin/verification-logs — the payment-verifier
+// audit trail. Each row is one lookup with the raw provider response and the
+// verdict, so an admin can investigate a disputed deposit ("player says they paid
+// but there's no such deposit") directly instead of digging through server logs.
+// Supports ?reference=<receipt> to pull every attempt for one receipt, plus
+// ?limit and ?offset for paging.
+func (h *WalletHandler) GetVerificationLogs(c *gin.Context) {
+	if h.verificationLogs == nil {
+		// No verifier configured → nothing is logged. Return an empty page rather
+		// than an error so the admin view renders cleanly.
+		c.JSON(http.StatusOK, gin.H{"logs": []any{}, "total": 0})
+		return
+	}
+
+	reference := strings.TrimSpace(c.Query("reference"))
+
+	limit := 50
+	if v, err := strconv.Atoi(c.Query("limit")); err == nil && v > 0 && v <= 200 {
+		limit = v
+	}
+	offset := 0
+	if v, err := strconv.Atoi(c.Query("offset")); err == nil && v > 0 {
+		offset = v
+	}
+
+	logs, total, err := h.verificationLogs.List(c.Request.Context(), reference, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch verification logs"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"logs": logs, "total": total})
 }

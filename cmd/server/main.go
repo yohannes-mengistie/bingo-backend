@@ -150,14 +150,18 @@ func main() {
 	jwtService := jwt.NewService(cfg)
 
 	// Initialize use cases
-	paymentVerifier := payment.NewVerifier(cfg.PaymentVerifier)
+	// Every verifier lookup is persisted through the log repo for the admin audit
+	// view (raw provider response + verdict per receipt).
+	verificationLogRepo := postgres.NewVerificationLogRepository(db)
+	adminEventLogRepo := postgres.NewAdminEventLogRepository(db)
+	paymentVerifier := payment.NewVerifierWithRecorder(cfg.PaymentVerifier, verificationLogRepo)
 	bonusRepo := postgres.NewBonusRepository(db)
 	// Referral rewards are granted as play-only bonus (see CreateUser), so the
 	// user use case needs the bonus repo.
 	userUseCase := usecase.NewUserUseCase(userRepo, walletRepo, bonusRepo, db)
-	walletUseCase := usecase.NewWalletUseCase(walletRepo, transactionRepo, userRepo, gameRepo, bonusRepo, db, paymentVerifier)
+	walletUseCase := usecase.NewWalletUseCase(walletRepo, transactionRepo, userRepo, gameRepo, bonusRepo, db, paymentVerifier, verificationLogRepo)
 	authUseCase := usecase.NewAuthUseCase(userRepo, jwtService, cfg.Admin.SecretCode, cfg.Telegram.BotToken)
-	gameUseCase := usecase.NewGameUseCase(gameRepo, walletRepo, transactionRepo, userRepo, bonusRepo, botRepo, db, gameStateService)
+	gameUseCase := usecase.NewGameUseCase(gameRepo, walletRepo, transactionRepo, userRepo, bonusRepo, botRepo, adminEventLogRepo, db, gameStateService)
 	botUseCase := usecase.NewBotUseCase(botRepo, userRepo, walletRepo, transactionRepo, gameRepo, gameUseCase, gameStateService, db, usecase.BotSettings{
 		PoolSize:        cfg.Bots.PoolSize,
 		WalletFloat:     cfg.Bots.WalletFloat,
@@ -184,12 +188,13 @@ func main() {
 
 	// Initialize handlers
 	userHandler := handler.NewUserHandler(userUseCase)
-	walletHandler := handler.NewWalletHandler(walletUseCase)
+	walletHandler := handler.NewWalletHandler(walletUseCase, verificationLogRepo)
 	authHandler := handler.NewAuthHandler(authUseCase)
 	gameHandler := handler.NewGameHandler(gameUseCase)
 	botHandler := handler.NewBotHandler(botUseCase)
 	supportHandler := handler.NewSupportHandler(supportUseCase)
 	bonusHandler := handler.NewBonusHandler(bonusUseCase)
+	adminLogHandler := handler.NewAdminLogHandler(adminEventLogRepo)
 	wsHandler := handler.NewWebSocketHandler(redisClient.GetClient(), gameStateService, gameUseCase, allowOrigins)
 
 	// Promo codes: created by admins, redeemed through the bot menu.
@@ -224,7 +229,7 @@ func main() {
 	adminWSHandler := handler.NewAdminWSHandler(redisClient.GetClient(), jwtService, allowOrigins)
 
 	// Setup router
-	router := setupRouter(userHandler, walletHandler, authHandler, gameHandler, botHandler, supportHandler, wsHandler, adminWSHandler, telegramHandler, promoHandler, bonusHandler, bonusCampaignHandler, broadcastHandler, jwtService, cfg.Internal.APISecret, redisClient.GetClient(), cfg.RateLimits)
+	router := setupRouter(userHandler, walletHandler, authHandler, gameHandler, botHandler, supportHandler, wsHandler, adminWSHandler, telegramHandler, promoHandler, bonusHandler, bonusCampaignHandler, broadcastHandler, adminLogHandler, jwtService, cfg.Internal.APISecret, redisClient.GetClient(), cfg.RateLimits)
 
 	// Shared background context for the server's housekeeping goroutines,
 	// cancelled on shutdown.
@@ -320,7 +325,7 @@ func main() {
 	log.Println("Server exited")
 }
 
-func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.WalletHandler, authHandler *handler.AuthHandler, gameHandler *handler.GameHandler, botHandler *handler.BotHandler, supportHandler *handler.SupportHandler, wsHandler *handler.WebSocketHandler, adminWSHandler *handler.AdminWSHandler, telegramHandler *handler.TelegramHandler, promoHandler *handler.PromoHandler, bonusHandler *handler.BonusHandler, bonusCampaignHandler *handler.BonusCampaignHandler, broadcastHandler *handler.BroadcastHandler, jwtService *jwt.Service, internalAPISecret string, rdb *redis.Client, rl config.RateLimitsConfig) *gin.Engine {
+func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.WalletHandler, authHandler *handler.AuthHandler, gameHandler *handler.GameHandler, botHandler *handler.BotHandler, supportHandler *handler.SupportHandler, wsHandler *handler.WebSocketHandler, adminWSHandler *handler.AdminWSHandler, telegramHandler *handler.TelegramHandler, promoHandler *handler.PromoHandler, bonusHandler *handler.BonusHandler, bonusCampaignHandler *handler.BonusCampaignHandler, broadcastHandler *handler.BroadcastHandler, adminLogHandler *handler.AdminLogHandler, jwtService *jwt.Service, internalAPISecret string, rdb *redis.Client, rl config.RateLimitsConfig) *gin.Engine {
 	// Rate-limit buckets. Auth buckets are per-IP (no user to key on yet);
 	// the money buckets sit behind AuthMiddleware and key on the user id.
 	secs := func(n int) time.Duration { return time.Duration(n) * time.Second }
@@ -567,6 +572,9 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 			}
 			admin.GET("/dashboard/house-cut", walletHandler.GetHouseCutDetail)
 
+			// Structured operational warnings surfaced from backend code paths.
+			admin.GET("/logs", adminLogHandler.List)
+
 			// Bonus wallet: policy, grants, and the house's live liability.
 			bonus := admin.Group("/bonus")
 			{
@@ -628,6 +636,9 @@ func setupRouter(userHandler *handler.UserHandler, walletHandler *handler.Wallet
 				transactions.GET("/failed", walletHandler.GetFailedTransactions)
 				transactions.GET("/transfers", walletHandler.GetTransferTransactions)
 				transactions.GET("/winners", walletHandler.GetRealPlayerWinnings)
+				// Payment-verifier audit trail (raw provider response + verdict per
+				// receipt) for investigating disputed deposits. ?reference=&limit=&offset=
+				transactions.GET("/verification-logs", walletHandler.GetVerificationLogs)
 			}
 
 			// Deposit operations

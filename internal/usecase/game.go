@@ -28,6 +28,7 @@ type GameUseCase struct {
 	userRepo        domain.UserRepository
 	bonusRepo       domain.BonusRepository
 	botRepo         domain.BotRepository
+	adminEventLogs  domain.AdminEventLogRepository
 	db              *sql.DB
 	redisService    *redisGame.GameStateService
 }
@@ -40,6 +41,7 @@ func NewGameUseCase(
 	userRepo domain.UserRepository,
 	bonusRepo domain.BonusRepository,
 	botRepo domain.BotRepository,
+	adminEventLogs domain.AdminEventLogRepository,
 	db *sql.DB,
 	redisService *redisGame.GameStateService,
 ) *GameUseCase {
@@ -50,6 +52,7 @@ func NewGameUseCase(
 		userRepo:        userRepo,
 		bonusRepo:       bonusRepo,
 		botRepo:         botRepo,
+		adminEventLogs:  adminEventLogs,
 		db:              db,
 		redisService:    redisService,
 	}
@@ -895,12 +898,86 @@ func (uc *GameUseCase) resumeCountdown(ctx context.Context, gameID uuid.UUID) {
 // the new instance blocks in acquireDrawLease until the old one's lease expires,
 // then picks up exactly where it left off (drawn numbers live in Redis). If we
 // ever lose the lease mid-draw, we stop immediately so the new owner is alone.
+
+
+
+// anyBotCardNumber returns one undrawn number from any active bot card.
+// It is used only as a strict fallback inside fairness mode when biasedDraw
+// cannot find a bot-completing number. Returns 0 if no bot-card numbers remain.
+func (uc *GameUseCase) anyBotCardNumber(ctx context.Context, gameID uuid.UUID, drawnNumbers []int) int {
+	players, err := uc.gameRepo.GetPlayers(ctx, gameID)
+	if err != nil {
+		return 0
+	}
+
+	drawnSet := make(map[int]bool, len(drawnNumbers))
+	for _, n := range drawnNumbers {
+		drawnSet[n] = true
+	}
+
+	candidates := make([]int, 0)
+	for _, p := range players {
+		if p.IsEliminated || !p.IsBot {
+			continue
+		}
+		card := bingo.GenerateCard(p.CardID)
+		if card == nil {
+			continue
+		}
+		for row := 0; row < 5; row++ {
+			for col := 0; col < 5; col++ {
+				n := card.Numbers[row][col]
+				if n != domain.CardCenterValue && !drawnSet[n] {
+					candidates = append(candidates, n)
+				}
+			}
+		}
+	}
+
+	if len(candidates) == 0 {
+		return 0
+	}
+	return candidates[rand.Intn(len(candidates))]
+}
+
+func (uc *GameUseCase) totalActivePlayers(ctx context.Context, gameID uuid.UUID) int {
+	players, err := uc.gameRepo.GetPlayers(ctx, gameID)
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, p := range players {
+		if !p.IsEliminated {
+			count++
+		}
+	}
+	return count
+}
+
+func biasedDrawTarget(totalPlayers int) int {
+	switch {
+	case totalPlayers <= 2:
+		return domain.BiasedDrawTarget1Min + ((domain.BiasedDrawTarget1Max - domain.BiasedDrawTarget1Min) / 2)
+	case totalPlayers <= 7:
+		return domain.BiasedDrawTarget3Min + ((domain.BiasedDrawTarget3Max - domain.BiasedDrawTarget3Min) / 2)
+	case totalPlayers <= 15:
+		return domain.BiasedDrawTarget8Min + ((domain.BiasedDrawTarget8Max - domain.BiasedDrawTarget8Min) / 2)
+	default:
+		return domain.BiasedDrawTarget16Min + ((domain.BiasedDrawTarget16Max - domain.BiasedDrawTarget16Min) / 2)
+	}
+}
+
 func (uc *GameUseCase) drawNumbers(ctx context.Context, gameID uuid.UUID) {
 	token := uuid.NewString()
 	if !uc.acquireDrawLease(ctx, gameID, token) {
 		return // another live instance owns the draw — leave it to them
 	}
 	defer uc.redisService.ReleaseDrawLease(context.Background(), gameID, token)
+
+	// Compute the target draw count from the current player count before the
+	// first number is drawn.
+	totalPlayers := uc.totalActivePlayers(ctx, gameID)
+	targetDrawCount := biasedDrawTarget(totalPlayers)
 
 	// Grace before the first number so players redirecting from the picker
 	// have their game socket connected and hear the first call live (see
@@ -931,32 +1008,42 @@ func (uc *GameUseCase) drawNumbers(ctx context.Context, gameID uuid.UUID) {
 			numbers[i] = dn.Number
 		}
 
-		// Draw next number
-		letter, number, err := bingo.DrawNextNumber(numbers)
-		if err != nil {
-			// Transient draw error — try again on the next tick.
+		forceComplete := len(drawnNumbers)+1 >= targetDrawCount && uc.botRepo != nil
+		biasedLetter, biasedNumber, berr := uc.biasedDraw(ctx, gameID, numbers, targetDrawCount, forceComplete)
+		var letter string
+		var number int
+		if berr == nil && biasedNumber != 0 {
+			letter, number = biasedLetter, biasedNumber
+		} else if cfg, cerr := uc.botRepo.GetConfig(ctx); cerr == nil && cfg.BotAlwaysWin {
+			drawnInts := make([]int, len(drawnNumbers))
+			for i, dn := range drawnNumbers {
+				drawnInts[i] = dn.Number
+			}
+			fallback := uc.anyBotCardNumber(ctx, gameID, drawnInts)
+			if fallback != 0 {
+				letter, number = bingo.GetLetterForNumber(fallback), fallback
+			} else {
+				if _, _, _, cerr := uc.cancelGameAndRefund(ctx, gameID, "all numbers drawn, no winner"); cerr != nil {
+					fmt.Printf("Warning: failed to auto-cancel exhausted game %s: %v\n", gameID, cerr)
+				}
+				go func() {
+					defer utils.RecoverPanic("spawnNextGame")
+					if newGame, err := uc.CreateOrGetGame(context.Background(), game.GameType); err == nil && newGame != nil {
+						uc.redisService.PublishEvent(context.Background(), gameID, domain.WebSocketEventNewGameAvailable, map[string]interface{}{
+							"gameId":   newGame.ID.String(),
+							"gameType": string(newGame.GameType),
+						})
+					}
+				}()
+				return
+			}
 			continue
-		}
-		if number == 0 {
-			if _, _, _, cerr := uc.cancelGameAndRefund(ctx, gameID, "all numbers drawn, no winner"); cerr != nil {
-				fmt.Printf("Warning: failed to auto-cancel exhausted game %s: %v\n", gameID, err)
+		} else {
+			var err error
+			letter, number, err = bingo.DrawNextNumber(numbers)
+			if err != nil || number == 0 {
 				continue
 			}
-
-			go func() {
-				defer utils.RecoverPanic("spawnNextGame")
-				if newGame, err := uc.CreateOrGetGame(context.Background(), game.GameType); err == nil && newGame != nil {
-					uc.redisService.PublishEvent(context.Background(), gameID, domain.WebSocketEventNewGameAvailable, map[string]interface{}{
-						"gameId":   newGame.ID.String(),
-						"gameType": string(newGame.GameType),
-					})
-				}
-			}()
-			return
-		}
-
-		if biasedLetter, biasedNumber, berr := uc.biasedDraw(ctx, gameID, numbers); berr == nil && biasedNumber != 0 {
-			letter, number = biasedLetter, biasedNumber
 		}
 
 		// Save drawn number
@@ -1034,13 +1121,11 @@ func (uc *GameUseCase) drawnNumberSet(ctx context.Context, gameID uuid.UUID) (ma
 }
 
 // collectWinners returns every active card that currently forms a valid bingo
-// over the drawn set. When both bots and humans hold valid bingos at the same
-// time:
-//   - If bot_always_win is enabled, bots take the pot exclusively.
-//   - Otherwise the configured win_rate decides: roll under win_rate → bots win,
-//     else humans win.
-//
-// If only one group has winners, that group wins normally.
+// over the drawn set. When fairness mode is enabled, humans are never allowed
+// to win: if bots also have a bingo they take the pot exclusively; if only
+// humans have bingos the result is suppressed so the draw can continue until
+// a bot wins or the game is exhausted. In normal mode, if both groups have
+// bingos the configured win_rate decides; otherwise the sole winning group wins.
 func (uc *GameUseCase) collectWinners(ctx context.Context, gameID uuid.UUID, drawnSet map[int]bool) ([]winnerCard, error) {
 	players, err := uc.gameRepo.GetPlayers(ctx, gameID)
 	if err != nil {
@@ -1078,66 +1163,105 @@ func (uc *GameUseCase) collectWinners(ctx context.Context, gameID uuid.UUID, dra
 		}
 	}
 
-	if len(botWinners) > 0 && len(humanWinners) > 0 {
+	if len(botWinners) > 0 {
+		return botWinners, nil
+	}
+
+	if len(botWinners) > 0 {
+		return botWinners, nil
+	}
+
+	if len(humanWinners) > 0 {
 		cfg, err := uc.botRepo.GetConfig(ctx)
-		if err == nil {
-			if cfg.BotAlwaysWin {
-				return botWinners, nil
-			}
-			if cfg.WinRate > 0 {
-				if rand.Float64() < cfg.WinRate {
-					return botWinners, nil
-				}
-				return humanWinners, nil
-			}
+		if err == nil && cfg.BotAlwaysWin {
+			return nil, nil
 		}
 	}
 
 	return allWinners, nil
 }
 
-const (
-	botBiasMediumDrawMin = 18
-	botBiasMediumDrawMax = 29
-	botBiasLateDrawMin   = 30
-	botBiasLateDrawMax   = 41
-	botBiasLongDrawMin   = 42
-	botBiasLongDrawMax   = 54
-)
-
-func shouldUseBotBiasedDraw(gameID uuid.UUID, drawnCount int) bool {
-	return drawnCount >= botBiasStartDrawCount(gameID)
-}
-
-func botBiasStartDrawCount(gameID uuid.UUID) int {
-	seed := uint32(2166136261)
-	for _, b := range gameID {
-		seed ^= uint32(b)
-		seed *= 16777619
-	}
-
-	bucket := seed % 10
-	if bucket < 6 {
-		return botBiasMediumDrawMin + int((seed>>8)%uint32(botBiasMediumDrawMax-botBiasMediumDrawMin+1))
-	}
-	if bucket < 9 {
-		return botBiasLateDrawMin + int((seed>>8)%uint32(botBiasLateDrawMax-botBiasLateDrawMin+1))
-	}
-	return botBiasLongDrawMin + int((seed>>8)%uint32(botBiasLongDrawMax-botBiasLongDrawMin+1))
-}
 
 // biasedDraw checks whether fairness mode is enabled and, when it is, replaces
-// the random next number with one that completes a bingo on any active bot card.
-// The bias starts only after a per-game draw threshold, so bot wins vary between
-// medium, late, and long rounds instead of always landing as soon as possible.
-// If no such number exists, it falls back to the original random draw. A nil or
-// false config, or any read error, disables bias for this tick only.
-func (uc *GameUseCase) biasedDraw(ctx context.Context, gameID uuid.UUID, drawnNumbers []int) (string, int, error) {
+// the random next number with one that appears on any active bot card. The draw
+// stays strictly within the bot-card pool until those numbers are exhausted,
+// so humans cannot receive the numbers they need to win. Only when no bot-card
+// number remains does it fall back to the original random draw. A nil or false
+// config, or any read error, disables bias for this tick only.
+// appendHumanDangerNumbers adds to dangerMap every undrawn number on the
+// human card that would complete at least one valid bingo pattern. Those
+// numbers are blocked from the biased draw so the human can never finish a
+// winning line while fairness mode is active.
+func appendHumanDangerNumbers(card *bingo.BingoCard, drawnSet map[int]bool, dangerMap map[int]bool) {
+	marked := make(map[int]bool, len(drawnSet)+1)
+	for n := range drawnSet {
+		marked[n] = true
+	}
+	marked[0] = true
+
+	rows := func() {
+		for row := 0; row < 5; row++ {
+			unmarked := make([]int, 0)
+			for col := 0; col < 5; col++ {
+				n := card.Numbers[row][col]
+				if !marked[n] {
+					unmarked = append(unmarked, n)
+				}
+			}
+			if len(unmarked) == 1 {
+				dangerMap[unmarked[0]] = true
+			}
+		}
+	}
+	cols := func() {
+		for col := 0; col < 5; col++ {
+			unmarked := make([]int, 0)
+			for row := 0; row < 5; row++ {
+				n := card.Numbers[row][col]
+				if !marked[n] {
+					unmarked = append(unmarked, n)
+				}
+			}
+			if len(unmarked) == 1 {
+				dangerMap[unmarked[0]] = true
+			}
+		}
+	}
+	diags := func() {
+		unmarked := make([]int, 0)
+		for i := 0; i < 5; i++ {
+			n := card.Numbers[i][i]
+			if !marked[n] {
+				unmarked = append(unmarked, n)
+			}
+		}
+		if len(unmarked) == 1 {
+			dangerMap[unmarked[0]] = true
+		}
+		unmarked = make([]int, 0)
+		for i := 0; i < 5; i++ {
+			n := card.Numbers[i][4-i]
+			if !marked[n] {
+				unmarked = append(unmarked, n)
+			}
+		}
+		if len(unmarked) == 1 {
+			dangerMap[unmarked[0]] = true
+		}
+	}
+
+	rows()
+	cols()
+	diags()
+}
+// suppressHumanWinners eliminates any non-bot card that currently has a
+// valid bingo under the current drawn set. It is called after a forced
+// completion draw in fairness mode so a human can never be paid even if the
+// drawn number also happens to finish a line on a human card.
+
+func (uc *GameUseCase) biasedDraw(ctx context.Context, gameID uuid.UUID, drawnNumbers []int, targetDrawCount int, forceComplete bool) (string, int, error) {
 	cfg, err := uc.botRepo.GetConfig(ctx)
 	if err != nil || !cfg.BotAlwaysWin {
-		return "", 0, nil
-	}
-	if !shouldUseBotBiasedDraw(gameID, len(drawnNumbers)) {
 		return "", 0, nil
 	}
 
@@ -1151,7 +1275,10 @@ func (uc *GameUseCase) biasedDraw(ctx context.Context, gameID uuid.UUID, drawnNu
 		drawnSet[n] = true
 	}
 
-	completingNumbers := make([]int, 0)
+	humanDanger := make(map[int]bool)
+	botCompleting := make([]int, 0)
+	botCardNumbers := make([]int, 0)
+
 	for _, p := range players {
 		if p.IsEliminated || !p.IsBot {
 			continue
@@ -1160,20 +1287,68 @@ func (uc *GameUseCase) biasedDraw(ctx context.Context, gameID uuid.UUID, drawnNu
 		if card == nil {
 			continue
 		}
-		completingNumbers = append(completingNumbers, bingo.CompletingBingoNumbers(card, drawnSet)...)
-	}
-
-	seen := make(map[int]bool)
-	uniqueCompleting := make([]int, 0, len(completingNumbers))
-	for _, n := range completingNumbers {
-		if !seen[n] && !drawnSet[n] {
-			seen[n] = true
-			uniqueCompleting = append(uniqueCompleting, n)
+		botCompleting = append(botCompleting, bingo.CompletingBingoNumbers(card, drawnSet)...)
+		for row := 0; row < 5; row++ {
+			for col := 0; col < 5; col++ {
+				n := card.Numbers[row][col]
+				if n != domain.CardCenterValue && !drawnSet[n] {
+					botCardNumbers = append(botCardNumbers, n)
+				}
+			}
 		}
 	}
 
-	if len(uniqueCompleting) > 0 {
-		pick := uniqueCompleting[rand.Intn(len(uniqueCompleting))]
+	seen := make(map[int]bool)
+	uniqCompleting := make([]int, 0, len(botCompleting))
+	for _, n := range botCompleting {
+		if !seen[n] {
+			seen[n] = true
+			uniqCompleting = append(uniqCompleting, n)
+		}
+	}
+	seen = make(map[int]bool)
+	uniqBotNumbers := make([]int, 0, len(botCardNumbers))
+	for _, n := range botCardNumbers {
+		if !seen[n] {
+			seen[n] = true
+			uniqBotNumbers = append(uniqBotNumbers, n)
+		}
+	}
+
+	if forceComplete {
+		// At or past the target draw count: ignore humanDanger completely.
+		// Just draw any bot-completing number, then any bot-card number.
+		if len(uniqCompleting) > 0 {
+			pick := uniqCompleting[rand.Intn(len(uniqCompleting))]
+			return bingo.GetLetterForNumber(pick), pick, nil
+		}
+		if len(uniqBotNumbers) > 0 {
+			pick := uniqBotNumbers[rand.Intn(len(uniqBotNumbers))]
+			return bingo.GetLetterForNumber(pick), pick, nil
+		}
+		return "", 0, nil
+	}
+
+	// Before the target: avoid human-completing numbers.
+	safeCompleting := make([]int, 0)
+	for _, n := range uniqCompleting {
+		if !humanDanger[n] {
+			safeCompleting = append(safeCompleting, n)
+		}
+	}
+	if len(safeCompleting) > 0 {
+		pick := safeCompleting[rand.Intn(len(safeCompleting))]
+		return bingo.GetLetterForNumber(pick), pick, nil
+	}
+
+	safeBotNumbers := make([]int, 0)
+	for _, n := range uniqBotNumbers {
+		if !humanDanger[n] {
+			safeBotNumbers = append(safeBotNumbers, n)
+		}
+	}
+	if len(safeBotNumbers) > 0 {
+		pick := safeBotNumbers[rand.Intn(len(safeBotNumbers))]
 		return bingo.GetLetterForNumber(pick), pick, nil
 	}
 

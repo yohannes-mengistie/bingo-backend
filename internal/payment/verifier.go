@@ -6,16 +6,24 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bingo/backend/config"
 	"github.com/bingo/backend/internal/domain"
 	"github.com/bingo/backend/pkg/utils"
+	"github.com/google/uuid"
 )
+
+// healthTTL is how long an availability probe result is cached, so Available()
+// does not add a network round trip to every deposit-form load / submit.
+const healthTTL = 20 * time.Second
 
 var numberPattern = regexp.MustCompile(`[-+]?\d+(\.\d+)?`)
 
@@ -27,7 +35,20 @@ type Verifier struct {
 	// credited to a different account are rejected; an empty/absent entry disables
 	// the check for that method.
 	houseAccounts map[domain.PaymentMethod]string
-	client        *http.Client
+	// houseNames holds, per method, the normalized house account HOLDER NAME.
+	// When a method has a non-empty entry and the verifier reveals the credited
+	// party's name, that name must match before the deposit can auto-credit.
+	houseNames map[domain.PaymentMethod]string
+	// debugLog logs the raw provider response for each lookup when true.
+	debugLog bool
+	// recorder persists every lookup for the admin audit log; nil disables it.
+	recorder domain.VerificationRecorder
+	client   *http.Client
+
+	// mu guards the cached availability probe below.
+	mu              sync.Mutex
+	healthy         bool
+	healthCheckedAt time.Time
 }
 
 // NewVerifier returns a configured verifier, or a nil domain.PaymentVerifier
@@ -35,6 +56,13 @@ type Verifier struct {
 // *Verifier) is deliberate: a typed-nil *Verifier boxed into an interface is
 // not == nil, which would defeat the "verifier configured?" checks at call sites.
 func NewVerifier(cfg config.PaymentVerifierConfig) domain.PaymentVerifier {
+	return NewVerifierWithRecorder(cfg, nil)
+}
+
+// NewVerifierWithRecorder is NewVerifier plus an audit-log recorder: every
+// lookup is persisted through recorder for the admin dashboard. A nil recorder
+// behaves exactly like NewVerifier.
+func NewVerifierWithRecorder(cfg config.PaymentVerifierConfig, recorder domain.VerificationRecorder) domain.PaymentVerifier {
 	if strings.TrimSpace(cfg.APIKey) == "" {
 		return nil
 	}
@@ -55,20 +83,94 @@ func NewVerifier(cfg config.PaymentVerifierConfig) domain.PaymentVerifier {
 		houseAccounts[domain.PaymentMethodMpesa] = acct
 	}
 
+	houseNames := map[domain.PaymentMethod]string{}
+	if name := normalizeName(cfg.TelebirrName); name != "" {
+		houseNames[domain.PaymentMethodTelebirr] = name
+	}
+	if name := normalizeName(cfg.CBEBirrName); name != "" {
+		houseNames[domain.PaymentMethodCBEBirr] = name
+	}
+	if name := normalizeName(cfg.MpesaName); name != "" {
+		houseNames[domain.PaymentMethodMpesa] = name
+	}
+
 	return &Verifier{
 		baseURL:       baseURL,
 		apiKey:        cfg.APIKey,
 		houseAccounts: houseAccounts,
+		houseNames:    houseNames,
+		debugLog:      cfg.DebugLog,
+		recorder:      recorder,
 		client: &http.Client{
 			Timeout: 20 * time.Second,
 		},
 	}
 }
 
-func (v *Verifier) Verify(ctx context.Context, req domain.PaymentVerificationRequest) (*domain.PaymentVerificationResult, error) {
+// Available reports whether the verifier host is reachable, caching the result
+// for healthTTL so it does not add a request to every probe. A reachable host
+// (any HTTP reply, even 4xx — the server answered) counts as available; only a
+// network failure, timeout or 5xx means "down". A verifier with no API key is
+// represented by a nil interface upstream, so this method is only reached when
+// verification is actually configured.
+func (v *Verifier) Available(ctx context.Context) bool {
+	if v == nil {
+		return false
+	}
+
+	v.mu.Lock()
+	if !v.healthCheckedAt.IsZero() && time.Since(v.healthCheckedAt) < healthTTL {
+		cached := v.healthy
+		v.mu.Unlock()
+		return cached
+	}
+	v.mu.Unlock()
+
+	healthy := v.probe(ctx)
+
+	v.mu.Lock()
+	v.healthy = healthy
+	v.healthCheckedAt = time.Now()
+	v.mu.Unlock()
+	return healthy
+}
+
+// probe does a single lightweight reachability check against the verifier host.
+func (v *Verifier) probe(ctx context.Context) bool {
+	ctx, cancel := context.WithTimeout(ctx, 6*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.baseURL, nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("x-api-key", v.apiKey)
+
+	resp, err := v.client.Do(req)
+	if err != nil {
+		// Network failure, DNS, timeout, connection refused — host is unreachable.
+		return false
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	// The host answered. Only a 5xx means it's up but unable to serve; anything
+	// else (200, 401, 404 for the bare root) proves the service is reachable.
+	return resp.StatusCode < 500
+}
+
+func (v *Verifier) Verify(ctx context.Context, req domain.PaymentVerificationRequest) (result *domain.PaymentVerificationResult, err error) {
 	if v == nil {
 		return nil, errors.New("payment verifier is not configured")
 	}
+
+	// Record every lookup for the admin audit log. Named returns + defer capture
+	// the final verdict and result at whichever point the function returns, so we
+	// don't have to touch the many return sites below. rawBody is filled once the
+	// provider response is read.
+	var rawBody string
+	defer func() { v.record(ctx, req, result, rawBody, err) }()
+
 	if !domain.IsSupportedPaymentMethod(req.Method) {
 		return nil, errors.New("unsupported payment method")
 	}
@@ -136,8 +238,22 @@ func (v *Verifier) Verify(ctx context.Context, req domain.PaymentVerificationReq
 		return nil, fmt.Errorf("%w: verifier returned status %d", domain.ErrVerifierUnavailable, resp.StatusCode)
 	}
 
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("%w: failed to read verifier response: %v", domain.ErrVerifierUnavailable, err)
+	}
+	rawBody = string(raw)
+
+	// #4: raw-response logging. Enabled via VERIFY_DEBUG_LOG so operators can see
+	// exactly which fields each provider returns (sender/receiver names, account
+	// numbers, amount keys) and bind on the real field names. Off by default —
+	// the body can carry PII.
+	if v.debugLog {
+		log.Printf("[verify] method=%s ref=%s status=%d raw=%s", req.Method, reference, resp.StatusCode, string(raw))
+	}
+
 	var decoded map[string]any
-	decoder := json.NewDecoder(resp.Body)
+	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	if err := decoder.Decode(&decoded); err != nil {
 		// A response we can't parse is not a verdict either — fall back to manual.
@@ -219,6 +335,28 @@ func (v *Verifier) Verify(ctx context.Context, req domain.PaymentVerificationReq
 		return nil, fmt.Errorf("receipt was paid to a different account (%s), not the house account", credited)
 	}
 
+	// #2: receiver-name cross-check (defence in depth). When a house holder name
+	// is configured for this provider AND the response reveals the credited
+	// party's name, that name must match the house name too — so a receipt paid
+	// to a look-alike account NUMBER can't slip through on the digits alone. When
+	// no name is revealed we do not block: the account-number binding above
+	// already proved the money reached the house account, and many providers mask
+	// or omit the name. The check only bites when there is a name to compare.
+	if houseName := v.houseNames[provider]; houseName != "" {
+		creditedName := normalizeName(firstString(data,
+			"creditedPartyName", "creditedName", "creditedPartyAccountName",
+			"receiverName", "payeeName", "accountHolder", "accountHolderName",
+			"holderName", "toName"))
+		if creditedName == "" {
+			// CBE-style credited fields carry "<number> - HOLDER NAME"; recover the
+			// name from the credited string we already read.
+			creditedName = normalizeName(credited)
+		}
+		if creditedName != "" && !nameMatches(houseName, creditedName) {
+			return nil, fmt.Errorf("receipt was paid to a different account holder (%s), not the house account", creditedName)
+		}
+	}
+
 	amount, err := responseAmount(decoded, data)
 	if err != nil {
 		return nil, err
@@ -238,6 +376,46 @@ func (v *Verifier) Verify(ctx context.Context, req domain.PaymentVerificationReq
 		Amount:    amount,
 		Status:    status,
 	}, nil
+}
+
+// record persists one verifier lookup to the admin audit log (best-effort). The
+// outcome mirrors how the deposit flow treats the verdict: no error = verified
+// (auto-credited), ErrVerifierUnavailable = no verdict (manual review), any other
+// error = a definitive rejection.
+func (v *Verifier) record(ctx context.Context, req domain.PaymentVerificationRequest, result *domain.PaymentVerificationResult, raw string, err error) {
+	if v.recorder == nil {
+		return
+	}
+
+	outcome := domain.VerificationVerified
+	reason := "ok"
+	switch {
+	case err == nil:
+		// verified — leave defaults
+	case errors.Is(err, domain.ErrVerifierUnavailable):
+		outcome = domain.VerificationUnavailable
+		reason = err.Error()
+	default:
+		outcome = domain.VerificationRejected
+		reason = err.Error()
+	}
+
+	entry := &domain.VerificationLog{
+		Method:      req.Method,
+		Reference:   req.Reference,
+		Outcome:     outcome,
+		Reason:      reason,
+		RawResponse: raw,
+	}
+	if req.UserID != uuid.Nil {
+		uid := req.UserID
+		entry.UserID = &uid
+	}
+	if result != nil {
+		amt := result.Amount
+		entry.Amount = &amt
+	}
+	v.recorder.Record(ctx, entry)
 }
 
 // amountKeys are the response fields that may carry the payment amount, in
@@ -336,6 +514,55 @@ func accountMatches(houseDigits, credited string) bool {
 		}
 	}
 	return false
+}
+
+var nonNameChars = regexp.MustCompile(`[^A-Za-z\s]+`)
+var whitespaceRun = regexp.MustCompile(`\s+`)
+
+// normalizeName reduces a holder name to uppercase Latin words separated by
+// single spaces, dropping digits and punctuation (so "251912345678 - Abebe
+// Kebede" becomes "ABEBE KEBEDE"). Non-Latin (e.g. Amharic) names reduce to the
+// empty string, which callers treat as "no comparable name" — the check simply
+// does not activate rather than falsely rejecting a real receipt.
+func normalizeName(s string) string {
+	s = nonNameChars.ReplaceAllString(s, " ")
+	s = whitespaceRun.ReplaceAllString(s, " ")
+	return strings.ToUpper(strings.TrimSpace(s))
+}
+
+// nameMatches reports whether two normalized holder names refer to the same
+// party. It compares the word sets and requires the smaller name to be fully
+// contained in the larger, so "ABEBE KEBEDE" matches "ABEBE KEBEDE TESFAYE"
+// (extra middle/last name) and tolerates word reordering, while a wholly
+// different name fails. At least two words must match so a single shared first
+// name can't pass.
+func nameMatches(houseName, credited string) bool {
+	hWords := strings.Fields(houseName)
+	cWords := strings.Fields(credited)
+	if len(hWords) == 0 || len(cWords) == 0 {
+		return false
+	}
+
+	hSet := make(map[string]bool, len(hWords))
+	for _, w := range hWords {
+		hSet[w] = true
+	}
+	cSet := make(map[string]bool, len(cWords))
+	for _, w := range cWords {
+		cSet[w] = true
+	}
+
+	small, big := hSet, cSet
+	if len(cSet) < len(hSet) {
+		small, big = cSet, hSet
+	}
+	matched := 0
+	for w := range small {
+		if big[w] {
+			matched++
+		}
+	}
+	return matched == len(small) && matched >= 2
 }
 
 // hasAccountDigits reports whether s reveals enough of an account (any digit
