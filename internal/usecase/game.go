@@ -899,8 +899,6 @@ func (uc *GameUseCase) resumeCountdown(ctx context.Context, gameID uuid.UUID) {
 // then picks up exactly where it left off (drawn numbers live in Redis). If we
 // ever lose the lease mid-draw, we stop immediately so the new owner is alone.
 
-
-
 // anyBotCardNumber returns one undrawn number from any active bot card.
 // It is used only as a strict fallback inside fairness mode when biasedDraw
 // cannot find a bot-completing number. Returns 0 if no bot-card numbers remain.
@@ -1066,7 +1064,9 @@ func (uc *GameUseCase) drawNumbers(ctx context.Context, gameID uuid.UUID) {
 
 		// Auto-declare a winner the instant a card completes a pattern with the
 		// number just drawn — players no longer need to press a Bingo button.
-		if uc.checkAutoBingo(ctx, gameID, game) {
+		// Only enforce this after the minimum target draw count so the round
+		// lasts at least the configured number of balls.
+		if len(drawnNumbers)+1 >= targetDrawCount && uc.checkAutoBingo(ctx, gameID, game) {
 			return
 		}
 	}
@@ -1181,7 +1181,6 @@ func (uc *GameUseCase) collectWinners(ctx context.Context, gameID uuid.UUID, dra
 	return allWinners, nil
 }
 
-
 // biasedDraw checks whether fairness mode is enabled and, when it is, replaces
 // the random next number with one that appears on any active bot card. The draw
 // stays strictly within the bot-card pool until those numbers are exhausted,
@@ -1254,6 +1253,7 @@ func appendHumanDangerNumbers(card *bingo.BingoCard, drawnSet map[int]bool, dang
 	cols()
 	diags()
 }
+
 // suppressHumanWinners eliminates any non-bot card that currently has a
 // valid bingo under the current drawn set. It is called after a forced
 // completion draw in fairness mode so a human can never be paid even if the
@@ -1329,21 +1329,16 @@ func (uc *GameUseCase) biasedDraw(ctx context.Context, gameID uuid.UUID, drawnNu
 		return "", 0, nil
 	}
 
-	// Before the target: avoid human-completing numbers.
-	safeCompleting := make([]int, 0)
+	// Before the target: avoid both human-completing numbers AND any number
+	// that would complete a bot bingo. This guarantees the game cannot end
+	// before the target threshold is reached.
+	completingSet := make(map[int]bool, len(uniqCompleting))
 	for _, n := range uniqCompleting {
-		if !humanDanger[n] {
-			safeCompleting = append(safeCompleting, n)
-		}
+		completingSet[n] = true
 	}
-	if len(safeCompleting) > 0 {
-		pick := safeCompleting[rand.Intn(len(safeCompleting))]
-		return bingo.GetLetterForNumber(pick), pick, nil
-	}
-
 	safeBotNumbers := make([]int, 0)
 	for _, n := range uniqBotNumbers {
-		if !humanDanger[n] {
+		if !humanDanger[n] && !completingSet[n] {
 			safeBotNumbers = append(safeBotNumbers, n)
 		}
 	}

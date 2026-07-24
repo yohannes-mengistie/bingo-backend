@@ -160,12 +160,12 @@ const FirstDrawDelay = 2000 * time.Millisecond
 // numbers may be drawn before a bot is forced to complete a bingo when fairness
 // mode is on. See biasedDrawTarget(count).
 const (
-	BiasedDrawTarget1Min = 17
-	BiasedDrawTarget1Max = 19
-	BiasedDrawTarget3Min = 16
-	BiasedDrawTarget3Max = 18
-	BiasedDrawTarget8Min = 14
-	BiasedDrawTarget8Max = 17
+	BiasedDrawTarget1Min  = 18
+	BiasedDrawTarget1Max  = 20
+	BiasedDrawTarget3Min  = 16
+	BiasedDrawTarget3Max  = 19
+	BiasedDrawTarget8Min  = 14
+	BiasedDrawTarget8Max  = 17
 	BiasedDrawTarget16Min = 12
 	BiasedDrawTarget16Max = 15
 )
