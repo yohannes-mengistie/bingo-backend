@@ -953,16 +953,7 @@ func (uc *GameUseCase) totalActivePlayers(ctx context.Context, gameID uuid.UUID)
 }
 
 func biasedDrawTarget(totalPlayers int) int {
-	switch {
-	case totalPlayers <= 2:
-		return domain.BiasedDrawTarget1Min + ((domain.BiasedDrawTarget1Max - domain.BiasedDrawTarget1Min) / 2)
-	case totalPlayers <= 7:
-		return domain.BiasedDrawTarget3Min + ((domain.BiasedDrawTarget3Max - domain.BiasedDrawTarget3Min) / 2)
-	case totalPlayers <= 15:
-		return domain.BiasedDrawTarget8Min + ((domain.BiasedDrawTarget8Max - domain.BiasedDrawTarget8Min) / 2)
-	default:
-		return domain.BiasedDrawTarget16Min + ((domain.BiasedDrawTarget16Max - domain.BiasedDrawTarget16Min) / 2)
-	}
+	return 12 + rand.Intn(9)
 }
 
 func (uc *GameUseCase) drawNumbers(ctx context.Context, gameID uuid.UUID) {
