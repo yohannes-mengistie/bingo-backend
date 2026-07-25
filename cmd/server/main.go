@@ -178,7 +178,7 @@ func main() {
 	// Keep the in-chat menu button as a Mini App launcher (next to the message
 	// box). NOTE: the "Open" shortcut in the CHAT LIST is the separate BotFather
 	// "Main Mini App" setting and cannot be changed here.
-	if err := telegramBot.SetWebAppMenuButton("🎮 Play", cfg.Telegram.MiniAppURL); err != nil {
+	if err := telegramBot.SetWebAppMenuButton("🎮 Play", handler.VersionedMiniAppURL(cfg.Telegram.MiniAppURL)); err != nil {
 		log.Printf("[telegram] could not set chat menu button: %v", err)
 	}
 	bonusUseCase := usecase.NewBonusUseCase(bonusRepo, userRepo, db, telegramBroadcastSender{bot: telegramBot})

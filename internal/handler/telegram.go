@@ -222,6 +222,12 @@ func miniAppCacheVersion() string {
 // withCacheVersion appends ?v=<version> (or &v= when the URL already has a
 // query) so Telegram treats each deploy's URL as new. A blank base or version
 // is returned unchanged.
+// VersionedMiniAppURL gives persistent Telegram launchers the same per-deploy
+// cache-buster used by in-chat Mini App buttons.
+func VersionedMiniAppURL(rawURL string) string {
+	return withCacheVersion(rawURL, miniAppCacheVersion())
+}
+
 func withCacheVersion(rawURL, version string) string {
 	if rawURL == "" || version == "" {
 		return rawURL
