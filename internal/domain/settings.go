@@ -5,15 +5,19 @@ import "time"
 // AppSettings holds operator-tunable knobs edited from the admin dashboard.
 // Single row (app_settings table). Extend as more settings are added.
 type AppSettings struct {
-	MinDeposit      float64   `json:"min_deposit" db:"min_deposit"`
-	ReferralEnabled bool      `json:"referral_enabled" db:"referral_enabled"`
-	ReferralAmount  float64   `json:"referral_amount" db:"referral_amount"`
+	MinDeposit      float64 `json:"min_deposit" db:"min_deposit"`
+	ReferralEnabled bool    `json:"referral_enabled" db:"referral_enabled"`
+	ReferralAmount  float64 `json:"referral_amount" db:"referral_amount"`
+	// JoinBonus is awarded once per real player after their first paid stake in
+	// a game. It is play-only money and cannot fund the same game that earned it.
+	JoinBonusEnabled bool    `json:"join_bonus_enabled" db:"join_bonus_enabled"`
+	JoinBonusAmount  float64 `json:"join_bonus_amount" db:"join_bonus_amount"`
 	// MaintenanceMode puts the player Mini App into "we'll be right back" mode:
 	// the frontend shows a maintenance screen and the API rejects player actions
 	// (join/deposit/withdraw/…) with 503, while the admin dashboard stays fully
 	// usable. MaintenanceMessage is an optional operator note shown to players.
-	MaintenanceMode    bool      `json:"maintenance_mode" db:"maintenance_mode"`
-	MaintenanceMessage string    `json:"maintenance_message" db:"maintenance_message"`
+	MaintenanceMode    bool   `json:"maintenance_mode" db:"maintenance_mode"`
+	MaintenanceMessage string `json:"maintenance_message" db:"maintenance_message"`
 	// Per-method deposit switches. When a method is off, players cannot submit a
 	// deposit with it (the API rejects it and the pickers hide it), so a channel
 	// whose external verification has broken can be closed instantly without
@@ -46,6 +50,8 @@ type UpdateAppSettingsRequest struct {
 	MinDeposit         *float64 `json:"min_deposit,omitempty"`
 	ReferralEnabled    *bool    `json:"referral_enabled,omitempty"`
 	ReferralAmount     *float64 `json:"referral_amount,omitempty"`
+	JoinBonusEnabled   *bool    `json:"join_bonus_enabled,omitempty"`
+	JoinBonusAmount    *float64 `json:"join_bonus_amount,omitempty"`
 	MaintenanceMode    *bool    `json:"maintenance_mode,omitempty"`
 	MaintenanceMessage *string  `json:"maintenance_message,omitempty"`
 

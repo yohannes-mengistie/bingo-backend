@@ -414,12 +414,15 @@ func (h *GameHandler) GetUserGamesAdmin(c *gin.Context) {
 	if v := parseInt(c.Query("offset")); v > 0 {
 		offset = v
 	}
-	history, err := h.gameUseCase.GetGameHistory(c.Request.Context(), userID, limit, offset)
+	history, total, err := h.gameUseCase.GetGameHistoryPage(c.Request.Context(), userID, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch game history"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"games": history, "count": len(history)})
+	c.JSON(http.StatusOK, gin.H{
+		"games": history, "count": len(history), "total": total,
+		"limit": limit, "offset": offset,
+	})
 }
 
 // GetUserGameStats handles GET /admin/users/:user_id/game-stats — a player's

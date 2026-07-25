@@ -68,6 +68,9 @@ type BonusRepository interface {
 	// for a campaign that wants a short, urgency-driven lifetime instead of the
 	// general policy default.
 	GrantWithExpiry(ctx context.Context, tx *sql.Tx, userID uuid.UUID, amount float64, reason string, expiresInMinutes int) (*BonusGrant, error)
+	// GrantGameJoinOnce awards the configured join reward at most once per
+	// player/game. The database uniqueness guard makes retries idempotent.
+	GrantGameJoinOnce(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID, amount float64) (bool, error)
 	// Balance returns spendable bonus (expired grants excluded) and the
 	// soonest upcoming expiry.
 	Balance(ctx context.Context, userID uuid.UUID) (*BonusBalance, error)

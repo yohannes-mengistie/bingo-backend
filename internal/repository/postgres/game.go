@@ -414,9 +414,11 @@ func (r *gameRepository) UpdateTx(ctx context.Context, tx *sql.Tx, game *domain.
 // inside an existing transaction.
 func (r *gameRepository) GetActivePlayersTx(ctx context.Context, tx *sql.Tx, gameID uuid.UUID) ([]*domain.GamePlayer, error) {
 	query := `
-		SELECT id, game_id, user_id, card_id, paid, is_eliminated, joined_at, left_at, paid_from_bonus, bonus_expires_at
-		FROM game_players
-		WHERE game_id = $1 AND left_at IS NULL
+		SELECT gp.id, gp.game_id, gp.user_id, gp.card_id, gp.paid, gp.is_eliminated, gp.joined_at, gp.left_at,
+		       gp.paid_from_bonus, gp.bonus_expires_at, u.is_bot
+		FROM game_players gp
+		JOIN users u ON u.id = gp.user_id
+		WHERE gp.game_id = $1 AND gp.left_at IS NULL
 	`
 
 	rows, err := tx.QueryContext(ctx, query, gameID)
@@ -439,6 +441,7 @@ func (r *gameRepository) GetActivePlayersTx(ctx context.Context, tx *sql.Tx, gam
 			&player.LeftAt,
 			&player.PaidFromBonus,
 			&player.BonusExpiresAt,
+			&player.IsBot,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan player: %w", err)
 		}
@@ -1398,4 +1401,49 @@ func (r *gameRepository) TouchUpdatedAt(ctx context.Context, id uuid.UUID) error
 		return fmt.Errorf("failed to touch game: %w", err)
 	}
 	return nil
+}
+
+// CountGamesByUserID counts distinct games, not cards, so a multi-card player
+// still occupies one row in the paginated admin history.
+func (r *gameRepository) CountGamesByUserID(ctx context.Context, userID uuid.UUID) (int, error) {
+	var total int
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(DISTINCT game_id)
+		FROM game_players
+		WHERE user_id = $1
+	`, userID).Scan(&total); err != nil {
+		return 0, fmt.Errorf("failed to count games by user ID: %w", err)
+	}
+	return total, nil
+}
+
+// GetActivePlayerFundingStats counts distinct real players holding paid cards in
+// live games. A player can appear in both funding groups when they hold a mix of
+// cash- and bonus-funded cards; MixedPlayers reports that overlap explicitly.
+func (r *gameRepository) GetActivePlayerFundingStats(ctx context.Context) (*domain.ActivePlayerFundingStats, error) {
+	stats := &domain.ActivePlayerFundingStats{}
+	err := r.db.QueryRowContext(ctx, `
+		WITH per_player AS (
+			SELECT gp.user_id,
+			       BOOL_OR(NOT gp.paid_from_bonus) AS has_cash,
+			       BOOL_OR(gp.paid_from_bonus) AS has_bonus
+			FROM game_players gp
+			JOIN games g ON g.id = gp.game_id
+			JOIN users u ON u.id = gp.user_id
+			WHERE gp.left_at IS NULL
+			  AND gp.paid = TRUE
+			  AND g.state IN ('WAITING', 'COUNTDOWN', 'DRAWING')
+			  AND u.is_bot = FALSE
+			GROUP BY gp.user_id
+		)
+		SELECT COUNT(*)::int,
+		       COUNT(*) FILTER (WHERE has_cash)::int,
+		       COUNT(*) FILTER (WHERE has_bonus)::int,
+		       COUNT(*) FILTER (WHERE has_cash AND has_bonus)::int
+		FROM per_player
+	`).Scan(&stats.TotalPlayers, &stats.CashPlayers, &stats.BonusPlayers, &stats.MixedPlayers)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get active player funding stats: %w", err)
+	}
+	return stats, nil
 }

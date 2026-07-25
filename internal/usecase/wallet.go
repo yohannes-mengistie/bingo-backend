@@ -101,11 +101,12 @@ func (uc *WalletUseCase) GetSettings(ctx context.Context) (*domain.AppSettings, 
 		DepositMpesaEnabled:    true,
 	}
 	err := uc.db.QueryRowContext(ctx,
-		`SELECT min_deposit, referral_enabled, referral_amount, maintenance_mode, maintenance_message,
-		        deposit_telebirr_enabled, deposit_cbebirr_enabled, deposit_mpesa_enabled, updated_at
+		`SELECT min_deposit, referral_enabled, referral_amount, join_bonus_enabled, join_bonus_amount,
+		        maintenance_mode, maintenance_message, deposit_telebirr_enabled, deposit_cbebirr_enabled,
+		        deposit_mpesa_enabled, updated_at
 		 FROM app_settings WHERE id = 1`).
-		Scan(&s.MinDeposit, &s.ReferralEnabled, &s.ReferralAmount, &s.MaintenanceMode, &s.MaintenanceMessage,
-			&s.DepositTelebirrEnabled, &s.DepositCBEBirrEnabled, &s.DepositMpesaEnabled, &s.UpdatedAt)
+		Scan(&s.MinDeposit, &s.ReferralEnabled, &s.ReferralAmount, &s.JoinBonusEnabled, &s.JoinBonusAmount,
+			&s.MaintenanceMode, &s.MaintenanceMessage, &s.DepositTelebirrEnabled, &s.DepositCBEBirrEnabled, &s.DepositMpesaEnabled, &s.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return s, nil // migration not applied yet → sane defaults
 	}
@@ -136,6 +137,15 @@ func (uc *WalletUseCase) UpdateSettings(ctx context.Context, req domain.UpdateAp
 		}
 		cur.ReferralAmount = *req.ReferralAmount
 	}
+	if req.JoinBonusEnabled != nil {
+		cur.JoinBonusEnabled = *req.JoinBonusEnabled
+	}
+	if req.JoinBonusAmount != nil {
+		if *req.JoinBonusAmount < 0 {
+			return nil, errors.New("join_bonus_amount cannot be negative")
+		}
+		cur.JoinBonusAmount = *req.JoinBonusAmount
+	}
 	if req.MaintenanceMode != nil {
 		cur.MaintenanceMode = *req.MaintenanceMode
 	}
@@ -152,14 +162,17 @@ func (uc *WalletUseCase) UpdateSettings(ctx context.Context, req domain.UpdateAp
 		cur.DepositMpesaEnabled = *req.DepositMpesaEnabled
 	}
 	_, err = uc.db.ExecContext(ctx, `
-		INSERT INTO app_settings (id, min_deposit, referral_enabled, referral_amount, maintenance_mode, maintenance_message,
-		                          deposit_telebirr_enabled, deposit_cbebirr_enabled, deposit_mpesa_enabled, updated_at)
-		VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, now())
-		ON CONFLICT (id) DO UPDATE SET min_deposit = $1, referral_enabled = $2, referral_amount = $3, maintenance_mode = $4,
-		    maintenance_message = $5, deposit_telebirr_enabled = $6, deposit_cbebirr_enabled = $7, deposit_mpesa_enabled = $8,
+		INSERT INTO app_settings (id, min_deposit, referral_enabled, referral_amount, join_bonus_enabled, join_bonus_amount,
+		                          maintenance_mode, maintenance_message, deposit_telebirr_enabled, deposit_cbebirr_enabled,
+		                          deposit_mpesa_enabled, updated_at)
+		VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+		ON CONFLICT (id) DO UPDATE SET min_deposit = $1, referral_enabled = $2, referral_amount = $3,
+		    join_bonus_enabled = $4, join_bonus_amount = $5, maintenance_mode = $6, maintenance_message = $7,
+		    deposit_telebirr_enabled = $8, deposit_cbebirr_enabled = $9, deposit_mpesa_enabled = $10,
 		    updated_at = now()`,
-		cur.MinDeposit, cur.ReferralEnabled, cur.ReferralAmount, cur.MaintenanceMode, cur.MaintenanceMessage,
-		cur.DepositTelebirrEnabled, cur.DepositCBEBirrEnabled, cur.DepositMpesaEnabled)
+		cur.MinDeposit, cur.ReferralEnabled, cur.ReferralAmount, cur.JoinBonusEnabled, cur.JoinBonusAmount,
+		cur.MaintenanceMode, cur.MaintenanceMessage, cur.DepositTelebirrEnabled, cur.DepositCBEBirrEnabled,
+		cur.DepositMpesaEnabled)
 	if err != nil {
 		return nil, fmt.Errorf("failed to save settings: %w", err)
 	}
@@ -767,6 +780,12 @@ func (uc *WalletUseCase) GetDashboardStats(ctx context.Context) (*domain.Dashboa
 		return nil, fmt.Errorf("failed to compute real-player game P&L: %w", err)
 	}
 	stats.RealPlayerGamePnl = realPnl
+
+	funding, err := uc.gameRepo.GetActivePlayerFundingStats(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compute active player funding: %w", err)
+	}
+	stats.ActivePlayerFunding = *funding
 
 	return stats, nil
 }

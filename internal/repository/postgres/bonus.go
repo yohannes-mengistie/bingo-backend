@@ -359,3 +359,44 @@ func (r *bonusRepository) UpdateConfig(ctx context.Context, cfg *domain.BonusCon
 	}
 	return nil
 }
+
+// GrantGameJoinOnce atomically reserves the player/game award key and creates
+// its bonus grant. If the key already exists, no grant is created and false is
+// returned. The bonus master switch and expiry policy remain authoritative.
+func (r *bonusRepository) GrantGameJoinOnce(ctx context.Context, tx *sql.Tx, gameID, userID uuid.UUID, amount float64) (bool, error) {
+	if tx == nil {
+		return false, fmt.Errorf("GrantGameJoinOnce requires a transaction")
+	}
+	if amount <= 0 {
+		return false, nil
+	}
+
+	grantID := uuid.New()
+	grant := &domain.BonusGrant{}
+	err := tx.QueryRowContext(ctx, `
+		WITH cfg AS (
+			SELECT expiry_days
+			FROM bonus_config
+			WHERE id = 1 AND enabled = TRUE
+		), award AS (
+			INSERT INTO game_join_bonus_awards (game_id, user_id, bonus_grant_id, amount)
+			SELECT $1, $2, $3, $4 FROM cfg
+			ON CONFLICT (game_id, user_id) DO NOTHING
+			RETURNING bonus_grant_id
+		)
+		INSERT INTO bonus_grants (id, user_id, amount, remaining, reason, expires_at)
+		SELECT $3, $2, $4, $4, 'game join bonus',
+		       CURRENT_TIMESTAMP + ((SELECT expiry_days FROM cfg) * 1440 || ' minutes')::interval
+		FROM award
+		RETURNING id, user_id, amount::float8, remaining::float8, granted_at, expires_at
+	`, gameID, userID, grantID, amount).Scan(
+		&grant.ID, &grant.UserID, &grant.Amount, &grant.Remaining, &grant.GrantedAt, &grant.ExpiresAt,
+	)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to grant game join bonus: %w", err)
+	}
+	return true, nil
+}

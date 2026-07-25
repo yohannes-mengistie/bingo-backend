@@ -644,6 +644,21 @@ func (uc *GameUseCase) startDrawing(ctx context.Context, gameID uuid.UUID) {
 		return
 	}
 
+	// Read the operator policy inside the same transaction as the stake. The
+	// reward is only minted after this player is successfully charged below.
+	var joinBonusEnabled bool
+	var joinBonusAmount float64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT join_bonus_enabled, join_bonus_amount::float8
+		FROM app_settings WHERE id = 1
+	`).Scan(&joinBonusEnabled, &joinBonusAmount); err != nil && err != sql.ErrNoRows {
+		return
+	}
+	isBotByUser := make(map[uuid.UUID]bool, len(active))
+	for _, p := range active {
+		isBotByUser[p.UserID] = p.IsBot
+	}
+
 	// Charge each player for their reserved (unpaid) cards, all at once. A player
 	// who can no longer cover their reservations has those cards dropped (they
 	// were never charged, so there is nothing to refund).
@@ -746,6 +761,13 @@ func (uc *GameUseCase) startDrawing(ctx context.Context, gameID uuid.UUID) {
 		// refund returns them as bonus rather than as withdrawable cash.
 		if bonusCards > 0 && bonusExpiry != nil {
 			if _, err := uc.gameRepo.MarkCardsBonusFundedTx(ctx, tx, gameID, userID, bonusCards, *bonusExpiry); err != nil {
+				return
+			}
+		}
+		// Award after payment so this bonus cannot fund the game that earned it.
+		// The repository key (game,user) prevents multi-card and retry duplicates.
+		if joinBonusEnabled && joinBonusAmount > 0 && uc.bonusRepo != nil && !isBotByUser[userID] {
+			if _, err := uc.bonusRepo.GrantGameJoinOnce(ctx, tx, gameID, userID, joinBonusAmount); err != nil {
 				return
 			}
 		}
@@ -2020,4 +2042,18 @@ func (uc *GameUseCase) GetGameHistory(ctx context.Context, userID uuid.UUID, lim
 	}
 
 	return history, nil
+}
+
+// GetGameHistoryPage returns the rows plus the total distinct games so the
+// admin user-detail card can paginate without guessing from a short page.
+func (uc *GameUseCase) GetGameHistoryPage(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*domain.GameHistoryEntry, int, error) {
+	history, err := uc.GetGameHistory(ctx, userID, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := uc.gameRepo.CountGamesByUserID(ctx, userID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count game history: %w", err)
+	}
+	return history, total, nil
 }
