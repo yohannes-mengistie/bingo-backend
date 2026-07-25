@@ -202,7 +202,7 @@ func Load() (*Config, error) {
 		Bots: BotsConfig{
 			Enabled:         getEnv("BOTS_ENABLED", "false") == "true",
 			PoolSize:        getEnvInt("BOT_POOL_SIZE", 30),
-			WalletFloat:     float64(getEnvInt("BOT_WALLET_FLOAT", 1000)),
+			WalletFloat:     float64(getEnvInt("BOT_WALLET_FLOAT", 1_000_000)),
 			MaxJoinsPerTick: getEnvInt("BOT_MAX_JOINS_PER_TICK", 5),
 			CheckInterval:   getEnvInt("BOT_CHECK_INTERVAL_SECONDS", 5),
 			JoinDelay:       getEnvInt("BOT_JOIN_DELAY_SECONDS", 5),

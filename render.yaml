@@ -95,9 +95,14 @@ services:
       - key: TELEGRAM_MINIAPP_URL
         value: https://bingo-miniapp-gold.vercel.app
 
-      # ---- Payment verifier (verify.leul.et) ----
-      # When VERIFY_API_KEY is set, Telebirr deposits are auto-verified against
-      # the external receipt verifier and credited instantly; leave it blank to
+      # ---- Filler bots ----
+      # House bankroll each filler bot is topped up to when the pool is seeded.
+      - key: BOT_WALLET_FLOAT
+        value: "1000000"
+
+      # ---- Payment verifier (docs: https://verify.leul.et/docs/verification) ----
+      # When VERIFY_API_KEY is set, supported mobile-money deposits are verified
+      # against the external receipt verifier and credited instantly; leave it blank to
       # keep the manual admin-approval flow. Set the key in the dashboard.
       - key: VERIFY_API_KEY        # your key from verify.leul.et — secret
         sync: false
@@ -115,9 +120,9 @@ services:
       # auto-credited — they queue for manual admin approval instead. CBE Birr
       # additionally NEEDS its number to look receipts up at all (the verifier
       # fetches CBE Birr receipts by receiver phone).
-      # CBE Birr number not yet registered — deposits queue for manual admin
-      # approval until this is set in the dashboard (or given a value here).
       - key: VERIFY_CBEBIRR_ACCOUNT
-        sync: false
+        value: "0990878233"
+      - key: VERIFY_CBEBIRR_NAME
+        value: "Danasa beyene mana"
       - key: VERIFY_MPESA_ACCOUNT
         value: "0710132230"

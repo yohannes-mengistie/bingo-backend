@@ -86,7 +86,7 @@ make migrate-up
 - Server: `localhost:8080`
 - Database: `postgres@localhost:5432/bingo`
 - Redis: `localhost:6379`
-- Payment verifier: set `VERIFY_API_KEY` to enable Telebirr receipt verification. `VERIFY_API_BASE_URL` defaults to `https://verifyapi.leulzenebe.pro`.
+- Payment verifier: set `VERIFY_API_KEY` to enable Telebirr, CBE Birr, and M-Pesa receipt verification. The [official verification guide](https://verify.leul.et/docs/verification) documents the dedicated CBE Birr route; `VERIFY_API_BASE_URL` defaults to its hosted API at `https://verifyapi.leulzenebe.pro`.
 
 5. Run the server:
 
@@ -352,7 +352,7 @@ curl -X PUT http://localhost:8080/api/v1/user/550e8400-e29b-41d4-a716-4466554400
 
 ### POST /api/v1/wallet/deposit
 
-Create a deposit request. Telebirr is the only supported payment method. If `VERIFY_API_KEY` is configured, the backend verifies the submitted Telebirr reference against the external verifier, checks the verified amount against `amount`, then completes the deposit and credits the wallet immediately. Without verifier configuration, the transaction is created with `pending` status and balance is not updated until admin approval.
+Create a deposit request using Telebirr, CBE Birr, or M-Pesa. If `VERIFY_API_KEY` is configured, the backend verifies the submitted payment reference against the external verifier, checks its provider, destination account, and amount, then completes the deposit and credits the wallet immediately. Without verifier configuration, the transaction is created with `pending` status and balance is not updated until admin approval.
 
 If the verifier is configured but cannot be reached (network failure, timeout, 5xx, auth, or rate-limit), the deposit falls back to a `pending` transaction for manual admin approval instead of being rejected. A definitive negative verdict (receipt not found, amount/provider mismatch) is still rejected.
 
