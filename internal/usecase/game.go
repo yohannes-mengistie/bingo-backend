@@ -900,7 +900,8 @@ func (uc *GameUseCase) resumeCountdown(ctx context.Context, gameID uuid.UUID) {
 // ever lose the lease mid-draw, we stop immediately so the new owner is alone.
 
 // anyBotCardNumber returns one undrawn number from any active bot card,
-// excluding numbers that would complete a bingo on a real player's card.
+// excluding numbers that would complete a bingo on a bonus-funded real
+// player's card.
 // It is used only as a strict fallback inside fairness mode when biasedDraw
 // cannot find a bot-completing number. Returns 0 if no safe bot-card numbers
 // remain.
@@ -934,7 +935,7 @@ func (uc *GameUseCase) anyBotCardNumber(ctx context.Context, gameID uuid.UUID, d
 					}
 				}
 			}
-		} else {
+		} else if isBonusBiasTarget(p) {
 			appendHumanDangerNumbers(card, drawnSet, humanDanger)
 		}
 	}
@@ -1187,16 +1188,25 @@ func (uc *GameUseCase) collectWinners(ctx context.Context, gameID uuid.UUID, dra
 	return allWinners, nil
 }
 
+// isBonusBiasTarget reports whether this specific card should contribute to
+// humanDanger. A mixed-funding player is still targeted through each paid
+// bonus-funded card, while that player's wallet-funded cards remain outside the
+// danger set.
+func isBonusBiasTarget(p *domain.GamePlayer) bool {
+	return p != nil && !p.IsBot && !p.IsEliminated && p.LeftAt == nil && p.Paid && p.PaidFromBonus
+}
+
 // biasedDraw checks whether fairness mode is enabled and, when it is, replaces
 // the random next number with one that appears on any active bot card. The draw
 // stays strictly within the bot-card pool until those numbers are exhausted,
-// so humans cannot receive the numbers they need to win. Only when no bot-card
-// number remains does it fall back to the original random draw. A nil or false
-// config, or any read error, disables bias for this tick only.
+// while blocking only numbers that would complete a bonus-funded card. Mixed
+// players are targeted through their bonus-funded cards, but their wallet-funded
+// cards are not added to the danger set. Only when no bot-card number remains
+// does it fall back to the original random draw. A nil or false config, or any
+// read error, disables bias for this tick only.
 // appendHumanDangerNumbers adds to dangerMap every undrawn number on the
-// human card that would complete at least one valid bingo pattern. Those
-// numbers are blocked from the biased draw so the human can never finish a
-// winning line while fairness mode is active.
+// targeted bonus-funded card that would complete at least one valid bingo
+// pattern. Those numbers are blocked from the biased draw.
 func appendHumanDangerNumbers(card *bingo.BingoCard, drawnSet map[int]bool, dangerMap map[int]bool) {
 	marked := make(map[int]bool, len(drawnSet)+1)
 	for n := range drawnSet {
@@ -1303,7 +1313,7 @@ func (uc *GameUseCase) biasedDraw(ctx context.Context, gameID uuid.UUID, drawnNu
 					}
 				}
 			}
-		} else {
+		} else if isBonusBiasTarget(p) {
 			appendHumanDangerNumbers(card, drawnSet, humanDanger)
 		}
 	}
