@@ -22,6 +22,7 @@ func (h *harness) walletUC() *WalletUseCase {
 		postgres.NewBonusRepository(h.db),
 		h.db,
 		nil,
+		nil,
 	)
 }
 

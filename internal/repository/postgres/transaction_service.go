@@ -14,6 +14,7 @@ type TransactionService struct {
 	db              *sql.DB
 	walletRepo      domain.WalletRepository
 	transactionRepo domain.TransactionRepository
+	bonusRepo       domain.BonusRepository
 }
 
 // NewTransactionService creates a new transaction service
@@ -21,11 +22,17 @@ func NewTransactionService(
 	db *sql.DB,
 	walletRepo domain.WalletRepository,
 	transactionRepo domain.TransactionRepository,
+	bonusRepos ...domain.BonusRepository,
 ) *TransactionService {
+	var bonusRepo domain.BonusRepository
+	if len(bonusRepos) > 0 {
+		bonusRepo = bonusRepos[0]
+	}
 	return &TransactionService{
 		db:              db,
 		walletRepo:      walletRepo,
 		transactionRepo: transactionRepo,
+		bonusRepo:       bonusRepo,
 	}
 }
 
@@ -130,6 +137,28 @@ func (s *TransactionService) ApproveDeposit(ctx context.Context, transactionID u
 	// Update transaction status to completed
 	if err := s.transactionRepo.UpdateStatus(ctx, tx, transactionID, domain.TransactionStatusCompleted); err != nil {
 		return nil, fmt.Errorf("failed to update transaction status: %w", err)
+	}
+
+	// Reward only genuine Telebirr/CBE Birr deposits, after the guarded status
+	// transition succeeds. Keeping it in this transaction makes the cash credit,
+	// completed status, and bonus award atomic.
+	eligible := transaction.TransactionType != nil &&
+		(*transaction.TransactionType == domain.PaymentMethodTelebirr || *transaction.TransactionType == domain.PaymentMethodCBEBirr)
+	if eligible && s.bonusRepo != nil {
+		var enabled bool
+		var amount float64
+		err := tx.QueryRowContext(ctx, `
+			SELECT deposit_bonus_enabled, deposit_bonus_amount::float8
+			FROM app_settings WHERE id = 1
+		`).Scan(&enabled, &amount)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, fmt.Errorf("failed to read deposit bonus settings: %w", err)
+		}
+		if enabled && amount > 0 {
+			if _, err := s.bonusRepo.GrantDepositOnce(ctx, tx, transactionID, transaction.UserID, amount); err != nil {
+				return nil, fmt.Errorf("failed to award deposit bonus: %w", err)
+			}
+		}
 	}
 
 	// Commit transaction
