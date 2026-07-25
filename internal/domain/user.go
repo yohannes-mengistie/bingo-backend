@@ -74,18 +74,6 @@ type DashboardStats struct {
 	// means the house has paid real players more than they staked (real cash
 	// exposure, e.g. real players winning bot-inflated pools).
 	RealPlayerGamePnl float64 `json:"real_player_game_pnl"`
-	// ActivePlayerFunding describes distinct real players currently holding
-	// paid cards in a live game, split by the source used to buy those cards.
-	ActivePlayerFunding ActivePlayerFundingStats `json:"active_player_funding"`
-}
-
-type ActivePlayerFundingStats struct {
-	TotalPlayers int `json:"total_players"`
-	CashPlayers  int `json:"cash_players"`
-	BonusPlayers int `json:"bonus_players"`
-	// MixedPlayers is the overlap: players with both cash- and bonus-funded
-	// cards. CashPlayers and BonusPlayers therefore are not mutually exclusive.
-	MixedPlayers int `json:"mixed_players"`
 }
 
 // UserWithWallet represents a user with their wallet information

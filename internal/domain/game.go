@@ -161,12 +161,22 @@ type AdminGamePlayer struct {
 	JoinedAt     time.Time `json:"joined_at"`
 }
 
+// AdminGameFundingStats counts distinct real players by how their paid cards
+// were funded. WalletPlayers and BonusPlayers overlap when a player used both.
+type AdminGameFundingStats struct {
+	TotalPlayers  int `json:"total_players"`
+	WalletPlayers int `json:"wallet_players"`
+	BonusPlayers  int `json:"bonus_players"`
+	MixedPlayers  int `json:"mixed_players"`
+}
+
 // AdminGameDetail is a game plus its active players and — once finished — who
 // won and how much, for the admin dashboard.
 type AdminGameDetail struct {
-	Game    *Game              `json:"game"`
-	Players []*AdminGamePlayer `json:"players"`
-	Winners []*GameWinner      `json:"winners"`
+	Game    *Game                 `json:"game"`
+	Players []*AdminGamePlayer    `json:"players"`
+	Winners []*GameWinner         `json:"winners"`
+	Funding AdminGameFundingStats `json:"funding"`
 }
 
 // CancelGameResult summarizes the outcome of an admin force-cancel.

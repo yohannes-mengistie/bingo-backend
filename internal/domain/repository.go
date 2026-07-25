@@ -161,7 +161,6 @@ type GameRepository interface {
 	FindActiveGameByUserID(ctx context.Context, userID uuid.UUID) (*GameHistoryEntry, error)
 	CountGamesByType(ctx context.Context) (map[GameType]int, error)
 	GetTotalHouseCut(ctx context.Context) (float64, error)
-	GetActivePlayerFundingStats(ctx context.Context) (*ActivePlayerFundingStats, error)
 	// HouseCutByTier / HouseCutByDay break the house cut down for the dashboard
 	// drill-down (real-player games only, matching GetTotalHouseCut).
 	HouseCutByTier(ctx context.Context) ([]HouseCutTier, error)

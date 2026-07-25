@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/bingo/backend/internal/domain"
@@ -146,17 +147,20 @@ func (s *TransactionService) ApproveDeposit(ctx context.Context, transactionID u
 		(*transaction.TransactionType == domain.PaymentMethodTelebirr || *transaction.TransactionType == domain.PaymentMethodCBEBirr)
 	if eligible && s.bonusRepo != nil {
 		var enabled bool
-		var amount float64
+		var percentage float64
 		err := tx.QueryRowContext(ctx, `
-			SELECT deposit_bonus_enabled, deposit_bonus_amount::float8
+			SELECT deposit_bonus_enabled, deposit_bonus_percentage::float8
 			FROM app_settings WHERE id = 1
-		`).Scan(&enabled, &amount)
+		`).Scan(&enabled, &percentage)
 		if err != nil && err != sql.ErrNoRows {
 			return nil, fmt.Errorf("failed to read deposit bonus settings: %w", err)
 		}
-		if enabled && amount > 0 {
-			if _, err := s.bonusRepo.GrantDepositOnce(ctx, tx, transactionID, transaction.UserID, amount); err != nil {
-				return nil, fmt.Errorf("failed to award deposit bonus: %w", err)
+		if enabled && percentage > 0 {
+			rewardAmount := math.Round((transaction.Amount*percentage/100)*100) / 100
+			if rewardAmount > 0 {
+				if _, err := s.bonusRepo.GrantDepositOnce(ctx, tx, transactionID, transaction.UserID, rewardAmount); err != nil {
+					return nil, fmt.Errorf("failed to award deposit bonus: %w", err)
+				}
 			}
 		}
 	}

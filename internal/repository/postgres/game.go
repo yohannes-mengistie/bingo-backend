@@ -1416,34 +1416,3 @@ func (r *gameRepository) CountGamesByUserID(ctx context.Context, userID uuid.UUI
 	}
 	return total, nil
 }
-
-// GetActivePlayerFundingStats counts distinct real players holding paid cards in
-// live games. A player can appear in both funding groups when they hold a mix of
-// cash- and bonus-funded cards; MixedPlayers reports that overlap explicitly.
-func (r *gameRepository) GetActivePlayerFundingStats(ctx context.Context) (*domain.ActivePlayerFundingStats, error) {
-	stats := &domain.ActivePlayerFundingStats{}
-	err := r.db.QueryRowContext(ctx, `
-		WITH per_player AS (
-			SELECT gp.user_id,
-			       BOOL_OR(NOT gp.paid_from_bonus) AS has_cash,
-			       BOOL_OR(gp.paid_from_bonus) AS has_bonus
-			FROM game_players gp
-			JOIN games g ON g.id = gp.game_id
-			JOIN users u ON u.id = gp.user_id
-			WHERE gp.left_at IS NULL
-			  AND gp.paid = TRUE
-			  AND g.state IN ('WAITING', 'COUNTDOWN', 'DRAWING')
-			  AND u.is_bot = FALSE
-			GROUP BY gp.user_id
-		)
-		SELECT COUNT(*)::int,
-		       COUNT(*) FILTER (WHERE has_cash)::int,
-		       COUNT(*) FILTER (WHERE has_bonus)::int,
-		       COUNT(*) FILTER (WHERE has_cash AND has_bonus)::int
-		FROM per_player
-	`).Scan(&stats.TotalPlayers, &stats.CashPlayers, &stats.BonusPlayers, &stats.MixedPlayers)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get active player funding stats: %w", err)
-	}
-	return stats, nil
-}

@@ -1875,6 +1875,8 @@ func (uc *GameUseCase) GetGameDetail(ctx context.Context, gameID uuid.UUID) (*do
 		detail.Players = append(detail.Players, entry)
 	}
 
+	detail.Funding = summarizeGameFunding(players)
+
 	// Winners of a finished game (who won, which card, how much). Best-effort —
 	// an error here shouldn't break the whole detail view.
 	if winners, err := uc.gameRepo.FindWinningCards(ctx, gameID); err == nil {
@@ -2034,4 +2036,41 @@ func (uc *GameUseCase) GetGameHistoryPage(ctx context.Context, userID uuid.UUID,
 		return nil, 0, fmt.Errorf("failed to count game history: %w", err)
 	}
 	return history, total, nil
+}
+
+// summarizeGameFunding counts distinct real players by the source of their paid
+// cards. Several cards from the same source count once; a mixed-source player is
+// counted in both source totals and explicitly in MixedPlayers.
+func summarizeGameFunding(players []*domain.GamePlayer) domain.AdminGameFundingStats {
+	type flags struct {
+		wallet bool
+		bonus  bool
+	}
+	byUser := make(map[uuid.UUID]flags)
+	for _, p := range players {
+		if !p.Paid || p.IsBot || p.LeftAt != nil {
+			continue
+		}
+		f := byUser[p.UserID]
+		if p.PaidFromBonus {
+			f.bonus = true
+		} else {
+			f.wallet = true
+		}
+		byUser[p.UserID] = f
+	}
+
+	stats := domain.AdminGameFundingStats{TotalPlayers: len(byUser)}
+	for _, f := range byUser {
+		if f.wallet {
+			stats.WalletPlayers++
+		}
+		if f.bonus {
+			stats.BonusPlayers++
+		}
+		if f.wallet && f.bonus {
+			stats.MixedPlayers++
+		}
+	}
+	return stats
 }

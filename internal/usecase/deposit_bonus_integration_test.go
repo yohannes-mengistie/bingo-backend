@@ -19,12 +19,12 @@ func TestIntegration_DepositBonus_OnlyTelebirrAndCBEBirrOnceCompleted(t *testing
 	ctx := context.Background()
 
 	var oldEnabled bool
-	var oldAmount float64
-	if err := h.db.QueryRow(`SELECT deposit_bonus_enabled, deposit_bonus_amount::float8 FROM app_settings WHERE id=1`).Scan(&oldEnabled, &oldAmount); err != nil {
+	var oldPercentage float64
+	if err := h.db.QueryRow(`SELECT deposit_bonus_enabled, deposit_bonus_percentage::float8 FROM app_settings WHERE id=1`).Scan(&oldEnabled, &oldPercentage); err != nil {
 		t.Skipf("deposit bonus migration not applied: %v", err)
 	}
-	defer h.db.Exec(`UPDATE app_settings SET deposit_bonus_enabled=$1, deposit_bonus_amount=$2 WHERE id=1`, oldEnabled, oldAmount)
-	if _, err := h.db.Exec(`UPDATE app_settings SET deposit_bonus_enabled=true, deposit_bonus_amount=7 WHERE id=1`); err != nil {
+	defer h.db.Exec(`UPDATE app_settings SET deposit_bonus_enabled=$1, deposit_bonus_percentage=$2 WHERE id=1`, oldEnabled, oldPercentage)
+	if _, err := h.db.Exec(`UPDATE app_settings SET deposit_bonus_enabled=true, deposit_bonus_percentage=50 WHERE id=1`); err != nil {
 		t.Fatalf("enable deposit bonus: %v", err)
 	}
 	svc := postgres.NewTransactionService(
@@ -37,12 +37,13 @@ func TestIntegration_DepositBonus_OnlyTelebirrAndCBEBirrOnceCompleted(t *testing
 	cases := []struct {
 		name      string
 		method    domain.PaymentMethod
+		deposit   float64
 		wantBonus float64
 		suffix    int64
 	}{
-		{name: "Telebirr", method: domain.PaymentMethodTelebirr, wantBonus: 7, suffix: 9801},
-		{name: "CBE Birr", method: domain.PaymentMethodCBEBirr, wantBonus: 7, suffix: 9802},
-		{name: "M-Pesa excluded", method: domain.PaymentMethodMpesa, wantBonus: 0, suffix: 9803},
+		{name: "Telebirr", method: domain.PaymentMethodTelebirr, deposit: 100, wantBonus: 50, suffix: 9801},
+		{name: "CBE Birr", method: domain.PaymentMethodCBEBirr, deposit: 75.55, wantBonus: 37.78, suffix: 9802},
+		{name: "M-Pesa excluded", method: domain.PaymentMethodMpesa, deposit: 100, wantBonus: 0, suffix: 9803},
 	}
 
 	for _, tc := range cases {
@@ -52,16 +53,16 @@ func TestIntegration_DepositBonus_OnlyTelebirrAndCBEBirrOnceCompleted(t *testing
 			ref := "BONUS-" + depositID.String()
 			if _, err := h.db.Exec(`
 				INSERT INTO transactions (id, user_id, type, category, amount, status, transaction_type, transaction_id)
-				VALUES ($1,$2,'deposit','deposit',100,'pending',$3,$4)
-			`, depositID, userID, string(tc.method), ref); err != nil {
+				VALUES ($1,$2,'deposit','deposit',$3,'pending',$4,$5)
+			`, depositID, userID, tc.deposit, string(tc.method), ref); err != nil {
 				t.Fatalf("seed pending deposit: %v", err)
 			}
 
 			if _, err := svc.ApproveDeposit(ctx, depositID); err != nil {
 				t.Fatalf("approve deposit: %v", err)
 			}
-			if got := h.balance(userID); got != 100 {
-				t.Fatalf("withdrawable balance = %.2f, want 100", got)
+			if got := h.balance(userID); got != tc.deposit {
+				t.Fatalf("withdrawable balance = %.2f, want %.2f", got, tc.deposit)
 			}
 			if got := h.bonusBalance(userID); got != tc.wantBonus {
 				t.Fatalf("bonus balance = %.2f, want %.2f", got, tc.wantBonus)

@@ -10,8 +10,8 @@ type AppSettings struct {
 	ReferralAmount  float64 `json:"referral_amount" db:"referral_amount"`
 	// DepositBonus is awarded once after each successfully completed Telebirr or
 	// CBE Birr deposit. It is play-only money and never becomes withdrawable cash.
-	DepositBonusEnabled bool    `json:"deposit_bonus_enabled" db:"deposit_bonus_enabled"`
-	DepositBonusAmount  float64 `json:"deposit_bonus_amount" db:"deposit_bonus_amount"`
+	DepositBonusEnabled    bool    `json:"deposit_bonus_enabled" db:"deposit_bonus_enabled"`
+	DepositBonusPercentage float64 `json:"deposit_bonus_percentage" db:"deposit_bonus_percentage"`
 	// MaintenanceMode puts the player Mini App into "we'll be right back" mode:
 	// the frontend shows a maintenance screen and the API rejects player actions
 	// (join/deposit/withdraw/…) with 503, while the admin dashboard stays fully
@@ -47,13 +47,13 @@ func (s *AppSettings) DepositMethodEnabled(m PaymentMethod) bool {
 // UpdateAppSettingsRequest is the admin payload to change settings. Pointers so a
 // partial update leaves untouched fields alone.
 type UpdateAppSettingsRequest struct {
-	MinDeposit          *float64 `json:"min_deposit,omitempty"`
-	ReferralEnabled     *bool    `json:"referral_enabled,omitempty"`
-	ReferralAmount      *float64 `json:"referral_amount,omitempty"`
-	DepositBonusEnabled *bool    `json:"deposit_bonus_enabled,omitempty"`
-	DepositBonusAmount  *float64 `json:"deposit_bonus_amount,omitempty"`
-	MaintenanceMode     *bool    `json:"maintenance_mode,omitempty"`
-	MaintenanceMessage  *string  `json:"maintenance_message,omitempty"`
+	MinDeposit             *float64 `json:"min_deposit,omitempty"`
+	ReferralEnabled        *bool    `json:"referral_enabled,omitempty"`
+	ReferralAmount         *float64 `json:"referral_amount,omitempty"`
+	DepositBonusEnabled    *bool    `json:"deposit_bonus_enabled,omitempty"`
+	DepositBonusPercentage *float64 `json:"deposit_bonus_percentage,omitempty"`
+	MaintenanceMode        *bool    `json:"maintenance_mode,omitempty"`
+	MaintenanceMessage     *string  `json:"maintenance_message,omitempty"`
 
 	DepositTelebirrEnabled *bool `json:"deposit_telebirr_enabled,omitempty"`
 	DepositCBEBirrEnabled  *bool `json:"deposit_cbebirr_enabled,omitempty"`
