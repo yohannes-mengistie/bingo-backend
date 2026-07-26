@@ -626,157 +626,58 @@ func (h *WalletHandler) CancelTransaction(c *gin.Context) {
 
 // Admin transaction query handlers
 
-// GetPendingDeposits handles GET /admin/transactions/pending/deposits
+// adminTransactionPage is the shared response path for every transaction tab.
+// Its repository query applies search before LIMIT/OFFSET and returns the
+// filtered total, so every tab searches the entire dataset.
+func (h *WalletHandler) adminTransactionPage(c *gin.Context, filter domain.AdminTransactionFilter, errorMessage string) {
+	limit, offset := getPaginationParams(c)
+	transactions, total, err := h.walletUseCase.GetAdminTransactions(
+		c.Request.Context(), filter, c.Query("search"), limit, offset,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": errorMessage})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"transactions": transactions, "count": len(transactions), "total": total,
+		"limit": limit, "offset": offset,
+	})
+}
+
+// GetPendingDeposits handles GET /admin/transactions/pending/deposits.
 func (h *WalletHandler) GetPendingDeposits(c *gin.Context) {
-	limit, offset := getPaginationParams(c)
-
-	transactions, err := h.walletUseCase.GetPendingDeposits(c.Request.Context(), limit, offset)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to fetch pending deposits",
-		})
-		return
-	}
-
-	total, _ := h.walletUseCase.CountByStatusAndType(c.Request.Context(), domain.TransactionStatusPending, domain.TransactionTypeDeposit)
-	c.JSON(http.StatusOK, gin.H{
-		"transactions": transactions,
-		"count":        len(transactions),
-		"total":        total,
-		"limit":        limit,
-		"offset":       offset,
-	})
+	status, transactionType := domain.TransactionStatusPending, domain.TransactionTypeDeposit
+	h.adminTransactionPage(c, domain.AdminTransactionFilter{Status: &status, Type: &transactionType}, "Failed to fetch pending deposits")
 }
 
-// GetPendingWithdrawals handles GET /admin/transactions/pending/withdrawals
 func (h *WalletHandler) GetPendingWithdrawals(c *gin.Context) {
-	limit, offset := getPaginationParams(c)
-
-	transactions, err := h.walletUseCase.GetPendingWithdrawals(c.Request.Context(), limit, offset)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to fetch pending withdrawals",
-		})
-		return
-	}
-
-	total, _ := h.walletUseCase.CountWithdrawalsByStatus(c.Request.Context(), domain.TransactionStatusPending)
-	c.JSON(http.StatusOK, gin.H{
-		"transactions": transactions,
-		"count":        len(transactions),
-		"total":        total,
-		"limit":        limit,
-		"offset":       offset,
-	})
+	status, transactionType := domain.TransactionStatusPending, domain.TransactionTypeWithdraw
+	category := domain.TransactionCategoryWithdrawal
+	h.adminTransactionPage(c, domain.AdminTransactionFilter{Status: &status, Type: &transactionType, Category: &category}, "Failed to fetch pending withdrawals")
 }
 
-// GetCompletedDeposits handles GET /admin/transactions/completed/deposits
 func (h *WalletHandler) GetCompletedDeposits(c *gin.Context) {
-	limit, offset := getPaginationParams(c)
-
-	transactions, err := h.walletUseCase.GetCompletedDeposits(c.Request.Context(), limit, offset)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to fetch completed deposits",
-		})
-		return
-	}
-
-	total, _ := h.walletUseCase.CountByStatusAndType(c.Request.Context(), domain.TransactionStatusCompleted, domain.TransactionTypeDeposit)
-	c.JSON(http.StatusOK, gin.H{
-		"transactions": transactions,
-		"count":        len(transactions),
-		"total":        total,
-		"limit":        limit,
-		"offset":       offset,
-	})
+	status, transactionType := domain.TransactionStatusCompleted, domain.TransactionTypeDeposit
+	h.adminTransactionPage(c, domain.AdminTransactionFilter{Status: &status, Type: &transactionType}, "Failed to fetch completed deposits")
 }
 
-// GetCompletedWithdrawals handles GET /admin/transactions/completed/withdrawals
 func (h *WalletHandler) GetCompletedWithdrawals(c *gin.Context) {
-	limit, offset := getPaginationParams(c)
-
-	transactions, err := h.walletUseCase.GetCompletedWithdrawals(c.Request.Context(), limit, offset)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to fetch completed withdrawals",
-		})
-		return
-	}
-
-	total, _ := h.walletUseCase.CountWithdrawalsByStatus(c.Request.Context(), domain.TransactionStatusCompleted)
-	c.JSON(http.StatusOK, gin.H{
-		"transactions": transactions,
-		"count":        len(transactions),
-		"total":        total,
-		"limit":        limit,
-		"offset":       offset,
-	})
+	status, transactionType := domain.TransactionStatusCompleted, domain.TransactionTypeWithdraw
+	category := domain.TransactionCategoryWithdrawal
+	h.adminTransactionPage(c, domain.AdminTransactionFilter{Status: &status, Type: &transactionType, Category: &category}, "Failed to fetch completed withdrawals")
 }
 
-// GetFailedTransactions handles GET /admin/transactions/failed
 func (h *WalletHandler) GetFailedTransactions(c *gin.Context) {
-	limit, offset := getPaginationParams(c)
-
-	transactions, err := h.walletUseCase.GetFailedTransactions(c.Request.Context(), limit, offset)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to fetch failed transactions",
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"transactions": transactions,
-		"count":        len(transactions),
-		"limit":        limit,
-		"offset":       offset,
-	})
+	status := domain.TransactionStatusFailed
+	h.adminTransactionPage(c, domain.AdminTransactionFilter{Status: &status}, "Failed to fetch failed transactions")
 }
 
-// GetTransferTransactions handles GET /admin/transactions/transfers
 func (h *WalletHandler) GetTransferTransactions(c *gin.Context) {
-	limit, offset := getPaginationParams(c)
-
-	transactions, err := h.walletUseCase.GetTransferTransactions(c.Request.Context(), limit, offset)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to fetch transfer transactions",
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"transactions": transactions,
-		"count":        len(transactions),
-		"limit":        limit,
-		"offset":       offset,
-	})
+	h.adminTransactionPage(c, domain.AdminTransactionFilter{Types: []domain.TransactionType{domain.TransactionTypeTransferIn, domain.TransactionTypeTransferOut}}, "Failed to fetch transfers")
 }
 
-// GetAllTransactions handles GET /admin/transactions
 func (h *WalletHandler) GetAllTransactions(c *gin.Context) {
-	limit, offset := getPaginationParams(c)
-
-	transactions, err := h.walletUseCase.GetAllTransactions(c.Request.Context(), limit, offset)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to fetch transactions",
-		})
-		return
-	}
-
-	// total is the grand count of all transactions, so the admin can page through
-	// them; count stays the page size for backward compatibility.
-	total, _ := h.walletUseCase.CountAllTransactions(c.Request.Context())
-
-	c.JSON(http.StatusOK, gin.H{
-		"transactions": transactions,
-		"count":        len(transactions),
-		"total":        total,
-		"limit":        limit,
-		"offset":       offset,
-	})
+	h.adminTransactionPage(c, domain.AdminTransactionFilter{}, "Failed to fetch transactions")
 }
 
 // GetUserTransactions handles GET /admin/users/:user_id/transactions — one
@@ -892,21 +793,8 @@ func (h *WalletHandler) UpdateSettings(c *gin.Context) {
 // GetRealPlayerWinnings handles GET /admin/transactions/winners — winnings paid
 // to real (non-bot) players, paginated, so an admin can review genuine winners.
 func (h *WalletHandler) GetRealPlayerWinnings(c *gin.Context) {
-	limit, offset := getPaginationParams(c)
-
-	transactions, total, err := h.walletUseCase.GetRealPlayerWinnings(c.Request.Context(), limit, offset)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch winners"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"transactions": transactions,
-		"count":        len(transactions),
-		"total":        total,
-		"limit":        limit,
-		"offset":       offset,
-	})
+	category := domain.TransactionCategoryWinnings
+	h.adminTransactionPage(c, domain.AdminTransactionFilter{Category: &category, RealPlayersOnly: true}, "Failed to fetch winners")
 }
 
 // getPaginationParams extracts limit and offset from query parameters
@@ -924,6 +812,9 @@ func getPaginationParams(c *gin.Context) (int, int) {
 		if parsedOffset := parseInt(offsetStr); parsedOffset >= 0 {
 			offset = parsedOffset
 		}
+	}
+	if limit > 200 {
+		limit = 200
 	}
 
 	return limit, offset

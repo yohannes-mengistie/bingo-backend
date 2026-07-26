@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/bingo/backend/internal/domain"
@@ -1415,4 +1416,62 @@ func (r *gameRepository) CountGamesByUserID(ctx context.Context, userID uuid.UUI
 		return 0, fmt.Errorf("failed to count games by user ID: %w", err)
 	}
 	return total, nil
+}
+
+// adminGameWhere builds the full-dataset filters used by the admin game list.
+func adminGameWhere(filter domain.AdminGameFilter) (string, []any) {
+	clauses := []string{"1=1"}
+	args := make([]any, 0, 3)
+	add := func(value any) string {
+		args = append(args, value)
+		return fmt.Sprintf("$%d", len(args))
+	}
+	if filter.State != nil {
+		clauses = append(clauses, "state = "+add(*filter.State))
+	}
+	if filter.GameType != nil {
+		clauses = append(clauses, "game_type = "+add(*filter.GameType))
+	}
+	if filter.Active {
+		clauses = append(clauses, "state IN ('WAITING', 'COUNTDOWN', 'DRAWING')")
+	}
+	if search := strings.TrimSpace(filter.Search); search != "" {
+		placeholder := add("%" + search + "%")
+		clauses = append(clauses, `concat_ws(' ', id::text, round_code, game_type::text,
+			state::text, bet_amount::text, player_count::text) ILIKE `+placeholder)
+	}
+	return " WHERE " + strings.Join(clauses, " AND "), args
+}
+
+// FindAdmin searches before pagination so an admin can find any matching game.
+func (r *gameRepository) FindAdmin(ctx context.Context, filter domain.AdminGameFilter, limit, offset int) ([]*domain.Game, error) {
+	where, args := adminGameWhere(filter)
+	query := `SELECT id, game_type, state, bet_amount, min_players, player_count,
+		prize_pool, house_cut, round_code, winner_id, countdown_ends, started_at,
+		finished_at, created_at, updated_at FROM games` + where
+	query += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", len(args)+1, len(args)+2)
+	args = append(args, limit, offset)
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find admin games: %w", err)
+	}
+	defer rows.Close()
+	games := make([]*domain.Game, 0)
+	for rows.Next() {
+		game, err := scanGame(rows.Scan)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan admin game: %w", err)
+		}
+		games = append(games, game)
+	}
+	return games, rows.Err()
+}
+
+func (r *gameRepository) CountAdmin(ctx context.Context, filter domain.AdminGameFilter) (int, error) {
+	where, args := adminGameWhere(filter)
+	var count int
+	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM games"+where, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("failed to count admin games: %w", err)
+	}
+	return count, nil
 }

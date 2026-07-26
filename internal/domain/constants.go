@@ -196,7 +196,7 @@ const DefaultUserBalance = 10.0
 const DefaultMinDeposit = 50.0
 
 // ReferralRewardAmount is the PLAY-ONLY bonus granted to a referrer as soon as
-// the player they invited signs up. Bonus (not withdrawable cash) so the reward
+// the player they invited completes their first real deposit. Bonus (not withdrawable cash) so the reward
 // can't be farmed and cashed out — it must be played. Granted once per invitee.
 const ReferralRewardAmount = 15.0
 

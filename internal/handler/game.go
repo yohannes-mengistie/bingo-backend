@@ -539,8 +539,11 @@ func (h *GameHandler) AdminListGames(c *gin.Context) {
 			offset = parsed
 		}
 	}
+	if limit > 200 {
+		limit = 200
+	}
 
-	games, total, err := h.gameUseCase.ListGames(c.Request.Context(), filter.State, filter.GameType, limit, offset)
+	games, total, err := h.gameUseCase.ListGames(c.Request.Context(), filter, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

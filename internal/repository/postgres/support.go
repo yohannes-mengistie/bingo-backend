@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/bingo/backend/internal/domain"
 	"github.com/google/uuid"
@@ -37,9 +38,7 @@ func (r *supportRepository) Create(ctx context.Context, report *domain.SupportRe
 
 // List returns reports newest-first, optionally filtered by status, joining the
 // reporter's identity for the dashboard.
-func (r *supportRepository) List(ctx context.Context, status *domain.SupportStatus, limit, offset int) ([]*domain.SupportReport, error) {
-	// $1 is the optional status filter: when nil the ($1 IS NULL) branch keeps
-	// every row, so one query serves both "all" and a specific status.
+func (r *supportRepository) List(ctx context.Context, status *domain.SupportStatus, search string, limit, offset int) ([]*domain.SupportReport, error) {
 	query := `
 		SELECT sr.id, sr.user_id, sr.category, sr.message, sr.game_id, sr.status,
 		       sr.created_at, sr.resolved_at, sr.resolved_by,
@@ -47,10 +46,13 @@ func (r *supportRepository) List(ctx context.Context, status *domain.SupportStat
 		FROM support_reports sr
 		JOIN users u ON u.id = sr.user_id
 		WHERE ($1::text IS NULL OR sr.status = $1)
+		  AND ($2 = '' OR concat_ws(' ', sr.id::text, sr.user_id::text, sr.category::text,
+		      sr.status::text, sr.message, sr.game_id::text, u.first_name, u.last_name,
+		      u.phone_number, u.telegram_id::text) ILIKE '%' || $2 || '%')
 		ORDER BY sr.created_at DESC
-		LIMIT $2 OFFSET $3
+		LIMIT $3 OFFSET $4
 	`
-	rows, err := r.db.QueryContext(ctx, query, status, limit, offset)
+	rows, err := r.db.QueryContext(ctx, query, status, strings.TrimSpace(search), limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list support reports: %w", err)
 	}
@@ -85,11 +87,19 @@ func (r *supportRepository) List(ctx context.Context, status *domain.SupportStat
 	return reports, rows.Err()
 }
 
-// CountByStatus counts reports, optionally filtered by status (nil = all).
-func (r *supportRepository) CountByStatus(ctx context.Context, status *domain.SupportStatus) (int, error) {
-	query := `SELECT COUNT(*) FROM support_reports WHERE ($1::text IS NULL OR status = $1)`
+// CountByStatus counts reports after applying the same status/search filter.
+func (r *supportRepository) CountByStatus(ctx context.Context, status *domain.SupportStatus, search string) (int, error) {
+	query := `
+		SELECT COUNT(*)
+		FROM support_reports sr
+		JOIN users u ON u.id = sr.user_id
+		WHERE ($1::text IS NULL OR sr.status = $1)
+		  AND ($2 = '' OR concat_ws(' ', sr.id::text, sr.user_id::text, sr.category::text,
+		      sr.status::text, sr.message, sr.game_id::text, u.first_name, u.last_name,
+		      u.phone_number, u.telegram_id::text) ILIKE '%' || $2 || '%')
+	`
 	var count int
-	if err := r.db.QueryRowContext(ctx, query, status).Scan(&count); err != nil {
+	if err := r.db.QueryRowContext(ctx, query, status, strings.TrimSpace(search)).Scan(&count); err != nil {
 		return 0, fmt.Errorf("failed to count support reports: %w", err)
 	}
 	return count, nil

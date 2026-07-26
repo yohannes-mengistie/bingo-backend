@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"math"
 	"time"
 
@@ -12,10 +13,11 @@ import (
 )
 
 type TransactionService struct {
-	db              *sql.DB
-	walletRepo      domain.WalletRepository
-	transactionRepo domain.TransactionRepository
-	bonusRepo       domain.BonusRepository
+	db               *sql.DB
+	walletRepo       domain.WalletRepository
+	transactionRepo  domain.TransactionRepository
+	bonusRepo        domain.BonusRepository
+	referralNotifier domain.BroadcastSender
 }
 
 // NewTransactionService creates a new transaction service
@@ -35,6 +37,12 @@ func NewTransactionService(
 		transactionRepo: transactionRepo,
 		bonusRepo:       bonusRepo,
 	}
+}
+
+// SetReferralNotifier wires the best-effort Telegram notice sent after a
+// referral reward has committed.
+func (s *TransactionService) SetReferralNotifier(notifier domain.BroadcastSender) {
+	s.referralNotifier = notifier
 }
 
 // AdjustBalance credits (amount > 0) or debits (amount < 0) a user's wallet as
@@ -165,9 +173,78 @@ func (s *TransactionService) ApproveDeposit(ctx context.Context, transactionID u
 		}
 	}
 
+	// A referral qualifies on the invited player's first successful REAL deposit,
+	// regardless of payment provider. Admin credits never carry a provider method
+	// through this service, so they cannot trigger a referral award.
+	var rewardedReferrerID uuid.UUID
+	var rewardedReferrerTelegramID int64
+	var referralRewardAmount float64
+	eligibleReferralDeposit := transaction.TransactionType != nil &&
+		(*transaction.TransactionType == domain.PaymentMethodTelebirr ||
+			*transaction.TransactionType == domain.PaymentMethodCBEBirr ||
+			*transaction.TransactionType == domain.PaymentMethodMpesa)
+	if eligibleReferralDeposit {
+		var referrerID uuid.UUID
+		var referrerTelegramID int64
+		err := tx.QueryRowContext(ctx, `
+			SELECT r.id, r.telegram_id
+			FROM users invited
+			JOIN users r ON r.id = invited.referred_by
+			WHERE invited.id = $1 AND invited.referral_rewarded = false
+		`, transaction.UserID).Scan(&referrerID, &referrerTelegramID)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, fmt.Errorf("failed to inspect referral eligibility: %w", err)
+		}
+		if err == nil {
+			referralEnabled := true
+			rewardAmount := domain.ReferralRewardAmount
+			err = tx.QueryRowContext(ctx, `
+				SELECT referral_enabled, referral_amount::float8
+				FROM app_settings WHERE id = 1
+			`).Scan(&referralEnabled, &rewardAmount)
+			if err != nil && err != sql.ErrNoRows {
+				return nil, fmt.Errorf("failed to read referral settings: %w", err)
+			}
+
+			if referralEnabled && rewardAmount > 0 {
+				if s.bonusRepo == nil {
+					return nil, fmt.Errorf("referral bonus repository is unavailable")
+				}
+				awarded, grantErr := s.bonusRepo.GrantReferralOnce(ctx, tx, transaction.UserID, referrerID, rewardAmount)
+				if grantErr != nil {
+					return nil, fmt.Errorf("failed to award referral bonus: %w", grantErr)
+				}
+				if awarded {
+					rewardedReferrerID = referrerID
+					rewardedReferrerTelegramID = referrerTelegramID
+					referralRewardAmount = rewardAmount
+				}
+			} else {
+				// Turning the switch off does not postpone this first-deposit
+				// trigger until a later deposit.
+				if _, err := tx.ExecContext(ctx, `
+					UPDATE users SET referral_rewarded = true
+					WHERE id = $1 AND referred_by = $2 AND referral_rewarded = false
+				`, transaction.UserID, referrerID); err != nil {
+					return nil, fmt.Errorf("failed to close disabled referral eligibility: %w", err)
+				}
+			}
+		}
+	}
+
 	// Commit transaction
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	if rewardedReferrerTelegramID > 0 && s.referralNotifier != nil {
+		message := fmt.Sprintf(
+			"🎉 %0.f ብር የመጫወቻ ቦነስ አግኝተዋል!\nየጋበዙት ሰው የመጀመሪያ ገቢውን አድርጓል።\n\nYou earned a %0.f birr PLAY bonus — someone you invited made their first deposit! 🎮",
+			referralRewardAmount, referralRewardAmount,
+		)
+		if notifyErr := s.referralNotifier.SendMessage(rewardedReferrerTelegramID, message); notifyErr != nil {
+			log.Printf("[referral] rewarded %s but Telegram notice failed: %v", rewardedReferrerID, notifyErr)
+		}
 	}
 
 	// Fetch updated transaction

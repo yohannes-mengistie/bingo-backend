@@ -61,12 +61,13 @@ func (h *SupportHandler) ListReports(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "100"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
-	reports, err := h.supportUseCase.List(c.Request.Context(), status, limit, offset)
+	search := c.Query("search")
+	reports, err := h.supportUseCase.List(c.Request.Context(), status, search, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	count, err := h.supportUseCase.Count(c.Request.Context(), status)
+	count, err := h.supportUseCase.Count(c.Request.Context(), status, search)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

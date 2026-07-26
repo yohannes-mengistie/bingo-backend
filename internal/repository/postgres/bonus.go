@@ -399,3 +399,49 @@ func (r *bonusRepository) GrantDepositOnce(ctx context.Context, tx *sql.Tx, tran
 	}
 	return true, nil
 }
+
+// GrantReferralOnce marks an invitee's referral as processed and grants the
+// referrer play-only bonus in the same transaction. The guarded UPDATE is the
+// one-time claim: concurrent first deposits cannot both create a grant.
+func (r *bonusRepository) GrantReferralOnce(ctx context.Context, tx *sql.Tx, inviteeID, referrerID uuid.UUID, amount float64) (bool, error) {
+	if tx == nil {
+		return false, fmt.Errorf("GrantReferralOnce requires a transaction")
+	}
+	if amount <= 0 {
+		return false, nil
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		UPDATE users
+		SET referral_rewarded = true
+		WHERE id = $1 AND referred_by = $2 AND referral_rewarded = false
+	`, inviteeID, referrerID)
+	if err != nil {
+		return false, fmt.Errorf("failed to claim referral reward: %w", err)
+	}
+	claimed, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to inspect referral claim: %w", err)
+	}
+	if claimed == 0 {
+		return false, nil
+	}
+
+	grantID := uuid.New()
+	grant := &domain.BonusGrant{}
+	err = tx.QueryRowContext(ctx, `
+		WITH cfg AS (
+			SELECT COALESCE((SELECT expiry_days FROM bonus_config WHERE id = 1), 7) AS expiry_days
+		)
+		INSERT INTO bonus_grants (id, user_id, amount, remaining, reason, expires_at)
+		VALUES ($1, $2, $3, $3, 'Referral reward — invited player made first deposit',
+		        CURRENT_TIMESTAMP + ((SELECT expiry_days FROM cfg) * 1440 || ' minutes')::interval)
+		RETURNING id, user_id, amount::float8, remaining::float8, granted_at, expires_at
+	`, grantID, referrerID, amount).Scan(
+		&grant.ID, &grant.UserID, &grant.Amount, &grant.Remaining, &grant.GrantedAt, &grant.ExpiresAt,
+	)
+	if err != nil {
+		return false, fmt.Errorf("failed to grant referral reward: %w", err)
+	}
+	return true, nil
+}

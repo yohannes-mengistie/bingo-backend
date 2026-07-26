@@ -1772,7 +1772,7 @@ func (uc *GameUseCase) GetCardData(ctx context.Context, cardID int) (*bingo.Bing
 
 // ListGames returns games for the admin dashboard, filtered by optional state
 // and type, with pagination. Returns the games and the total matching count.
-func (uc *GameUseCase) ListGames(ctx context.Context, state *domain.GameState, gameType *domain.GameType, limit, offset int) ([]*domain.Game, int, error) {
+func (uc *GameUseCase) ListGames(ctx context.Context, filter domain.AdminGameFilter, limit, offset int) ([]*domain.Game, int, error) {
 	if limit <= 0 {
 		limit = domain.MaxAvailableGamesLimit
 	}
@@ -1780,12 +1780,12 @@ func (uc *GameUseCase) ListGames(ctx context.Context, state *domain.GameState, g
 		offset = 0
 	}
 
-	games, err := uc.gameRepo.FindAll(ctx, state, gameType, limit, offset)
+	games, err := uc.gameRepo.FindAdmin(ctx, filter, limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to list games: %w", err)
 	}
 
-	total, err := uc.gameRepo.CountAll(ctx, state, gameType)
+	total, err := uc.gameRepo.CountAdmin(ctx, filter)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to count games: %w", err)
 	}

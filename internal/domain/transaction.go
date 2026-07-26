@@ -41,7 +41,7 @@ const (
 	TransactionCategoryAdminCredit    TransactionCategory = "admin_credit"    // manual balance increase by an admin
 	TransactionCategoryAdminDebit     TransactionCategory = "admin_debit"     // manual balance decrease by an admin
 	TransactionCategoryBotFunding     TransactionCategory = "bot_funding"     // house money injected to bankroll a bot wallet
-	TransactionCategoryReferralReward TransactionCategory = "referral_reward" // cash reward paid to a referrer on their invitee's first deposit
+	TransactionCategoryReferralReward TransactionCategory = "referral_reward" // play-only reward paid to a referrer on their invitee's first real deposit
 	// Bonus (play-only money) movements. Kept separate from admin_credit so
 	// promotional giveaway can be reported apart from manual adjustments —
 	// previously promo bonuses were indistinguishable from admin credits.
@@ -53,6 +53,16 @@ const (
 
 // TransactionStatus represents the status of a transaction
 type TransactionStatus string
+
+// AdminTransactionFilter describes one admin transaction tab. Search is applied
+// in PostgreSQL before LIMIT/OFFSET so pagination covers the full result set.
+type AdminTransactionFilter struct {
+	Status          *TransactionStatus
+	Type            *TransactionType
+	Types           []TransactionType
+	Category        *TransactionCategory
+	RealPlayersOnly bool
+}
 
 const (
 	TransactionStatusPending   TransactionStatus = "pending"
@@ -139,6 +149,8 @@ type VerificationLog struct {
 	Amount      *float64            `json:"amount,omitempty" db:"amount"`
 	RawResponse string              `json:"raw_response" db:"raw_response"`
 	CreatedAt   time.Time           `json:"created_at" db:"created_at"`
+	PlayerName  string              `json:"player_name,omitempty"`
+	PlayerPhone string              `json:"player_phone,omitempty"`
 }
 
 // VerificationRecorder persists verifier lookups for the admin audit log. The

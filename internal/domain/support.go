@@ -13,7 +13,7 @@ type SupportCategory string
 
 const (
 	SupportCategoryTransaction SupportCategory = "transaction" // deposit/withdrawal/payment issues
-	SupportCategoryGameplay    SupportCategory = "gameplay"     // caller voice, wrong call, lag, etc.
+	SupportCategoryGameplay    SupportCategory = "gameplay"    // caller voice, wrong call, lag, etc.
 	SupportCategoryOther       SupportCategory = "other"
 )
 
@@ -69,9 +69,9 @@ type SupportRepository interface {
 	Create(ctx context.Context, report *SupportReport) error
 	// List returns reports newest-first, optionally filtered by status, with the
 	// reporter's identity joined in for the dashboard.
-	List(ctx context.Context, status *SupportStatus, limit, offset int) ([]*SupportReport, error)
+	List(ctx context.Context, status *SupportStatus, search string, limit, offset int) ([]*SupportReport, error)
 	// CountByStatus counts reports, optionally filtered by status (nil = all).
-	CountByStatus(ctx context.Context, status *SupportStatus) (int, error)
+	CountByStatus(ctx context.Context, status *SupportStatus, search string) (int, error)
 	// Resolve marks a report resolved by the given admin. Returns true only if a
 	// still-open report actually transitioned (idempotent: false if already
 	// resolved or missing).

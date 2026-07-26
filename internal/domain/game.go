@@ -190,6 +190,8 @@ type CancelGameResult struct {
 type AdminGameFilter struct {
 	State    *GameState `form:"state"`
 	GameType *GameType  `form:"type"`
+	Search   string     `form:"search"`
+	Active   bool       `form:"active"`
 }
 
 // RecentWinner is a public, lightweight record of a finished game's winner,

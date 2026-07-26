@@ -71,6 +71,10 @@ type BonusRepository interface {
 	// GrantDepositOnce awards the configured deposit reward at most once per
 	// deposit transaction. The database uniqueness guard makes retries idempotent.
 	GrantDepositOnce(ctx context.Context, tx *sql.Tx, transactionID, userID uuid.UUID, amount float64) (bool, error)
+	// GrantReferralOnce claims an invitee's first real deposit and awards the
+	// referrer play-only bonus. The users-row guard makes concurrent deposits
+	// and approval retries idempotent.
+	GrantReferralOnce(ctx context.Context, tx *sql.Tx, inviteeID, referrerID uuid.UUID, amount float64) (bool, error)
 	// Balance returns spendable bonus (expired grants excluded) and the
 	// soonest upcoming expiry.
 	Balance(ctx context.Context, userID uuid.UUID) (*BonusBalance, error)

@@ -76,6 +76,11 @@ func NewWalletUseCase(
 	}
 }
 
+// SetReferralNotifier wires the best-effort post-deposit reward notice.
+func (uc *WalletUseCase) SetReferralNotifier(notifier domain.BroadcastSender) {
+	uc.transactionService.SetReferralNotifier(notifier)
+}
+
 // DepositVerifierAvailable reports whether deposits can currently be verified.
 // When no verifier is configured it returns true (verification is simply not in
 // play, and deposits queue for manual approval as before); when one IS configured
@@ -612,6 +617,11 @@ func (uc *WalletUseCase) GetTransferHistory(ctx context.Context, userID uuid.UUI
 }
 
 // Admin transaction query methods
+
+// GetAdminTransactions applies tab filters and search before pagination.
+func (uc *WalletUseCase) GetAdminTransactions(ctx context.Context, filter domain.AdminTransactionFilter, search string, limit, offset int) ([]*domain.Transaction, int, error) {
+	return uc.transactionRepo.ListAdmin(ctx, filter, strings.TrimSpace(search), limit, offset)
+}
 
 // GetPendingDeposits returns pending deposit transactions for admin
 func (uc *WalletUseCase) GetPendingDeposits(ctx context.Context, limit, offset int) ([]*domain.Transaction, error) {

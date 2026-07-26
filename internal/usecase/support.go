@@ -50,19 +50,19 @@ func (u *SupportUseCase) Submit(ctx context.Context, userID uuid.UUID, req domai
 }
 
 // List returns reports for the dashboard, optionally filtered by status.
-func (u *SupportUseCase) List(ctx context.Context, status *domain.SupportStatus, limit, offset int) ([]*domain.SupportReport, error) {
+func (u *SupportUseCase) List(ctx context.Context, status *domain.SupportStatus, search string, limit, offset int) ([]*domain.SupportReport, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	return u.repo.List(ctx, status, limit, offset)
+	return u.repo.List(ctx, status, search, limit, offset)
 }
 
 // Count returns how many reports match the optional status filter.
-func (u *SupportUseCase) Count(ctx context.Context, status *domain.SupportStatus) (int, error) {
-	return u.repo.CountByStatus(ctx, status)
+func (u *SupportUseCase) Count(ctx context.Context, status *domain.SupportStatus, search string) (int, error) {
+	return u.repo.CountByStatus(ctx, status, search)
 }
 
 // Resolve marks a report resolved by an admin. Returns true only if a still-open

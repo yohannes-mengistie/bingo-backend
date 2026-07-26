@@ -20,10 +20,6 @@ type UserUseCase struct {
 	walletRepo domain.WalletRepository
 	bonusRepo  domain.BonusRepository
 	db         *sql.DB
-	// referralNotifier tells a referrer on Telegram that they earned a reward.
-	// Optional and set after construction (the bot is built later); nil just
-	// means the referrer isn't messaged — they still see the bonus.
-	referralNotifier domain.BroadcastSender
 }
 
 // NewUserUseCase creates a new user use case
@@ -34,12 +30,6 @@ func NewUserUseCase(userRepo domain.UserRepository, walletRepo domain.WalletRepo
 		bonusRepo:  bonusRepo,
 		db:         db,
 	}
-}
-
-// SetReferralNotifier wires the Telegram sender used to congratulate a referrer
-// when their reward lands. Called from main after the bot is constructed.
-func (uc *UserUseCase) SetReferralNotifier(n domain.BroadcastSender) {
-	uc.referralNotifier = n
 }
 
 // CreateUser creates a new user and wallet together in a transaction
@@ -100,7 +90,6 @@ func (uc *UserUseCase) CreateUser(ctx context.Context, req domain.CreateUserRequ
 	// Resolve the invite link's referral code to a referrer, if one came in.
 	// Best-effort: an unknown/blank code just means no referrer.
 	var referredBy *uuid.UUID
-	var referrer *domain.User
 	if code := strings.TrimSpace(req.ReferrerCode); code != "" {
 		if r, rerr := uc.userRepo.FindByReferralCode(ctx, code); rerr == nil && r != nil {
 			// Self-referral guard: you cannot refer yourself. Reject a code that
@@ -111,13 +100,12 @@ func (uc *UserUseCase) CreateUser(ctx context.Context, req domain.CreateUserRequ
 				log.Printf("[referral] ignoring self-referral by tg_id=%d", req.TelegramID)
 			} else {
 				referredBy = &r.ID
-				referrer = r
 			}
 		}
 	}
 
-	// Create user. If they were referred, the referrer is paid right below in
-	// this same transaction and referral_rewarded is flipped there.
+	// Create the user and retain the referral relationship. The referrer is paid
+	// only after this player completes their first real deposit.
 	user := &domain.User{
 		TelegramID:  req.TelegramID,
 		FirstName:   req.FirstName,
@@ -151,47 +139,9 @@ func (uc *UserUseCase) CreateUser(ctx context.Context, req domain.CreateUserRequ
 		}
 	}
 
-	// Referral policy is admin-controlled (app_settings): a master on/off switch
-	// and a tunable amount, defaulting to on / ReferralRewardAmount when the row
-	// or columns aren't there yet.
-	referralEnabled := true
-	rewardAmount := domain.ReferralRewardAmount
-	_ = uc.db.QueryRowContext(ctx, `SELECT referral_enabled, referral_amount FROM app_settings WHERE id = 1`).
-		Scan(&referralEnabled, &rewardAmount)
-
-	// Reward the referrer NOW, at signup — as PLAY-ONLY bonus, not withdrawable
-	// cash. Bonus can buy game cards but can never be cashed out, so a referrer
-	// (or a farmer) can't sign people up and immediately withdraw the reward; the
-	// only way to turn it into money is to actually play and win. Granted in the
-	// same transaction as the signup so account + reward are atomic, and
-	// referral_rewarded is flipped so it can never be granted twice. Skipped
-	// entirely when the admin has turned referral rewards OFF.
-	rewarded := false
-	if referredBy != nil && referralEnabled && rewardAmount > 0 {
-		if _, err := uc.bonusRepo.Grant(ctx, tx, *referredBy, rewardAmount, "Referral reward"); err != nil {
-			return nil, nil, fmt.Errorf("failed to grant referral bonus: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE users SET referral_rewarded = true WHERE id = $1`, user.ID); err != nil {
-			return nil, nil, fmt.Errorf("failed to mark referral rewarded: %w", err)
-		}
-		rewarded = true
-	}
-
 	// Commit transaction
 	if err := tx.Commit(); err != nil {
 		return nil, nil, fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	// Congratulate the referrer on Telegram (best-effort, after commit — the
-	// money is already theirs whether or not the message goes through).
-	if rewarded && referrer != nil && uc.referralNotifier != nil && referrer.TelegramID > 0 {
-		msg := fmt.Sprintf(
-			"🎉 %0.f ብር የመጫወቻ ቦነስ አግኝተዋል!\nየጋበዙት ሰው አካውንት ከፍቷል። ይህ ቦነስ ካርድ ለመግዛት ይጠቅማል፤ አሸንፈው ወደ ጥሬ ገንዘብ ይቀይሩት።\n\n"+
-				"You earned a %0.f birr PLAY bonus — someone you invited just signed up! Use it to buy cards; win to turn it into cash. 🎮",
-			rewardAmount, rewardAmount)
-		if serr := uc.referralNotifier.SendMessage(referrer.TelegramID, msg); serr != nil {
-			log.Printf("[referral] rewarded %s but the Telegram notice failed: %v", referrer.ID, serr)
-		}
 	}
 
 	return user, wallet, nil
@@ -308,37 +258,10 @@ func (uc *UserUseCase) GetAllUsers(ctx context.Context, limit, offset int) ([]*d
 	return uc.userRepo.FindAll(ctx, limit, offset)
 }
 
-// GetAllUsersWithWallets returns all users with their wallets (for admin)
-func (uc *UserUseCase) GetAllUsersWithWallets(ctx context.Context, limit, offset int) ([]*domain.UserWithWallet, int, error) {
-	// Get users
-	users, err := uc.userRepo.FindAll(ctx, limit, offset)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	// Get total count
-	totalCount, err := uc.userRepo.CountAll(ctx)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	// Fetch wallets for each user
-	usersWithWallets := make([]*domain.UserWithWallet, 0, len(users))
-	for _, user := range users {
-		uw := &domain.UserWithWallet{
-			User: user,
-		}
-
-		// Try to fetch wallet (may not exist for some users)
-		wallet, err := uc.walletRepo.FindByUserID(ctx, user.ID)
-		if err == nil && wallet != nil {
-			uw.Wallet = wallet
-		}
-
-		usersWithWallets = append(usersWithWallets, uw)
-	}
-
-	return usersWithWallets, totalCount, nil
+// GetAllUsersWithWallets returns one filtered admin page with wallets. The
+// repository performs one joined page query instead of one wallet query per row.
+func (uc *UserUseCase) GetAllUsersWithWallets(ctx context.Context, search, role string, limit, offset int) ([]*domain.UserWithWallet, int, error) {
+	return uc.userRepo.ListAdmin(ctx, strings.TrimSpace(search), strings.TrimSpace(role), limit, offset)
 }
 
 // UpdateUserName updates a user's first and last name

@@ -459,3 +459,74 @@ func (r *userRepository) CountAll(ctx context.Context) (int, error) {
 
 	return count, nil
 }
+
+// ListAdmin returns one filtered page of real users with their wallet in a
+// single joined query. This replaces the old N+1 wallet lookup performed once
+// for every user row in the admin table.
+func (r *userRepository) ListAdmin(ctx context.Context, search, role string, limit, offset int) ([]*domain.UserWithWallet, int, error) {
+	where := `
+		WHERE u.is_bot = false
+		  AND ($1 = '' OR concat_ws(' ', u.first_name, u.last_name, u.phone_number,
+		      u.telegram_id::text, u.referal_code, u.id::text) ILIKE '%' || $1 || '%')
+		  AND ($2 = '' OR u.role = $2)
+	`
+
+	var total int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users u `+where, search, role).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count admin users: %w", err)
+	}
+
+	query := `
+		SELECT u.id, u.telegram_id, u.first_name, u.last_name, u.phone_number,
+		       u.referal_code, u.referred_by, u.role, u.banned, u.created_at, u.updated_at,
+		       w.user_id, w.balance::float8, w.demo_balance::float8, w.updated_at
+		FROM users u
+		LEFT JOIN wallets w ON w.user_id = u.id
+	` + where + `
+		ORDER BY u.created_at DESC
+		LIMIT $3 OFFSET $4
+	`
+	rows, err := r.db.QueryContext(ctx, query, search, role, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list admin users: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]*domain.UserWithWallet, 0, limit)
+	for rows.Next() {
+		u := &domain.User{}
+		var lastName sql.NullString
+		var referredBy uuid.NullUUID
+		var walletUser uuid.NullUUID
+		var walletBalance, demoBalance sql.NullFloat64
+		var walletUpdated sql.NullTime
+		if err := rows.Scan(
+			&u.ID, &u.TelegramID, &u.FirstName, &lastName, &u.PhoneNumber,
+			&u.ReferalCode, &referredBy, &u.Role, &u.Banned, &u.CreatedAt, &u.UpdatedAt,
+			&walletUser, &walletBalance, &demoBalance, &walletUpdated,
+		); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan admin user: %w", err)
+		}
+		if lastName.Valid {
+			u.LastName = &lastName.String
+		}
+		if referredBy.Valid {
+			id := referredBy.UUID
+			u.ReferredBy = &id
+		}
+		entry := &domain.UserWithWallet{User: u}
+		if walletUser.Valid {
+			entry.Wallet = &domain.Wallet{
+				UserID:      walletUser.UUID,
+				Balance:     walletBalance.Float64,
+				DemoBalance: demoBalance.Float64,
+				UpdatedAt:   walletUpdated.Time,
+			}
+		}
+		out = append(out, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("failed to iterate admin users: %w", err)
+	}
+	return out, total, nil
+}

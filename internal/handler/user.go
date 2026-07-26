@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/bingo/backend/internal/domain"
 	"github.com/bingo/backend/internal/middleware"
@@ -182,8 +183,14 @@ func (h *UserHandler) UpdateMyName(c *gin.Context) {
 // GetAllUsers handles the GET /admin/users endpoint
 func (h *UserHandler) GetAllUsers(c *gin.Context) {
 	limit, offset := getPaginationParams(c)
+	search := strings.TrimSpace(c.Query("search"))
+	role := strings.TrimSpace(c.Query("role"))
+	if role != "" && role != "user" && role != "admin" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role filter"})
+		return
+	}
 
-	usersWithWallets, totalCount, err := h.userUseCase.GetAllUsersWithWallets(c.Request.Context(), limit, offset)
+	usersWithWallets, totalCount, err := h.userUseCase.GetAllUsersWithWallets(c.Request.Context(), search, role, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "Failed to fetch users",

@@ -182,9 +182,8 @@ func main() {
 		log.Printf("[telegram] could not set chat menu button: %v", err)
 	}
 	bonusUseCase := usecase.NewBonusUseCase(bonusRepo, userRepo, db, telegramBroadcastSender{bot: telegramBot})
-	// The bot exists now, so we can Telegram a referrer when their reward lands
-	// as soon as the person they invited signs up.
-	userUseCase.SetReferralNotifier(telegramBroadcastSender{bot: telegramBot})
+	// The bot exists now, so notify a referrer after the invited player's first real deposit.
+	walletUseCase.SetReferralNotifier(telegramBroadcastSender{bot: telegramBot})
 
 	// Initialize handlers
 	userHandler := handler.NewUserHandler(userUseCase)

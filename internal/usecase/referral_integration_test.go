@@ -8,6 +8,7 @@ import (
 
 	"github.com/bingo/backend/internal/domain"
 	"github.com/bingo/backend/internal/repository/postgres"
+	"github.com/google/uuid"
 )
 
 func (h *harness) userUC() *UserUseCase {
@@ -20,14 +21,23 @@ func (h *harness) userUC() *UserUseCase {
 	)
 }
 
-// The reward is granted the moment the invited user signs up — as PLAY-ONLY
-// bonus, NOT withdrawable cash. So the referrer's real (withdrawable) balance is
-// unchanged, but their bonus balance goes up by ReferralRewardAmount.
-func TestIntegration_Referral_PaidAtSignup(t *testing.T) {
+// Signup records the referral but pays nothing. The referrer receives one
+// PLAY-ONLY reward only after the invited player completes a real deposit.
+func TestIntegration_Referral_PaidAfterFirstRealDeposit(t *testing.T) {
 	h := newHarness(t)
 	defer h.cleanup()
 	ctx := context.Background()
 	uc := h.userUC()
+
+	var oldEnabled bool
+	var oldAmount float64
+	if err := h.db.QueryRow(`SELECT referral_enabled, referral_amount::float8 FROM app_settings WHERE id=1`).Scan(&oldEnabled, &oldAmount); err != nil {
+		t.Skipf("referral settings migration not applied: %v", err)
+	}
+	defer h.db.Exec(`UPDATE app_settings SET referral_enabled=$1, referral_amount=$2 WHERE id=1`, oldEnabled, oldAmount)
+	if _, err := h.db.Exec(`UPDATE app_settings SET referral_enabled=true, referral_amount=$1 WHERE id=1`, domain.ReferralRewardAmount); err != nil {
+		t.Fatalf("enable referral reward: %v", err)
+	}
 
 	referrer, _, err := uc.CreateUser(ctx, domain.CreateUserRequest{
 		TelegramID: 991000001, FirstName: "Referrer", Phone: "0911990001",
@@ -46,23 +56,9 @@ func TestIntegration_Referral_PaidAtSignup(t *testing.T) {
 	}
 	h.ids.users = append(h.ids.users, invited.ID)
 
-	// Real (withdrawable) balance stays 0 — neither the welcome credit nor the
-	// referral reward is cash; both are play-only bonus.
-	if got := h.balance(referrer.ID); got != 0 {
-		t.Fatalf("referrer real balance = %.2f, want 0 (rewards must be bonus, not cash)", got)
+	if got := h.bonusBalance(referrer.ID); got != domain.DefaultUserBalance {
+		t.Fatalf("referrer bonus at signup = %.2f, want welcome bonus %.2f only", got, domain.DefaultUserBalance)
 	}
-	// Referrer's bonus = welcome credit + the referral reward.
-	if got := h.bonusBalance(referrer.ID); got != domain.DefaultUserBalance+domain.ReferralRewardAmount {
-		t.Fatalf("referrer bonus balance = %.2f, want %.2f", got, domain.DefaultUserBalance+domain.ReferralRewardAmount)
-	}
-	// Invited user gets only the welcome bonus (not self-rewarded), 0 cash.
-	if got := h.balance(invited.ID); got != 0 {
-		t.Fatalf("invited balance = %.2f, want 0", got)
-	}
-	if got := h.bonusBalance(invited.ID); got != domain.DefaultUserBalance {
-		t.Fatalf("invited bonus balance = %.2f, want %.2f (welcome only)", got, domain.DefaultUserBalance)
-	}
-	// Link recorded + flagged rewarded so it can never pay twice.
 	if invited.ReferredBy == nil || *invited.ReferredBy != referrer.ID {
 		t.Fatalf("invited.referred_by not set to referrer")
 	}
@@ -70,8 +66,48 @@ func TestIntegration_Referral_PaidAtSignup(t *testing.T) {
 	if err := h.db.QueryRow(`SELECT referral_rewarded FROM users WHERE id=$1`, invited.ID).Scan(&rewarded); err != nil {
 		t.Fatalf("read referral_rewarded: %v", err)
 	}
-	if !rewarded {
-		t.Fatalf("invited.referral_rewarded = false, want true")
+	if rewarded {
+		t.Fatal("referral was marked rewarded before a deposit")
+	}
+
+	svc := postgres.NewTransactionService(
+		h.db,
+		postgres.NewWalletRepository(h.db),
+		postgres.NewTransactionRepository(h.db),
+		postgres.NewBonusRepository(h.db),
+	)
+	approveRealDeposit := func(amount float64) uuid.UUID {
+		depositID := uuid.New()
+		if _, err := h.db.Exec(`
+			INSERT INTO transactions (id, user_id, type, category, amount, status, transaction_type, transaction_id)
+			VALUES ($1,$2,'deposit','deposit',$3,'pending',$4,$5)
+		`, depositID, invited.ID, amount, string(domain.PaymentMethodTelebirr), "REFERRAL-"+depositID.String()); err != nil {
+			t.Fatalf("seed pending deposit: %v", err)
+		}
+		if _, err := svc.ApproveDeposit(ctx, depositID); err != nil {
+			t.Fatalf("approve deposit: %v", err)
+		}
+		return depositID
+	}
+
+	firstDepositID := approveRealDeposit(100)
+	wantBonus := domain.DefaultUserBalance + domain.ReferralRewardAmount
+	if got := h.bonusBalance(referrer.ID); got != wantBonus {
+		t.Fatalf("referrer bonus after first deposit = %.2f, want %.2f", got, wantBonus)
+	}
+	if got := h.balance(referrer.ID); got != 0 {
+		t.Fatalf("referrer withdrawable balance = %.2f, want 0", got)
+	}
+	if err := h.db.QueryRow(`SELECT referral_rewarded FROM users WHERE id=$1`, invited.ID).Scan(&rewarded); err != nil || !rewarded {
+		t.Fatalf("referral_rewarded after deposit = %v (err=%v), want true", rewarded, err)
+	}
+
+	if _, err := svc.ApproveDeposit(ctx, firstDepositID); err == nil {
+		t.Fatal("retry unexpectedly approved the same deposit")
+	}
+	approveRealDeposit(50)
+	if got := h.bonusBalance(referrer.ID); got != wantBonus {
+		t.Fatalf("referrer bonus after retry/second deposit = %.2f, want one reward %.2f", got, wantBonus)
 	}
 }
 

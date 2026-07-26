@@ -17,6 +17,7 @@ type UserRepository interface {
 	FindByID(ctx context.Context, id uuid.UUID) (*User, error)
 	FindReferredBy(ctx context.Context, userID uuid.UUID) ([]*User, error)
 	FindAll(ctx context.Context, limit, offset int) ([]*User, error)
+	ListAdmin(ctx context.Context, search, role string, limit, offset int) ([]*UserWithWallet, int, error)
 	SetAdminCredentialsByTelegramID(ctx context.Context, telegramID int64, hashedPassword string) error
 	Update(ctx context.Context, user *User) error
 	UpdateRole(ctx context.Context, id uuid.UUID, role string) error
@@ -46,6 +47,7 @@ type TransactionRepository interface {
 	FindByStatus(ctx context.Context, status TransactionStatus, limit, offset int) ([]*Transaction, error)
 	FindByTypes(ctx context.Context, transactionTypes []TransactionType, limit, offset int) ([]*Transaction, error)
 	FindAll(ctx context.Context, limit, offset int) ([]*Transaction, error)
+	ListAdmin(ctx context.Context, filter AdminTransactionFilter, search string, limit, offset int) ([]*Transaction, int, error)
 	UpdateStatus(ctx context.Context, tx *sql.Tx, id uuid.UUID, status TransactionStatus) error
 	CountByStatusAndType(ctx context.Context, status TransactionStatus, transactionType TransactionType) (int, error)
 	ExistsActiveDepositByTransactionID(ctx context.Context, transactionID string) (bool, error)
@@ -97,6 +99,8 @@ type GameRepository interface {
 	FindAll(ctx context.Context, state *GameState, gameType *GameType, limit, offset int) ([]*Game, error)
 	// CountAll counts games matching the optional state and type filters.
 	CountAll(ctx context.Context, state *GameState, gameType *GameType) (int, error)
+	FindAdmin(ctx context.Context, filter AdminGameFilter, limit, offset int) ([]*Game, error)
+	CountAdmin(ctx context.Context, filter AdminGameFilter) (int, error)
 	Update(ctx context.Context, game *Game) error
 	// LockForUpdate locks a game row FOR UPDATE inside a transaction. Used to
 	// serialize force-cancel against winner claims and double-cancels.

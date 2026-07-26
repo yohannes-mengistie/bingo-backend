@@ -75,19 +75,20 @@ func (r *verificationLogRepository) LatestByReference(ctx context.Context, refer
 func (r *verificationLogRepository) List(ctx context.Context, reference string, limit, offset int) ([]*domain.VerificationLog, int, error) {
 	// $1 is the optional reference filter: empty string keeps every row, otherwise
 	// a case-insensitive substring match so an admin can paste a partial receipt.
-	where := `WHERE ($1 = '' OR UPPER(reference) LIKE '%' || UPPER($1) || '%')`
+	where := `WHERE ($1 = '' OR UPPER(v.reference) LIKE '%' || UPPER($1) || '%')`
 
 	var total int
 	if err := r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM verification_logs `+where, reference,
+		`SELECT COUNT(*) FROM verification_logs v `+where, reference,
 	).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to count verification logs: %w", err)
 	}
 
 	query := `
-		SELECT id, user_id, method, reference, outcome, reason, amount, raw_response, created_at
-		FROM verification_logs ` + where + `
-		ORDER BY created_at DESC
+		SELECT v.id, v.user_id, v.method, v.reference, v.outcome, v.reason, v.amount, v.raw_response, v.created_at,
+               COALESCE(TRIM(CONCAT(u.first_name, ' ', u.last_name)), ''), COALESCE(u.phone_number, '')
+		FROM verification_logs v LEFT JOIN users u ON u.id = v.user_id ` + where + `
+		ORDER BY v.created_at DESC
 		LIMIT $2 OFFSET $3
 	`
 	rows, err := r.db.QueryContext(ctx, query, reference, limit, offset)
@@ -110,6 +111,8 @@ func (r *verificationLogRepository) List(ctx context.Context, reference string, 
 			&amount,
 			&entry.RawResponse,
 			&entry.CreatedAt,
+			&entry.PlayerName,
+			&entry.PlayerPhone,
 		); err != nil {
 			return nil, 0, fmt.Errorf("failed to scan verification log: %w", err)
 		}

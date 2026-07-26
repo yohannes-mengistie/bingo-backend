@@ -606,3 +606,68 @@ func (r *transactionRepository) RealPlayerGamePnL(ctx context.Context) (float64,
 	}
 	return pnl, nil
 }
+
+// ListAdmin serves every paginated transaction tab with one shared set of
+// filters. Search is applied before pagination across player identity, receipt,
+// internal reference, IDs, payment method, category, type, status, and amount.
+func (r *transactionRepository) ListAdmin(ctx context.Context, filter domain.AdminTransactionFilter, search string, limit, offset int) ([]*domain.Transaction, int, error) {
+	clauses := []string{"1=1"}
+	args := make([]any, 0, 8)
+	add := func(value any) string {
+		args = append(args, value)
+		return fmt.Sprintf("$%d", len(args))
+	}
+
+	if filter.Status != nil {
+		clauses = append(clauses, "t.status = "+add(*filter.Status))
+	}
+	if filter.Type != nil {
+		clauses = append(clauses, "t.type = "+add(*filter.Type))
+	}
+	if len(filter.Types) > 0 {
+		values := make([]string, len(filter.Types))
+		for i, transactionType := range filter.Types {
+			values[i] = string(transactionType)
+		}
+		clauses = append(clauses, "t.type = ANY("+add(pq.Array(values))+")")
+	}
+	if filter.Category != nil {
+		clauses = append(clauses, "t.category = "+add(*filter.Category))
+	}
+	if filter.RealPlayersOnly {
+		clauses = append(clauses, "u.is_bot = false")
+	}
+	search = strings.TrimSpace(search)
+	if search != "" {
+		placeholder := add("%" + search + "%")
+		clauses = append(clauses, `concat_ws(' ', u.first_name, u.last_name, u.phone_number,
+			u.telegram_id::text, t.id::text, t.user_id::text, t.transaction_id,
+			t.reference, t.transaction_type::text, t.type::text, t.category::text,
+			t.status::text, t.amount::text) ILIKE `+placeholder)
+	}
+	where := " WHERE " + strings.Join(clauses, " AND ")
+
+	var total int
+	if err := r.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM transactions t LEFT JOIN users u ON u.id = t.user_id"+where,
+		args...,
+	).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count admin transactions: %w", err)
+	}
+
+	limitArg := add(limit)
+	offsetArg := add(offset)
+	query := "SELECT " + txWithUserColumns +
+		" FROM transactions t LEFT JOIN users u ON u.id = t.user_id" + where +
+		" ORDER BY t.created_at DESC LIMIT " + limitArg + " OFFSET " + offsetArg
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list admin transactions: %w", err)
+	}
+	defer rows.Close()
+	transactions, err := r.scanTransactionsWithUser(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return transactions, total, nil
+}
