@@ -156,7 +156,7 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 		}
 		log.Printf("[WebSocket] ✓ Parsed game ID: %s", gameID)
 	} else {
-		errorReason = "No game type or game ID provided. Use ?type=G5 or /ws/game/:gameId"
+		errorReason = "No game type or game ID provided. Use ?type=REGULAR, ?type=VIP, or /ws/game/:gameId"
 		log.Printf("[WebSocket] ERROR: %s", errorReason)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":  errorReason,

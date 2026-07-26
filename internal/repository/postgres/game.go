@@ -374,6 +374,39 @@ func (r *gameRepository) LockForUpdate(ctx context.Context, tx *sql.Tx, id uuid.
 	return game, nil
 }
 
+// FindOtherActiveGameForUserTx finds a different live game in which the user
+// still has at least one active, non-eliminated card. JoinGame calls this after
+// taking the per-user wallet lock, which makes the check safe against concurrent
+// joins to REGULAR and VIP games without blocking same-game multi-card play.
+func (r *gameRepository) FindOtherActiveGameForUserTx(ctx context.Context, tx *sql.Tx, userID, gameID uuid.UUID) (*domain.Game, error) {
+	query := `
+		SELECT g.id, g.game_type, g.state, g.bet_amount, g.min_players, g.player_count, g.prize_pool, g.house_cut, g.round_code,
+		       g.winner_id, g.countdown_ends, g.started_at, g.finished_at, g.created_at, g.updated_at
+		FROM games g
+		WHERE g.id <> $2
+		  AND g.state IN ('WAITING', 'COUNTDOWN', 'DRAWING')
+		  AND EXISTS (
+			  SELECT 1
+			  FROM game_players gp
+			  WHERE gp.game_id = g.id
+			    AND gp.user_id = $1
+			    AND gp.left_at IS NULL
+			    AND gp.is_eliminated = FALSE
+		  )
+		ORDER BY g.created_at DESC
+		LIMIT 1
+	`
+
+	game, err := scanGame(tx.QueryRowContext(ctx, query, userID, gameID).Scan)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to find other active game: %w", err)
+	}
+	return game, nil
+}
+
 // UpdateTx updates a game row inside an existing transaction.
 func (r *gameRepository) UpdateTx(ctx context.Context, tx *sql.Tx, game *domain.Game) error {
 	query := `

@@ -11,6 +11,8 @@ package usecase
 import (
 	"context"
 	"database/sql"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,16 +21,105 @@ import (
 )
 
 func (h *harness) seedWaitingGame() uuid.UUID {
+	return h.seedWaitingGameType(domain.GameTypeRegular, 10)
+}
+
+func (h *harness) seedWaitingGameType(gameType domain.GameType, betAmount float64) uuid.UUID {
 	h.t.Helper()
 	id := uuid.New()
 	_, err := h.db.Exec(
 		`INSERT INTO games (id, game_type, state, bet_amount, min_players, player_count, prize_pool, house_cut)
-		 VALUES ($1,'REGULAR','WAITING',10,2,0,0,0.2)`, id)
+		 VALUES ($1,$2,'WAITING',$3,2,0,0,0.2)`, id, gameType, betAmount)
 	if err != nil {
 		h.t.Fatalf("seed waiting game: %v", err)
 	}
 	h.ids.games = append(h.ids.games, id)
 	return id
+}
+
+// A player can hold several cards in one game, but not participate in REGULAR
+// and VIP games simultaneously. Leaving the first game releases that guard.
+func TestIntegration_Reservation_BlocksOtherTierUntilLeave(t *testing.T) {
+	h := newHarness(t)
+	defer h.cleanup()
+	ctx := context.Background()
+
+	user := h.seedUser("Cross-Tier", 71)
+	h.setBalance(user, 200)
+	regularID := h.seedWaitingGameType(domain.GameTypeRegular, 10)
+	vipID := h.seedWaitingGameType(domain.GameTypeVIP, 50)
+
+	if _, err := h.uc.JoinGame(ctx, regularID, domain.JoinGameRequest{UserID: user, CardID: 1}); err != nil {
+		t.Fatalf("reserve regular card: %v", err)
+	}
+	if _, err := h.uc.JoinGame(ctx, regularID, domain.JoinGameRequest{UserID: user, CardID: 2}); err != nil {
+		t.Fatalf("same-game second card should remain allowed: %v", err)
+	}
+
+	if _, err := h.uc.JoinGame(ctx, vipID, domain.JoinGameRequest{UserID: user, CardID: 3}); err == nil {
+		t.Fatal("expected VIP reservation to be blocked while REGULAR is active")
+	} else if !strings.Contains(err.Error(), "active REGULAR game") {
+		t.Fatalf("unexpected cross-tier error: %v", err)
+	}
+	if _, active := h.cardState(vipID, user, 3); active {
+		t.Fatal("blocked VIP card must not be reserved")
+	}
+
+	if err := h.uc.LeaveGame(ctx, regularID, domain.LeaveGameRequest{UserID: user}); err != nil {
+		t.Fatalf("leave regular game: %v", err)
+	}
+	if _, err := h.uc.JoinGame(ctx, vipID, domain.JoinGameRequest{UserID: user, CardID: 3}); err != nil {
+		t.Fatalf("reserve VIP after leaving REGULAR: %v", err)
+	}
+}
+
+// The per-user wallet lock must make simultaneous cross-tier reservations
+// deterministic: exactly one tier wins and the other is rejected.
+func TestIntegration_Reservation_ConcurrentCrossTierAllowsExactlyOne(t *testing.T) {
+	h := newHarness(t)
+	defer h.cleanup()
+	ctx := context.Background()
+
+	user := h.seedUser("Concurrent-Tier", 72)
+	h.setBalance(user, 200)
+	regularID := h.seedWaitingGameType(domain.GameTypeRegular, 10)
+	vipID := h.seedWaitingGameType(domain.GameTypeVIP, 50)
+
+	type result struct {
+		gameID uuid.UUID
+		err    error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	var wg sync.WaitGroup
+	for i, gameID := range []uuid.UUID{regularID, vipID} {
+		wg.Add(1)
+		go func(cardID int, gameID uuid.UUID) {
+			defer wg.Done()
+			<-start
+			_, err := h.uc.JoinGame(ctx, gameID, domain.JoinGameRequest{UserID: user, CardID: cardID})
+			results <- result{gameID: gameID, err: err}
+		}(i+10, gameID)
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	succeeded := 0
+	failed := 0
+	for got := range results {
+		if got.err == nil {
+			succeeded++
+			continue
+		}
+		failed++
+		if !strings.Contains(got.err.Error(), "active ") {
+			t.Fatalf("unexpected join error for %s: %v", got.gameID, got.err)
+		}
+	}
+	if succeeded != 1 || failed != 1 {
+		t.Fatalf("want one success and one rejection, got successes=%d failures=%d", succeeded, failed)
+	}
 }
 
 func (h *harness) setBalance(userID uuid.UUID, bal float64) {

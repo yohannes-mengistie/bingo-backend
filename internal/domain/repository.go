@@ -149,6 +149,10 @@ type GameRepository interface {
 	FindPlayerCard(ctx context.Context, gameID, userID uuid.UUID, cardID int) (*GamePlayer, error)
 	// CountActiveCardsForUser counts a user's active cards in a game (cap check).
 	CountActiveCardsForUser(ctx context.Context, gameID, userID uuid.UUID) (int, error)
+	// FindOtherActiveGameForUserTx returns another live game in which the user
+	// still has an active card. It is called after locking the user's wallet, so
+	// concurrent joins to different tiers cannot both create reservations.
+	FindOtherActiveGameForUserTx(ctx context.Context, tx *sql.Tx, userID, gameID uuid.UUID) (*Game, error)
 	// CountDistinctPlayers counts distinct active users in a game (start rule).
 	CountDistinctPlayers(ctx context.Context, gameID uuid.UUID) (int, error)
 	GetPlayers(ctx context.Context, gameID uuid.UUID) ([]*GamePlayer, error)

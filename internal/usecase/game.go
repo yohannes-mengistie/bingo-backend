@@ -273,6 +273,18 @@ func (uc *GameUseCase) JoinGame(ctx context.Context, gameID uuid.UUID, req domai
 		return nil, fmt.Errorf("wallet not found: %w", err)
 	}
 
+	// A player may reserve multiple cards in one game, but must not participate
+	// in two live games (for example REGULAR and VIP) at the same time. This is
+	// checked only after the per-user wallet lock: concurrent cross-tier joins
+	// then serialize, and the second transaction sees the first reservation.
+	otherGame, err := uc.gameRepo.FindOtherActiveGameForUserTx(ctx, tx, req.UserID, gameID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check active games: %w", err)
+	}
+	if otherGame != nil {
+		return nil, fmt.Errorf("leave your active %s game before joining %s", otherGame.GameType, game.GameType)
+	}
+
 	// Enforce the per-player card cap. Read after locking the wallet so a user's
 	// concurrent joins (which serialize on that lock) can't both slip past it.
 	// count == 0 means this is the player's first card in the game.
