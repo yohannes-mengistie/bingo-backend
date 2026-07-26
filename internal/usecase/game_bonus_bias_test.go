@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/bingo/backend/internal/domain"
+	"github.com/bingo/backend/pkg/bingo"
 	"github.com/google/uuid"
 )
 
@@ -70,4 +71,64 @@ func TestIsBonusBiasTargetIncludesBonusCardForMixedPlayer(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBonusSafeDrawCandidatesUsesFullHopperAndBlocksBonusCompletion(t *testing.T) {
+	bonusCard := bingo.GenerateCard(1)
+	if bonusCard == nil {
+		t.Fatal("expected generated card")
+	}
+
+	drawnSet := make(map[int]bool)
+	for col := 0; col < 4; col++ {
+		drawnSet[bonusCard.Numbers[0][col]] = true
+	}
+	completingNumber := bonusCard.Numbers[0][4]
+
+	bonusPlayers := []*domain.GamePlayer{{
+		UserID:        uuid.New(),
+		CardID:        1,
+		Paid:          true,
+		PaidFromBonus: true,
+	}}
+	bonusCandidates := bonusSafeDrawCandidates(bonusPlayers, drawnSet)
+	if containsNumber(bonusCandidates, completingNumber) {
+		t.Fatalf("bonus completing number %d must be temporarily excluded", completingNumber)
+	}
+
+	walletPlayers := []*domain.GamePlayer{{
+		UserID: uuid.New(),
+		CardID: 1,
+		Paid:   true,
+	}}
+	walletCandidates := bonusSafeDrawCandidates(walletPlayers, drawnSet)
+	if !containsNumber(walletCandidates, completingNumber) {
+		t.Fatalf("wallet completing number %d must remain in the normal hopper", completingNumber)
+	}
+
+	outsideCardNumber := 0
+	cardNumbers := make(map[int]bool)
+	for row := 0; row < 5; row++ {
+		for col := 0; col < 5; col++ {
+			cardNumbers[bonusCard.Numbers[row][col]] = true
+		}
+	}
+	for n := domain.BingoNumberMinB; n <= domain.BingoNumberMaxO; n++ {
+		if !drawnSet[n] && !cardNumbers[n] {
+			outsideCardNumber = n
+			break
+		}
+	}
+	if outsideCardNumber == 0 || !containsNumber(bonusCandidates, outsideCardNumber) {
+		t.Fatal("candidate pool must include undrawn numbers outside tracked cards")
+	}
+}
+
+func containsNumber(numbers []int, target int) bool {
+	for _, n := range numbers {
+		if n == target {
+			return true
+		}
+	}
+	return false
 }
