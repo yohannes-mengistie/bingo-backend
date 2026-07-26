@@ -124,6 +124,39 @@ func TestBonusSafeDrawCandidatesUsesFullHopperAndBlocksBonusCompletion(t *testin
 	}
 }
 
+func TestBonusSafeDrawCandidatesBlocksFourCornersCompletion(t *testing.T) {
+	bonusCard := bingo.GenerateCard(1)
+	if bonusCard == nil {
+		t.Fatal("expected generated card")
+	}
+
+	drawnSet := map[int]bool{
+		bonusCard.Numbers[0][0]: true,
+		bonusCard.Numbers[0][4]: true,
+		bonusCard.Numbers[4][0]: true,
+	}
+	completingCorner := bonusCard.Numbers[4][4]
+
+	bonusPlayers := []*domain.GamePlayer{{
+		UserID:        uuid.New(),
+		CardID:        bonusCard.ID,
+		Paid:          true,
+		PaidFromBonus: true,
+	}}
+	if candidates := bonusSafeDrawCandidates(bonusPlayers, drawnSet); containsNumber(candidates, completingCorner) {
+		t.Fatalf("four-corners completing number %d must be temporarily excluded", completingCorner)
+	}
+
+	walletPlayers := []*domain.GamePlayer{{
+		UserID: uuid.New(),
+		CardID: bonusCard.ID,
+		Paid:   true,
+	}}
+	if candidates := bonusSafeDrawCandidates(walletPlayers, drawnSet); !containsNumber(candidates, completingCorner) {
+		t.Fatalf("wallet four-corners number %d must remain in the normal hopper", completingCorner)
+	}
+}
+
 func containsNumber(numbers []int, target int) bool {
 	for _, n := range numbers {
 		if n == target {

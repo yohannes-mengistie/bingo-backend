@@ -1271,10 +1271,24 @@ func appendHumanDangerNumbers(card *bingo.BingoCard, drawnSet map[int]bool, dang
 			dangerMap[unmarked[0]] = true
 		}
 	}
+	corners := func() {
+		positions := [][2]int{{0, 0}, {0, 4}, {4, 0}, {4, 4}}
+		unmarked := make([]int, 0, len(positions))
+		for _, pos := range positions {
+			n := card.Numbers[pos[0]][pos[1]]
+			if !marked[n] {
+				unmarked = append(unmarked, n)
+			}
+		}
+		if len(unmarked) == 1 {
+			dangerMap[unmarked[0]] = true
+		}
+	}
 
 	rows()
 	cols()
 	diags()
+	corners()
 }
 
 // bonusSafeDrawCandidates starts with the same full undrawn hopper as a normal
