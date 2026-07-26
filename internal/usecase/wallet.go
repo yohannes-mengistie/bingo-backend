@@ -96,9 +96,10 @@ func (uc *WalletUseCase) DepositVerifierAvailable(ctx context.Context) bool {
 // GetSettings returns the app settings row, falling back to defaults if unset.
 func (uc *WalletUseCase) GetSettings(ctx context.Context) (*domain.AppSettings, error) {
 	s := &domain.AppSettings{
-		MinDeposit:      domain.DefaultMinDeposit,
-		ReferralEnabled: true,
-		ReferralAmount:  domain.ReferralRewardAmount,
+		MinDeposit:          domain.DefaultMinDeposit,
+		WelcomeBonusEnabled: true,
+		ReferralEnabled:     true,
+		ReferralAmount:      domain.ReferralRewardAmount,
 		// Deposit channels default to ON — a fresh install accepts every
 		// supported method until an admin turns one off.
 		DepositTelebirrEnabled: true,
@@ -106,11 +107,11 @@ func (uc *WalletUseCase) GetSettings(ctx context.Context) (*domain.AppSettings, 
 		DepositMpesaEnabled:    true,
 	}
 	err := uc.db.QueryRowContext(ctx,
-		`SELECT min_deposit, referral_enabled, referral_amount, deposit_bonus_enabled, deposit_bonus_percentage,
+		`SELECT min_deposit, welcome_bonus_enabled, referral_enabled, referral_amount, deposit_bonus_enabled, deposit_bonus_percentage,
 		        maintenance_mode, maintenance_message, deposit_telebirr_enabled, deposit_cbebirr_enabled,
 		        deposit_mpesa_enabled, updated_at
 		 FROM app_settings WHERE id = 1`).
-		Scan(&s.MinDeposit, &s.ReferralEnabled, &s.ReferralAmount, &s.DepositBonusEnabled, &s.DepositBonusPercentage,
+		Scan(&s.MinDeposit, &s.WelcomeBonusEnabled, &s.ReferralEnabled, &s.ReferralAmount, &s.DepositBonusEnabled, &s.DepositBonusPercentage,
 			&s.MaintenanceMode, &s.MaintenanceMessage, &s.DepositTelebirrEnabled, &s.DepositCBEBirrEnabled, &s.DepositMpesaEnabled, &s.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return s, nil // migration not applied yet → sane defaults
@@ -132,6 +133,9 @@ func (uc *WalletUseCase) UpdateSettings(ctx context.Context, req domain.UpdateAp
 			return nil, errors.New("min_deposit cannot be negative")
 		}
 		cur.MinDeposit = *req.MinDeposit
+	}
+	if req.WelcomeBonusEnabled != nil {
+		cur.WelcomeBonusEnabled = *req.WelcomeBonusEnabled
 	}
 	if req.ReferralEnabled != nil {
 		cur.ReferralEnabled = *req.ReferralEnabled
@@ -167,15 +171,15 @@ func (uc *WalletUseCase) UpdateSettings(ctx context.Context, req domain.UpdateAp
 		cur.DepositMpesaEnabled = *req.DepositMpesaEnabled
 	}
 	_, err = uc.db.ExecContext(ctx, `
-		INSERT INTO app_settings (id, min_deposit, referral_enabled, referral_amount, deposit_bonus_enabled, deposit_bonus_percentage,
+		INSERT INTO app_settings (id, min_deposit, welcome_bonus_enabled, referral_enabled, referral_amount, deposit_bonus_enabled, deposit_bonus_percentage,
 		                          maintenance_mode, maintenance_message, deposit_telebirr_enabled, deposit_cbebirr_enabled,
 		                          deposit_mpesa_enabled, updated_at)
-		VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
-		ON CONFLICT (id) DO UPDATE SET min_deposit = $1, referral_enabled = $2, referral_amount = $3,
-		    deposit_bonus_enabled = $4, deposit_bonus_percentage = $5, maintenance_mode = $6, maintenance_message = $7,
-		    deposit_telebirr_enabled = $8, deposit_cbebirr_enabled = $9, deposit_mpesa_enabled = $10,
+		VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now())
+		ON CONFLICT (id) DO UPDATE SET min_deposit = $1, welcome_bonus_enabled = $2, referral_enabled = $3, referral_amount = $4,
+		    deposit_bonus_enabled = $5, deposit_bonus_percentage = $6, maintenance_mode = $7, maintenance_message = $8,
+		    deposit_telebirr_enabled = $9, deposit_cbebirr_enabled = $10, deposit_mpesa_enabled = $11,
 		    updated_at = now()`,
-		cur.MinDeposit, cur.ReferralEnabled, cur.ReferralAmount, cur.DepositBonusEnabled, cur.DepositBonusPercentage,
+		cur.MinDeposit, cur.WelcomeBonusEnabled, cur.ReferralEnabled, cur.ReferralAmount, cur.DepositBonusEnabled, cur.DepositBonusPercentage,
 		cur.MaintenanceMode, cur.MaintenanceMessage, cur.DepositTelebirrEnabled, cur.DepositCBEBirrEnabled,
 		cur.DepositMpesaEnabled)
 	if err != nil {

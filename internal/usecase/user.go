@@ -133,7 +133,14 @@ func (uc *UserUseCase) CreateUser(ctx context.Context, req domain.CreateUserRequ
 		return nil, nil, fmt.Errorf("failed to create wallet: %w", err)
 	}
 
-	if domain.DefaultUserBalance > 0 {
+	// The signup reward is independently controlled from Admin → Settings. Read
+	// it in this transaction so the user, wallet, and optional grant are committed
+	// as one unit. A missing settings row preserves the historical default (ON).
+	welcomeBonusEnabled := true
+	if err := tx.QueryRowContext(ctx, `SELECT welcome_bonus_enabled FROM app_settings WHERE id = 1`).Scan(&welcomeBonusEnabled); err != nil && err != sql.ErrNoRows {
+		return nil, nil, fmt.Errorf("failed to read welcome bonus setting: %w", err)
+	}
+	if welcomeBonusEnabled && domain.DefaultUserBalance > 0 {
 		if _, err := uc.bonusRepo.Grant(ctx, tx, user.ID, domain.DefaultUserBalance, "Welcome bonus"); err != nil {
 			return nil, nil, fmt.Errorf("failed to grant welcome bonus: %w", err)
 		}
