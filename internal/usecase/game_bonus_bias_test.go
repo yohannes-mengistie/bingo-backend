@@ -9,152 +9,203 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestIsBonusBiasTargetIncludesBonusCardForMixedPlayer(t *testing.T) {
-	mixedUser := uuid.New()
-	leftAt := time.Now()
-
-	tests := []struct {
-		name   string
-		player *domain.GamePlayer
-		want   bool
-	}{
-		{
-			name:   "bonus card for bonus-only player",
-			player: &domain.GamePlayer{UserID: uuid.New(), Paid: true, PaidFromBonus: true},
-			want:   true,
-		},
-		{
-			name:   "bonus card for mixed player",
-			player: &domain.GamePlayer{UserID: mixedUser, Paid: true, PaidFromBonus: true},
-			want:   true,
-		},
-		{
-			name:   "wallet card for same mixed player",
-			player: &domain.GamePlayer{UserID: mixedUser, Paid: true},
-			want:   false,
-		},
-		{
-			name:   "wallet-only player",
-			player: &domain.GamePlayer{UserID: uuid.New(), Paid: true},
-			want:   false,
-		},
-		{
-			name:   "unpaid bonus reservation",
-			player: &domain.GamePlayer{UserID: uuid.New(), PaidFromBonus: true},
-			want:   false,
-		},
-		{
-			name:   "bonus-funded bot",
-			player: &domain.GamePlayer{UserID: uuid.New(), Paid: true, PaidFromBonus: true, IsBot: true},
-			want:   false,
-		},
-		{
-			name:   "eliminated bonus card",
-			player: &domain.GamePlayer{UserID: uuid.New(), Paid: true, PaidFromBonus: true, IsEliminated: true},
-			want:   false,
-		},
-		{
-			name:   "left bonus card",
-			player: &domain.GamePlayer{UserID: uuid.New(), Paid: true, PaidFromBonus: true, LeftAt: &leftAt},
-			want:   false,
-		},
-		{
-			name: "nil player",
-			want: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := isBonusBiasTarget(tt.player); got != tt.want {
-				t.Fatalf("isBonusBiasTarget() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestBonusSafeDrawCandidatesUsesFullHopperAndBlocksBonusCompletion(t *testing.T) {
-	bonusCard := bingo.GenerateCard(1)
-	if bonusCard == nil {
-		t.Fatal("expected generated card")
+func TestBotSafeDrawCandidatesProtectsEveryRealPlayerAndUsesOnlyBotCards(t *testing.T) {
+	humanCard := bingo.GenerateCard(1)
+	if humanCard == nil {
+		t.Fatal("expected generated human card")
 	}
 
 	drawnSet := make(map[int]bool)
-	for col := 0; col < 4; col++ {
-		drawnSet[bonusCard.Numbers[0][col]] = true
+	for col := 0; col < domain.CardGridSize-1; col++ {
+		drawnSet[humanCard.Numbers[0][col]] = true
 	}
-	completingNumber := bonusCard.Numbers[0][4]
+	humanCompleting := humanCard.Numbers[0][domain.CardGridSize-1]
+	botCard := findBotCardContainingSafeNumber(t, humanCompleting, drawnSet, humanCard.ID)
 
-	bonusPlayers := []*domain.GamePlayer{{
-		UserID:        uuid.New(),
-		CardID:        1,
-		Paid:          true,
-		PaidFromBonus: true,
-	}}
-	bonusCandidates := bonusSafeDrawCandidates(bonusPlayers, drawnSet)
-	if containsNumber(bonusCandidates, completingNumber) {
-		t.Fatalf("bonus completing number %d must be temporarily excluded", completingNumber)
+	bot := &domain.GamePlayer{UserID: uuid.New(), CardID: botCard.ID, Paid: true, IsBot: true}
+	withoutHuman := botSafeDrawCandidates([]*domain.GamePlayer{bot}, drawnSet, false)
+	if !containsNumber(withoutHuman, humanCompleting) {
+		t.Fatalf("test setup: bot candidate pool should contain %d without a human card", humanCompleting)
 	}
 
-	walletPlayers := []*domain.GamePlayer{{
-		UserID: uuid.New(),
-		CardID: 1,
-		Paid:   true,
-	}}
-	walletCandidates := bonusSafeDrawCandidates(walletPlayers, drawnSet)
-	if !containsNumber(walletCandidates, completingNumber) {
-		t.Fatalf("wallet completing number %d must remain in the normal hopper", completingNumber)
+	// This is an ordinary wallet-funded human card. All real cards must be
+	// protected; the rule is no longer limited to bonus-funded cards.
+	human := &domain.GamePlayer{UserID: uuid.New(), CardID: humanCard.ID, Paid: true}
+	candidates := botSafeDrawCandidates([]*domain.GamePlayer{human, bot}, drawnSet, false)
+	if containsNumber(candidates, humanCompleting) {
+		t.Fatalf("human-completing number %d must be excluded", humanCompleting)
+	}
+	if len(candidates) == 0 {
+		t.Fatal("expected at least one safe bot-card candidate")
 	}
 
-	outsideCardNumber := 0
-	cardNumbers := make(map[int]bool)
-	for row := 0; row < 5; row++ {
-		for col := 0; col < 5; col++ {
-			cardNumbers[bonusCard.Numbers[row][col]] = true
+	botNumbers := cardNumberSet(botCard)
+	for _, n := range candidates {
+		if drawnSet[n] {
+			t.Fatalf("candidate %d was already drawn", n)
+		}
+		if !botNumbers[n] {
+			t.Fatalf("candidate %d does not appear on the active bot card", n)
 		}
 	}
+
 	for n := domain.BingoNumberMinB; n <= domain.BingoNumberMaxO; n++ {
-		if !drawnSet[n] && !cardNumbers[n] {
-			outsideCardNumber = n
-			break
+		if !drawnSet[n] && !botNumbers[n] && containsNumber(candidates, n) {
+			t.Fatalf("number %d outside all bot cards entered the candidate pool", n)
 		}
-	}
-	if outsideCardNumber == 0 || !containsNumber(bonusCandidates, outsideCardNumber) {
-		t.Fatal("candidate pool must include undrawn numbers outside tracked cards")
 	}
 }
 
-func TestBonusSafeDrawCandidatesBlocksFourCornersCompletion(t *testing.T) {
-	bonusCard := bingo.GenerateCard(1)
-	if bonusCard == nil {
-		t.Fatal("expected generated card")
+func TestBotSafeDrawCandidatesBlocksEarlyBotBingoAndForcesItAtTarget(t *testing.T) {
+	botCard := bingo.GenerateCard(2)
+	if botCard == nil {
+		t.Fatal("expected generated bot card")
+	}
+
+	drawnSet := make(map[int]bool)
+	for col := 0; col < domain.CardGridSize-1; col++ {
+		drawnSet[botCard.Numbers[0][col]] = true
+	}
+	botCompleting := botCard.Numbers[0][domain.CardGridSize-1]
+	players := []*domain.GamePlayer{{UserID: uuid.New(), CardID: botCard.ID, Paid: true, IsBot: true}}
+
+	beforeTarget := botSafeDrawCandidates(players, drawnSet, false)
+	if containsNumber(beforeTarget, botCompleting) {
+		t.Fatalf("bot-completing number %d must be excluded before the target", botCompleting)
+	}
+
+	atTarget := botSafeDrawCandidates(players, drawnSet, true)
+	if !containsNumber(atTarget, botCompleting) {
+		t.Fatalf("bot-completing number %d should be available at the target", botCompleting)
+	}
+	botDanger := make(map[int]bool)
+	appendDangerNumbers(botCard, drawnSet, botDanger)
+	for _, n := range atTarget {
+		if !botDanger[n] {
+			t.Fatalf("forced candidate %d does not complete a bot bingo", n)
+		}
+	}
+}
+
+func TestBotSafeDrawCandidatesProtectsHumanFourCorners(t *testing.T) {
+	humanCard := bingo.GenerateCard(1)
+	if humanCard == nil {
+		t.Fatal("expected generated human card")
 	}
 
 	drawnSet := map[int]bool{
-		bonusCard.Numbers[0][0]: true,
-		bonusCard.Numbers[0][4]: true,
-		bonusCard.Numbers[4][0]: true,
+		humanCard.Numbers[0][0]: true,
+		humanCard.Numbers[0][4]: true,
+		humanCard.Numbers[4][0]: true,
 	}
-	completingCorner := bonusCard.Numbers[4][4]
-
-	bonusPlayers := []*domain.GamePlayer{{
-		UserID:        uuid.New(),
-		CardID:        bonusCard.ID,
-		Paid:          true,
-		PaidFromBonus: true,
-	}}
-	if candidates := bonusSafeDrawCandidates(bonusPlayers, drawnSet); containsNumber(candidates, completingCorner) {
-		t.Fatalf("four-corners completing number %d must be temporarily excluded", completingCorner)
+	completingCorner := humanCard.Numbers[4][4]
+	botCard := findBotCardContainingSafeNumber(t, completingCorner, drawnSet, humanCard.ID)
+	players := []*domain.GamePlayer{
+		{UserID: uuid.New(), CardID: humanCard.ID, Paid: true},
+		{UserID: uuid.New(), CardID: botCard.ID, Paid: true, IsBot: true},
 	}
 
-	walletPlayers := []*domain.GamePlayer{{
-		UserID: uuid.New(),
-		CardID: bonusCard.ID,
-		Paid:   true,
-	}}
-	if candidates := bonusSafeDrawCandidates(walletPlayers, drawnSet); !containsNumber(candidates, completingCorner) {
-		t.Fatalf("wallet four-corners number %d must remain in the normal hopper", completingCorner)
+	if candidates := botSafeDrawCandidates(players, drawnSet, false); containsNumber(candidates, completingCorner) {
+		t.Fatalf("four-corners completing number %d must be excluded", completingCorner)
 	}
+}
+
+func TestFullHopperSafeDrawCandidatesKeepsGameMovingWithoutBots(t *testing.T) {
+	humanCard := bingo.GenerateCard(1)
+	if humanCard == nil {
+		t.Fatal("expected generated human card")
+	}
+
+	drawnSet := make(map[int]bool)
+	for col := 0; col < domain.CardGridSize-1; col++ {
+		drawnSet[humanCard.Numbers[0][col]] = true
+	}
+	humanCompleting := humanCard.Numbers[0][domain.CardGridSize-1]
+	players := []*domain.GamePlayer{{UserID: uuid.New(), CardID: humanCard.ID, Paid: true}}
+
+	if candidates := botSafeDrawCandidates(players, drawnSet, false); len(candidates) != 0 {
+		t.Fatalf("bot-only pool should be empty without bot cards: %v", candidates)
+	}
+	fallback := fullHopperSafeDrawCandidates(players, drawnSet)
+	if len(fallback) == 0 {
+		t.Fatal("full-hopper fallback should keep the game moving")
+	}
+	if containsNumber(fallback, humanCompleting) {
+		t.Fatalf("fallback included human-completing number %d", humanCompleting)
+	}
+}
+
+func TestFullHopperSafeDrawCandidatesAvoidsEarlyBotCompletion(t *testing.T) {
+	botCard := bingo.GenerateCard(2)
+	if botCard == nil {
+		t.Fatal("expected generated bot card")
+	}
+
+	drawnSet := make(map[int]bool)
+	for col := 0; col < domain.CardGridSize-1; col++ {
+		drawnSet[botCard.Numbers[0][col]] = true
+	}
+	botCompleting := botCard.Numbers[0][domain.CardGridSize-1]
+	players := []*domain.GamePlayer{{UserID: uuid.New(), CardID: botCard.ID, Paid: true, IsBot: true}}
+
+	if candidates := fullHopperSafeDrawCandidates(players, drawnSet); containsNumber(candidates, botCompleting) {
+		t.Fatalf("fallback included early bot-completing number %d while stricter choices exist", botCompleting)
+	}
+}
+
+func TestFullHopperSafeDrawCandidatesEmptyOnlyWhenNothingIsUndrawn(t *testing.T) {
+	drawnSet := make(map[int]bool, domain.BingoNumberMaxO-domain.BingoNumberMinB+1)
+	for n := domain.BingoNumberMinB; n <= domain.BingoNumberMaxO; n++ {
+		drawnSet[n] = true
+	}
+	if candidates := fullHopperSafeDrawCandidates(nil, drawnSet); len(candidates) != 0 {
+		t.Fatalf("exhausted hopper returned candidates: %v", candidates)
+	}
+}
+
+func TestBotSafeDrawCandidatesIgnoresInactiveCards(t *testing.T) {
+	leftAt := time.Now()
+	players := []*domain.GamePlayer{
+		nil,
+		{UserID: uuid.New(), CardID: 1, Paid: true, IsBot: true, IsEliminated: true},
+		{UserID: uuid.New(), CardID: 2, Paid: true, IsBot: true, LeftAt: &leftAt},
+	}
+	if candidates := botSafeDrawCandidates(players, map[int]bool{}, false); len(candidates) != 0 {
+		t.Fatalf("inactive bot cards produced candidates: %v", candidates)
+	}
+}
+
+func findBotCardContainingSafeNumber(t *testing.T, target int, drawnSet map[int]bool, excludedCardID int) *bingo.BingoCard {
+	t.Helper()
+	for cardID := domain.MinCardID; cardID <= domain.MaxCardID; cardID++ {
+		if cardID == excludedCardID {
+			continue
+		}
+		card := bingo.GenerateCard(cardID)
+		if card == nil || !cardNumberSet(card)[target] {
+			continue
+		}
+		danger := make(map[int]bool)
+		appendDangerNumbers(card, drawnSet, danger)
+		if !danger[target] {
+			return card
+		}
+	}
+	t.Fatalf("could not find bot card containing non-completing number %d", target)
+	return nil
+}
+
+func cardNumberSet(card *bingo.BingoCard) map[int]bool {
+	numbers := make(map[int]bool, domain.CardTotalPositions)
+	for row := 0; row < domain.CardGridSize; row++ {
+		for col := 0; col < domain.CardGridSize; col++ {
+			n := card.Numbers[row][col]
+			if n != domain.CardCenterValue {
+				numbers[n] = true
+			}
+		}
+	}
+	return numbers
 }
 
 func containsNumber(numbers []int, target int) bool {
