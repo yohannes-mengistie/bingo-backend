@@ -29,14 +29,15 @@ func (m BiasedDrawMode) IsValid() bool {
 // BotConfig is the single-row policy (bot_config table) that drives the
 // automatic filler. It is read every sweep and edited from the admin dashboard.
 type BotConfig struct {
-	Enabled        bool           `json:"enabled" db:"enabled"`                   // master auto-fill switch
-	MinRealPlayers int            `json:"min_real_players" db:"min_real_players"` // FLOOR: start adding bots once a game has at least this many real players (1 = as soon as one joins). No upper ceiling.
-	TargetBots     int            `json:"target_bots" db:"target_bots"`           // add bots until the game holds this many
-	Tiers          string         `json:"tiers" db:"tiers"`                       // comma-separated game types to fill, e.g. "REGULAR,VIP"
-	WinRate        float64        `json:"win_rate" db:"win_rate"`                 // probability (0-1) that bots win co-winner situations; 1 = bots always win when they have a bingo
-	BotAlwaysWin   bool           `json:"bot_always_win" db:"bot_always_win"`     // compatibility mirror: true for legacy/protected modes
-	BiasedDrawMode BiasedDrawMode `json:"biased_draw_mode" db:"biased_draw_mode"` // disabled, legacy, or protected
-	UpdatedAt      time.Time      `json:"updated_at" db:"updated_at"`
+	Enabled            bool           `json:"enabled" db:"enabled"`                           // master auto-fill switch
+	MinRealPlayers     int            `json:"min_real_players" db:"min_real_players"`         // deprecated compatibility field; dynamic staffing no longer uses a join floor
+	TargetBots         int            `json:"target_bots" db:"target_bots"`                   // deprecated compatibility field; replaced by minimum_room_players
+	MinimumRoomPlayers int            `json:"minimum_room_players" db:"minimum_room_players"` // desired real+bot room size while real players are below this threshold
+	Tiers              string         `json:"tiers" db:"tiers"`                               // comma-separated game types to fill, e.g. "REGULAR,VIP"
+	WinRate            float64        `json:"win_rate" db:"win_rate"`                         // retained compatibility setting
+	BotAlwaysWin       bool           `json:"bot_always_win" db:"bot_always_win"`             // compatibility mirror: true for legacy/protected modes
+	BiasedDrawMode     BiasedDrawMode `json:"biased_draw_mode" db:"biased_draw_mode"`         // saved low-population policy: disabled, legacy, or protected
+	UpdatedAt          time.Time      `json:"updated_at" db:"updated_at"`
 }
 
 // EffectiveBiasedDrawMode returns a valid mode and maps legacy boolean-only
@@ -88,18 +89,19 @@ func (c BotConfig) TierList() []GameType {
 // UpdateBotConfigRequest is the admin dashboard payload to change the policy.
 // Pointers so an admin can update a single field without resetting the others.
 type UpdateBotConfigRequest struct {
-	Enabled        *bool           `json:"enabled,omitempty"`
-	MinRealPlayers *int            `json:"min_real_players,omitempty"`
-	TargetBots     *int            `json:"target_bots,omitempty"`
-	Tiers          *string         `json:"tiers,omitempty"`
-	WinRate        *float64        `json:"win_rate,omitempty"`
-	BotAlwaysWin   *bool           `json:"bot_always_win,omitempty"`
-	BiasedDrawMode *BiasedDrawMode `json:"biased_draw_mode,omitempty"`
+	Enabled            *bool           `json:"enabled,omitempty"`
+	MinRealPlayers     *int            `json:"min_real_players,omitempty"`
+	TargetBots         *int            `json:"target_bots,omitempty"`
+	MinimumRoomPlayers *int            `json:"minimum_room_players,omitempty"`
+	Tiers              *string         `json:"tiers,omitempty"`
+	WinRate            *float64        `json:"win_rate,omitempty"`
+	BotAlwaysWin       *bool           `json:"bot_always_win,omitempty"`
+	BiasedDrawMode     *BiasedDrawMode `json:"biased_draw_mode,omitempty"`
 }
 
 // AddBotsRequest is the admin dashboard payload to manually inject bots into one
-// game. Count is how many bots to add (capped by the config target and by free
-// cards).
+// game. Count is capped only by available bot accounts and free cards; automatic
+// dynamic staffing is handled separately by the sweeper.
 type AddBotsRequest struct {
 	Count int `json:"count" binding:"required,min=1"`
 }
@@ -117,8 +119,8 @@ type BotFillResult struct {
 // separate from UserRepository so the money engine and existing interfaces are
 // untouched.
 type BotRepository interface {
-	// ListBots returns bot users in random order, up to limit. Callers must not
-	// rely on a stable order — it varies per call so lobbies vary per round.
+	// ListBots returns the least-recently-used bot users first, randomizing ties.
+	// This rotates the full pool instead of repeatedly showing the same roster.
 	ListBots(ctx context.Context, limit int) ([]*User, error)
 	// CountBots returns how many bot accounts exist.
 	CountBots(ctx context.Context) (int, error)
@@ -126,6 +128,9 @@ type BotRepository interface {
 	CountRealPlayersInGame(ctx context.Context, gameID uuid.UUID) (int, error)
 	// CountBotsInGame counts distinct bot users still active in a game.
 	CountBotsInGame(ctx context.Context, gameID uuid.UUID) (int, error)
+	// HasSpendableBonusPlayerInGame reports whether an active real player has
+	// enough live bonus to fund at least one card at the supplied stake.
+	HasSpendableBonusPlayerInGame(ctx context.Context, gameID uuid.UUID, stake float64) (bool, error)
 	// SecondsSinceFirstRealPlayer reports how long ago the earliest still-active
 	// real player joined, and whether the game has one at all. Used to hold bots
 	// back for a moment after someone sits down. Computed in the database so it

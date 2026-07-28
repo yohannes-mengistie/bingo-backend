@@ -911,27 +911,6 @@ func (uc *GameUseCase) resumeCountdown(ctx context.Context, gameID uuid.UUID) {
 // then picks up exactly where it left off (drawn numbers live in Redis). If we
 // ever lose the lease mid-draw, we stop immediately so the new owner is alone.
 
-// anySafeDrawNumber returns one human-safe number from the full undrawn hopper.
-// It prefers numbers that also avoid completing a bot bingo before the target,
-// but will allow a human-safe bot completion rather than cancelling a live game.
-func (uc *GameUseCase) anySafeDrawNumber(ctx context.Context, gameID uuid.UUID, drawnNumbers []int) int {
-	players, err := uc.gameRepo.GetPlayers(ctx, gameID)
-	if err != nil {
-		return 0
-	}
-
-	drawnSet := make(map[int]bool, len(drawnNumbers))
-	for _, n := range drawnNumbers {
-		drawnSet[n] = true
-	}
-
-	candidates := fullHopperSafeDrawCandidates(players, drawnSet)
-	if len(candidates) == 0 {
-		return 0
-	}
-	return candidates[rand.Intn(len(candidates))]
-}
-
 func (uc *GameUseCase) totalActivePlayers(ctx context.Context, gameID uuid.UUID) int {
 	players, err := uc.gameRepo.GetPlayers(ctx, gameID)
 	if err != nil {
@@ -992,41 +971,25 @@ func (uc *GameUseCase) drawNumbers(ctx context.Context, gameID uuid.UUID) {
 		}
 
 		forceComplete := len(drawnNumbers)+1 >= targetDrawCount && uc.botRepo != nil
-		biasedLetter, biasedNumber, berr := uc.biasedDraw(ctx, gameID, numbers, targetDrawCount, forceComplete)
-		var letter string
-		var number int
-		if berr == nil && biasedNumber != 0 {
-			letter, number = biasedLetter, biasedNumber
-		} else if cfg, cerr := uc.botRepo.GetConfig(ctx); cerr == nil && cfg.EffectiveBiasedDrawMode() != domain.BiasedDrawModeDisabled {
-			fallback := uc.anySafeDrawNumber(ctx, gameID, numbers)
-			if fallback != 0 {
-				letter, number = bingo.GetLetterForNumber(fallback), fallback
-			} else {
-				// No human-safe number remains. Use the ordinary hopper so this
-				// path reaches the genuine 75-number exhaustion case instead of
-				// cancelling merely because the biased pool became empty.
-				letter, number, err = bingo.DrawNextNumber(numbers)
-				if err != nil || number == 0 {
-					if _, _, _, cerr := uc.cancelGameAndRefund(ctx, gameID, "all numbers drawn, no winner"); cerr != nil {
-						fmt.Printf("Warning: failed to auto-cancel exhausted game %s: %v\n", gameID, cerr)
-					}
-					go func() {
-						defer utils.RecoverPanic("spawnNextGame")
-						if newGame, err := uc.CreateOrGetGame(context.Background(), game.GameType); err == nil && newGame != nil {
-							uc.redisService.PublishEvent(context.Background(), gameID, domain.WebSocketEventNewGameAvailable, map[string]interface{}{
-								"gameId":   newGame.ID.String(),
-								"gameType": string(newGame.GameType),
-							})
-						}
-					}()
-					return
-				}
-			}
-		} else {
-			var err error
+		letter, number, err := uc.biasedDraw(ctx, gameID, numbers, targetDrawCount, forceComplete)
+		if err != nil || number == 0 {
+			// Configuration/repository failures degrade to an ordinary fair draw.
+			// Exhaustion is the only condition that cancels and refunds the game.
 			letter, number, err = bingo.DrawNextNumber(numbers)
 			if err != nil || number == 0 {
-				continue
+				if _, _, _, cerr := uc.cancelGameAndRefund(ctx, gameID, "all numbers drawn, no winner"); cerr != nil {
+					fmt.Printf("Warning: failed to auto-cancel exhausted game %s: %v\n", gameID, cerr)
+				}
+				go func() {
+					defer utils.RecoverPanic("spawnNextGame")
+					if newGame, err := uc.CreateOrGetGame(context.Background(), game.GameType); err == nil && newGame != nil {
+						uc.redisService.PublishEvent(context.Background(), gameID, domain.WebSocketEventNewGameAvailable, map[string]interface{}{
+							"gameId":   newGame.ID.String(),
+							"gameType": string(newGame.GameType),
+						})
+					}
+				}()
+				return
 			}
 		}
 
@@ -1056,6 +1019,56 @@ func (uc *GameUseCase) drawNumbers(ctx context.Context, gameID uuid.UUID) {
 			return
 		}
 	}
+}
+
+// gameDrawPolicy is the per-room runtime policy. The admin setting is
+// preserved in storage, but it is automatically suspended in rooms at or above
+// the configured real-player minimum and whenever no bot is actually present.
+type gameDrawPolicy struct {
+	mode       domain.BiasedDrawMode
+	bonusGuard bool
+}
+
+func effectiveGameDrawPolicy(cfg domain.BotConfig, players []*domain.GamePlayer) gameDrawPolicy {
+	mode := cfg.EffectiveBiasedDrawMode()
+	activeBots := 0
+	realUsers := make(map[uuid.UUID]bool)
+	hasBonusFundedCard := false
+	for _, p := range players {
+		if p == nil || p.IsEliminated || p.LeftAt != nil {
+			continue
+		}
+		if p.IsBot {
+			activeBots++
+			continue
+		}
+		realUsers[p.UserID] = true
+		if p.Paid && p.PaidFromBonus {
+			hasBonusFundedCard = true
+		}
+	}
+
+	// A room without bots must always be genuinely fair, even when the saved
+	// admin policy is Legacy or Protected.
+	if activeBots == 0 {
+		return gameDrawPolicy{mode: domain.BiasedDrawModeDisabled}
+	}
+
+	minimum := cfg.MinimumRoomPlayers
+	if minimum < domain.MinPlayers {
+		minimum = 20
+	}
+	if len(realUsers) >= minimum {
+		// High-population rooms suspend general bot advantage. When the saved
+		// policy is enabled, only actually bonus-funded cards are ineligible;
+		// wallet-funded humans and bots remain equal competitors.
+		if mode != domain.BiasedDrawModeDisabled && hasBonusFundedCard {
+			return gameDrawPolicy{mode: domain.BiasedDrawModeDisabled, bonusGuard: true}
+		}
+		return gameDrawPolicy{mode: domain.BiasedDrawModeDisabled}
+	}
+
+	return gameDrawPolicy{mode: mode}
 }
 
 // winnerCard is one card that has completed a valid bingo, together with the
@@ -1106,11 +1119,17 @@ func (uc *GameUseCase) drawnNumberSet(ctx context.Context, gameID uuid.UUID) (ma
 	return drawnSet, nil
 }
 
-// collectWinners returns every active card that currently forms a valid bingo
-// over the drawn set. When a biased draw mode is enabled, bots keep mixed
-// bot/human co-winner situations. Otherwise every winning card is returned and
-// the prize is split evenly by the existing payout finalizer. If only one group
-// has winners, that group wins normally.
+func winnerEligible(policy gameDrawPolicy, player *domain.GamePlayer) bool {
+	if player == nil || player.IsEliminated || player.LeftAt != nil {
+		return false
+	}
+	return !policy.bonusGuard || player.IsBot || !player.PaidFromBonus
+}
+
+// collectWinners returns every eligible active card that currently forms a
+// valid bingo. Low-population rooms use the saved admin policy. High-population
+// bonus-guard rooms discard only bonus-funded winning cards; wallet-funded
+// humans and bots remain equal co-winners and split the pot normally.
 func (uc *GameUseCase) collectWinners(ctx context.Context, gameID uuid.UUID, drawnSet map[int]bool) ([]winnerCard, error) {
 	players, err := uc.gameRepo.GetPlayers(ctx, gameID)
 	if err != nil {
@@ -1124,12 +1143,17 @@ func (uc *GameUseCase) collectWinners(ctx context.Context, gameID uuid.UUID, dra
 		return players[i].JoinedAt.Before(players[j].JoinedAt)
 	})
 
+	policy := gameDrawPolicy{mode: domain.BiasedDrawModeDisabled}
+	if cfg, err := uc.botRepo.GetConfig(ctx); err == nil {
+		policy = effectiveGameDrawPolicy(*cfg, players)
+	}
+
 	allWinners := make([]winnerCard, 0)
 	botWinners := make([]winnerCard, 0)
 	humanWinners := make([]winnerCard, 0)
 
 	for _, p := range players {
-		if p.IsEliminated {
+		if !winnerEligible(policy, p) {
 			continue
 		}
 		card := bingo.GenerateCard(p.CardID)
@@ -1137,28 +1161,25 @@ func (uc *GameUseCase) collectWinners(ctx context.Context, gameID uuid.UUID, dra
 			continue
 		}
 		marked := autoDaubMarks(card, drawnSet)
-		if bingo.ValidateBingo(card, marked) {
-			wc := winnerCard{UserID: p.UserID, CardID: p.CardID, Marked: marked}
-			allWinners = append(allWinners, wc)
-			if p.IsBot {
-				botWinners = append(botWinners, wc)
-			} else {
-				humanWinners = append(humanWinners, wc)
-			}
+		if !bingo.ValidateBingo(card, marked) {
+			continue
+		}
+
+		wc := winnerCard{UserID: p.UserID, CardID: p.CardID, Marked: marked}
+		allWinners = append(allWinners, wc)
+		if p.IsBot {
+			botWinners = append(botWinners, wc)
+		} else {
+			humanWinners = append(humanWinners, wc)
 		}
 	}
 
 	if len(botWinners) > 0 && len(humanWinners) > 0 {
-		cfg, err := uc.botRepo.GetConfig(ctx)
-		if err == nil {
-			return selectMixedWinners(allWinners, botWinners, cfg.EffectiveBiasedDrawMode() != domain.BiasedDrawModeDisabled), nil
-		}
+		return selectMixedWinners(allWinners, botWinners, policy.mode != domain.BiasedDrawModeDisabled), nil
 	}
-
 	if len(botWinners) > 0 {
 		return botWinners, nil
 	}
-
 	return allWinners, nil
 }
 
@@ -1392,22 +1413,22 @@ func fullHopperSafeDrawCandidates(players []*domain.GamePlayer, drawnSet map[int
 	return humanSafe
 }
 
-// biasedDraw selects the configured policy: disabled uses the ordinary draw,
-// legacy reproduces the former full-hopper/bonus-only behavior, and protected
-// uses bot-card candidates while protecting every active human card.
+// biasedDraw selects the effective per-room policy. Fair and bonus-guard rooms
+// use the ordinary hopper; the bonus guard is enforced only when winners are
+// selected so wallet-funded humans and bots see the same number stream.
 func (uc *GameUseCase) biasedDraw(ctx context.Context, gameID uuid.UUID, drawnNumbers []int, _ int, forceComplete bool) (string, int, error) {
 	cfg, err := uc.botRepo.GetConfig(ctx)
 	if err != nil {
-		return "", 0, nil
+		return "", 0, err
 	}
-	mode := cfg.EffectiveBiasedDrawMode()
-	if mode == domain.BiasedDrawModeDisabled {
-		return "", 0, nil
-	}
-
 	players, err := uc.gameRepo.GetPlayers(ctx, gameID)
 	if err != nil {
 		return "", 0, err
+	}
+
+	policy := effectiveGameDrawPolicy(*cfg, players)
+	if policy.mode == domain.BiasedDrawModeDisabled {
+		return bingo.DrawNextNumber(drawnNumbers)
 	}
 
 	drawnSet := make(map[int]bool, len(drawnNumbers))
@@ -1416,13 +1437,18 @@ func (uc *GameUseCase) biasedDraw(ctx context.Context, gameID uuid.UUID, drawnNu
 	}
 
 	var candidates []int
-	if mode == domain.BiasedDrawModeLegacy {
+	if policy.mode == domain.BiasedDrawModeLegacy {
 		candidates = legacySafeDrawCandidates(players, drawnSet)
 	} else {
 		candidates = botSafeDrawCandidates(players, drawnSet, forceComplete)
+		if len(candidates) == 0 {
+			// Preserve the protected non-cancelling fallback: leave the bot-card
+			// pool, protect every human card, and prefer avoiding early bot bingo.
+			candidates = fullHopperSafeDrawCandidates(players, drawnSet)
+		}
 	}
 	if len(candidates) == 0 {
-		return "", 0, nil
+		return bingo.DrawNextNumber(drawnNumbers)
 	}
 	pick := candidates[rand.Intn(len(candidates))]
 	return bingo.GetLetterForNumber(pick), pick, nil

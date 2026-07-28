@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"math"
 	"math/rand"
+	"sort"
 	"time"
 
 	"github.com/bingo/backend/internal/domain"
@@ -16,7 +16,10 @@ import (
 
 // botTelegramIDBase is the offset for synthetic bot Telegram IDs. Real Telegram
 // IDs are positive, so large negative IDs can never collide with a real user.
-const botTelegramIDBase = -1_000_000_000
+const (
+	botTelegramIDBase           = -1_000_000_000
+	highPopulationGuardBotCount = 2
+)
 
 // botDisplayNames are Telegram-style display names used for house-controlled
 // filler bots. They intentionally mirror the mixed formatting real Telegram
@@ -164,6 +167,12 @@ func (uc *BotUseCase) UpdateConfig(ctx context.Context, req domain.UpdateBotConf
 			return nil, fmt.Errorf("target_bots cannot be negative")
 		}
 		cfg.TargetBots = *req.TargetBots
+	}
+	if req.MinimumRoomPlayers != nil {
+		if *req.MinimumRoomPlayers < domain.MinPlayers || *req.MinimumRoomPlayers > domain.MaxCardID {
+			return nil, fmt.Errorf("minimum_room_players must be between %d and %d", domain.MinPlayers, domain.MaxCardID)
+		}
+		cfg.MinimumRoomPlayers = *req.MinimumRoomPlayers
 	}
 	if req.Tiers != nil {
 		cfg.Tiers = *req.Tiers
@@ -478,87 +487,75 @@ func (uc *BotUseCase) joinDelayFor(gameID uuid.UUID) time.Duration {
 	return base + time.Duration(float64(base)*0.5*spread)
 }
 
-// perGameTarget varies the per-game bot count so rooms differ round to round —
-// a fixed count in every game (always exactly 50) is itself a tell — but NEVER
-// below the configured target. cfgTarget is the FLOOR; each game adds up to ~30%
-// more on top. Derived from the game id, so it is stable across sweeps of the
-// same game (the target can't wobble tick to tick) while differing between games.
-// Range is [cfgTarget, cfgTarget*1.3].
-func (uc *BotUseCase) perGameTarget(gameID uuid.UUID, cfgTarget int) int {
-	if cfgTarget <= 0 {
+// desiredBotCount returns the exact number of bots a lobby should contain.
+// Below the configured room minimum, bots fill only the missing seats. At or
+// above the minimum, the saved winning policy is suspended; two guard bots are
+// retained only when a real player can fund a card with live bonus and that
+// saved policy is enabled. A disabled saved policy keeps the high-pop room fully
+// fair and bot-free.
+func desiredBotCount(realPlayers, minimumRoomPlayers int, hasSpendableBonus, savedPolicyEnabled bool) int {
+	if minimumRoomPlayers <= 0 {
 		return 0
 	}
-	extra := float64(cfgTarget) * 0.30 * (float64(gameID[1]) / 255.0) // 0 .. 30% of target
-	t := cfgTarget + int(math.Round(extra))
-	if t < domain.MinPlayers {
-		t = domain.MinPlayers
+	if realPlayers < minimumRoomPlayers {
+		return minimumRoomPlayers - realPlayers
 	}
-	// Never target more bots than the pool holds — otherwise the room can never
-	// reach the target (it runs out of distinct bots) and the count just stalls.
-	// So configuring the target AT the pool size defeats the upward variation:
-	// leave headroom (e.g. target 200 with a 300 pool) for counts to vary.
-	if uc.settings.PoolSize > 0 && t > uc.settings.PoolSize {
-		t = uc.settings.PoolSize
+	if hasSpendableBonus && savedPolicyEnabled {
+		return highPopulationGuardBotCount
 	}
-	return t
+	return 0
 }
 
-// desiredBotsNow returns how many bots SHOULD be present in this game right now.
-// Instead of rushing to the full target and then sitting frozen (the count hits
-// 50 at countdown-20s and never moves — obviously fake), it seeds just enough to
-// cross MinPlayers and kick off the countdown, then RAMPS the count up across the
-// countdown, reaching the (per-game, varied) target a little before 0s, with a
-// small bursty wobble. The sweeper turns this into per-tick joins:
-// need = desiredBotsNow - botsInGame.
-//
-// remaining is the countdown time left (only meaningful when inCountdown). It is
-// derived from the Redis countdown, stored as a Unix epoch, so it is immune to
-// the app-vs-Postgres timezone skew that makes DB timestamps unusable for
-// app-side clock math here.
-func (uc *BotUseCase) desiredBotsNow(gameID uuid.UUID, cfgTarget int, inCountdown bool, remaining time.Duration) int {
-	target := uc.perGameTarget(gameID, cfgTarget)
-	if target <= 0 {
+// trimBots removes the most recently joined bots first until requested distinct
+// bot users have left. GameUseCase.LeaveGame owns the transaction, stake refund,
+// live counters, Redis card release, and room events, so dynamic trimming cannot
+// bypass the same invariants enforced for an ordinary leave.
+func (uc *BotUseCase) trimBots(ctx context.Context, gameID uuid.UUID, requested int) int {
+	if requested <= 0 {
+		return 0
+	}
+	players, err := uc.gameRepo.GetPlayers(ctx, gameID)
+	if err != nil {
 		return 0
 	}
 
-	if !inCountdown {
-		// Pre-countdown: seed just enough to cross MinPlayers and start it; the
-		// rest arrive paced during the countdown.
-		if target < domain.MinPlayers {
-			return target
+	latestByBot := make(map[uuid.UUID]*domain.GamePlayer)
+	for _, p := range players {
+		if p == nil || !p.IsBot || p.IsEliminated || p.LeftAt != nil {
+			continue
 		}
-		return domain.MinPlayers
+		current := latestByBot[p.UserID]
+		if current == nil || p.JoinedAt.After(current.JoinedAt) {
+			latestByBot[p.UserID] = p
+		}
 	}
 
-	if remaining <= 0 {
-		return target
+	bots := make([]*domain.GamePlayer, 0, len(latestByBot))
+	for _, p := range latestByBot {
+		bots = append(bots, p)
 	}
-	// progress 0→1 across the countdown. Reach the full target a touch early
-	// (÷0.85) so the count isn't still visibly climbing in the final seconds.
-	progress := 1 - remaining.Seconds()/domain.CountdownDuration.Seconds()
-	if progress < 0 {
-		progress = 0
+	sort.Slice(bots, func(i, j int) bool {
+		if bots[i].JoinedAt.Equal(bots[j].JoinedAt) {
+			return bots[i].UserID.String() > bots[j].UserID.String()
+		}
+		return bots[i].JoinedAt.After(bots[j].JoinedAt)
+	})
+
+	removed := 0
+	for _, bot := range bots {
+		if removed >= requested || ctx.Err() != nil {
+			break
+		}
+		if err := uc.gameUC.LeaveGame(ctx, gameID, domain.LeaveGameRequest{UserID: bot.UserID}); err == nil {
+			removed++
+		}
 	}
-	scaled := progress / 0.85
-	if scaled > 1 {
-		scaled = 1
-	}
-	desired := int(math.Ceil(float64(target) * scaled))
-	desired += rand.Intn(3) - 1 // -1..+1: arrivals come in small bursts, not a line
-	if desired < domain.MinPlayers {
-		desired = domain.MinPlayers // never below the starter that kicked the countdown
-	}
-	if desired > target {
-		desired = target
-	}
-	return desired
+	return removed
 }
 
-// Run drives the automatic filler until ctx is cancelled. Each tick it reads the
-// admin policy and, for every WAITING/COUNTDOWN game in the configured tiers
-// that has at least one real player but fewer than min_real_players, adds bots
-// toward target_bots — at most MaxJoinsPerTick per game per tick, so bots
-// trickle in rather than appearing all at once.
+// Run drives the automatic filler until ctx is cancelled. Every sweep
+// recalculates the desired bot count from the current number of real players, so
+// real arrivals replace bots and real departures are backfilled automatically.
 func (uc *BotUseCase) Run(ctx context.Context) {
 	ticker := time.NewTicker(uc.settings.CheckInterval)
 	defer ticker.Stop()
@@ -575,10 +572,11 @@ func (uc *BotUseCase) Run(ctx context.Context) {
 
 func (uc *BotUseCase) sweep(ctx context.Context) {
 	cfg, err := uc.botRepo.GetConfig(ctx)
-	if err != nil || !cfg.Enabled || cfg.TargetBots <= 0 {
+	if err != nil || !cfg.Enabled || cfg.MinimumRoomPlayers < domain.MinPlayers {
 		return
 	}
 
+	savedPolicyEnabled := cfg.EffectiveBiasedDrawMode() != domain.BiasedDrawModeDisabled
 	for _, tier := range cfg.TierList() {
 		t := tier
 		games, err := uc.gameRepo.FindAvailable(ctx, &t, domain.MaxAvailableGamesLimit)
@@ -591,69 +589,45 @@ func (uc *BotUseCase) sweep(ctx context.Context) {
 				continue
 			}
 
-			// MinRealPlayers is a FLOOR: only add bots once a game holds at least
-			// this many real players. No upper ceiling — bots always top the game
-			// up to TargetBots regardless of how many real players join. Set the
-			// floor to 0 to let bots seed and run BOT-ONLY games (0 real players),
-			// which keeps the lobby looking alive to attract visitors.
-			if realPlayers < cfg.MinRealPlayers {
-				continue
-			}
-
-			if realPlayers == 0 {
-				// Bot-only game. Run these only while a real player has recently
-				// browsed this tier, so the lobby stays alive around visitors and
-				// quietly idles when nobody is around (e.g. overnight). Redis
-				// unavailable or nothing browsed → skip and let the game idle.
-				if uc.gameState == nil {
+			hasSpendableBonus := false
+			if realPlayers >= cfg.MinimumRoomPlayers && savedPolicyEnabled {
+				hasSpendableBonus, err = uc.botRepo.HasSpendableBonusPlayerInGame(ctx, game.ID, game.BetAmount)
+				if err != nil {
 					continue
-				}
-				recent, err := uc.gameState.TierBrowsedRecently(ctx, string(tier))
-				if err != nil || !recent {
-					continue
-				}
-				// No real player to pace against, so joinDelayFor (keyed on the
-				// first real arrival) does not apply — bots may seed immediately.
-			} else {
-				// Let the room breathe before anyone "arrives". See joinDelayFor.
-				if delay := uc.joinDelayFor(game.ID); delay > 0 {
-					age, hasReal, err := uc.botRepo.SecondsSinceFirstRealPlayer(ctx, game.ID)
-					if err != nil || !hasReal {
-						continue
-					}
-					if time.Duration(age*float64(time.Second)) < delay {
-						continue // still too soon — try again on a later tick
-					}
 				}
 			}
 
+			desired := desiredBotCount(realPlayers, cfg.MinimumRoomPlayers, hasSpendableBonus, savedPolicyEnabled)
 			botPlayers, err := uc.botRepo.CountBotsInGame(ctx, game.ID)
 			if err != nil {
 				continue
 			}
-			// Pace toward a per-game, varied target instead of snapping to a fixed
-			// TargetBots — see desiredBotsNow. This is what makes the room fill
-			// gradually over the countdown and land on a different count each game.
-			// Countdown time left comes from Redis (epoch-based), not the DB
-			// timestamps, which are in a different timezone frame here.
-			inCountdown := game.State == domain.GameStateCountdown
-			var remaining time.Duration
-			if inCountdown && uc.gameState != nil {
-				if end, gerr := uc.gameState.GetCountdown(ctx, game.ID); gerr == nil {
-					remaining = time.Until(end)
-				} else {
-					remaining = domain.CountdownDuration // key missing → treat as fresh
-				}
-			}
-			need := uc.desiredBotsNow(game.ID, cfg.TargetBots, inCountdown, remaining) - botPlayers
-			if need <= 0 {
+
+			// Real arrivals lower the target immediately. Removing the newest bots
+			// first preserves the least-recently-used rotation for the next room.
+			if botPlayers > desired {
+				uc.trimBots(ctx, game.ID, botPlayers-desired)
 				continue
 			}
-			if need > uc.settings.MaxJoinsPerTick {
+			if botPlayers == desired {
+				continue
+			}
+
+			// Let a human-populated room breathe before the first automated arrival.
+			// Bot-only rooms are explicitly supported and seed without this delay.
+			if realPlayers > 0 {
+				if delay := uc.joinDelayFor(game.ID); delay > 0 {
+					age, hasReal, err := uc.botRepo.SecondsSinceFirstRealPlayer(ctx, game.ID)
+					if err != nil || !hasReal || time.Duration(age*float64(time.Second)) < delay {
+						continue
+					}
+				}
+			}
+
+			need := desired - botPlayers
+			if uc.settings.MaxJoinsPerTick > 0 && need > uc.settings.MaxJoinsPerTick {
 				need = uc.settings.MaxJoinsPerTick
 			}
-			// allowEmpty mirrors the bot-only decision above: a 0-real game only
-			// reaches here when the throttle passed, so it may be seeded.
 			if _, err := uc.fill(ctx, game.ID, need, realPlayers == 0); err != nil {
 				continue
 			}

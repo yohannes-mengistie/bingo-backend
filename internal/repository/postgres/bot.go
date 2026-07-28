@@ -20,21 +20,20 @@ func NewBotRepository(db *sql.DB) domain.BotRepository {
 	return &botRepository{db: db}
 }
 
-// ListBots returns bot users (is_bot = true) in RANDOM order, up to limit.
+// ListBots returns the least-recently-used bots first, randomizing ties.
 //
-// The order is deliberately random rather than oldest-first: FillGame walks
-// this list and takes the first N that fit, so a stable order meant the same
-// oldest bots joined every single game in the same sequence — a recognisable
-// roster to any regular player — while bots past the target count never played
-// at all. Randomising spreads play across the whole pool and varies the lineup
-// per round. Sorting only touches the few hundred rows matching is_bot, so the
-// cost is negligible even at the 1s sweep interval.
+// Ordering by the last game appearance rotates the entire pool before a bot is
+// reused. A recent winner is therefore naturally held back with the rest of its
+// recent roster instead of appearing in consecutive rooms.
 func (r *botRepository) ListBots(ctx context.Context, limit int) ([]*domain.User, error) {
 	query := `
-		SELECT id, telegram_id, first_name, last_name, phone_number, referal_code, role, banned, is_bot, created_at, updated_at
-		FROM users
-		WHERE is_bot = true
-		ORDER BY RANDOM()
+		SELECT u.id, u.telegram_id, u.first_name, u.last_name, u.phone_number,
+		       u.referal_code, u.role, u.banned, u.is_bot, u.created_at, u.updated_at
+		FROM users u
+		LEFT JOIN game_players gp ON gp.user_id = u.id
+		WHERE u.is_bot = true
+		GROUP BY u.id
+		ORDER BY MAX(gp.joined_at) ASC NULLS FIRST, RANDOM()
 		LIMIT $1
 	`
 	rows, err := r.db.QueryContext(ctx, query, limit)
@@ -90,6 +89,38 @@ func (r *botRepository) CountBotsInGame(ctx context.Context, gameID uuid.UUID) (
 	return r.countPlayersInGame(ctx, gameID, true)
 }
 
+// HasSpendableBonusPlayerInGame reports whether an active real player has
+// enough unexpired bonus to fund at least one card at this game stake. The
+// final source of each paid card is still recorded transactionally at charge
+// time; this read is only used to reserve the two high-population guard bots.
+func (r *botRepository) HasSpendableBonusPlayerInGame(ctx context.Context, gameID uuid.UUID, stake float64) (bool, error) {
+	if stake <= 0 {
+		return false, nil
+	}
+	query := `
+		SELECT EXISTS (
+			SELECT 1
+			FROM game_players gp
+			JOIN users u ON u.id = gp.user_id
+			WHERE gp.game_id = $1
+			  AND gp.left_at IS NULL
+			  AND u.is_bot = false
+			  AND (
+				SELECT COALESCE(SUM(bg.remaining), 0)
+				FROM bonus_grants bg
+				WHERE bg.user_id = gp.user_id
+				  AND bg.remaining > 0
+				  AND bg.expires_at > CURRENT_TIMESTAMP
+			  ) >= $2
+		)
+	`
+	var found bool
+	if err := r.db.QueryRowContext(ctx, query, gameID, stake).Scan(&found); err != nil {
+		return false, fmt.Errorf("failed to check bonus-funded players: %w", err)
+	}
+	return found, nil
+}
+
 // SecondsSinceFirstRealPlayer returns the age, in seconds, of the earliest
 // still-active real player's join. The bool is false when the game has no real
 // players, which callers must treat as "not eligible" rather than "zero".
@@ -137,7 +168,7 @@ func (r *botRepository) countPlayersInGame(ctx context.Context, gameID uuid.UUID
 // GetConfig returns the single policy row (id = 1).
 func (r *botRepository) GetConfig(ctx context.Context) (*domain.BotConfig, error) {
 	query := `
-		SELECT enabled, min_real_players, target_bots, tiers, win_rate, bot_always_win, biased_draw_mode, updated_at
+		SELECT enabled, min_real_players, target_bots, minimum_room_players, tiers, win_rate, bot_always_win, biased_draw_mode, updated_at
 		FROM bot_config
 		WHERE id = 1
 	`
@@ -146,6 +177,7 @@ func (r *botRepository) GetConfig(ctx context.Context) (*domain.BotConfig, error
 		&cfg.Enabled,
 		&cfg.MinRealPlayers,
 		&cfg.TargetBots,
+		&cfg.MinimumRoomPlayers,
 		&cfg.Tiers,
 		&cfg.WinRate,
 		&cfg.BotAlwaysWin,
@@ -153,7 +185,7 @@ func (r *botRepository) GetConfig(ctx context.Context) (*domain.BotConfig, error
 		&cfg.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
-		return &domain.BotConfig{Enabled: false, MinRealPlayers: 1, TargetBots: 30, Tiers: "REGULAR,VIP", WinRate: 0.8, BotAlwaysWin: false, BiasedDrawMode: domain.BiasedDrawModeDisabled}, nil
+		return &domain.BotConfig{Enabled: false, MinRealPlayers: 0, TargetBots: 0, MinimumRoomPlayers: 20, Tiers: "REGULAR,VIP", WinRate: 0.8, BotAlwaysWin: false, BiasedDrawMode: domain.BiasedDrawModeDisabled}, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to read bot config: %w", err)
@@ -166,19 +198,20 @@ func (r *botRepository) GetConfig(ctx context.Context) (*domain.BotConfig, error
 func (r *botRepository) UpdateConfig(ctx context.Context, cfg *domain.BotConfig) error {
 	cfg.NormalizeBiasedDrawMode()
 	query := `
-		INSERT INTO bot_config (id, enabled, min_real_players, target_bots, tiers, win_rate, bot_always_win, biased_draw_mode, updated_at)
-		VALUES (1, $1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)
+		INSERT INTO bot_config (id, enabled, min_real_players, target_bots, minimum_room_players, tiers, win_rate, bot_always_win, biased_draw_mode, updated_at)
+		VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP)
 		ON CONFLICT (id) DO UPDATE SET
 			enabled = EXCLUDED.enabled,
 			min_real_players = EXCLUDED.min_real_players,
 			target_bots = EXCLUDED.target_bots,
+			minimum_room_players = EXCLUDED.minimum_room_players,
 			tiers = EXCLUDED.tiers,
 			win_rate = EXCLUDED.win_rate,
 			bot_always_win = EXCLUDED.bot_always_win,
 			biased_draw_mode = EXCLUDED.biased_draw_mode,
 			updated_at = CURRENT_TIMESTAMP
 	`
-	if _, err := r.db.ExecContext(ctx, query, cfg.Enabled, cfg.MinRealPlayers, cfg.TargetBots, cfg.Tiers, cfg.WinRate, cfg.BotAlwaysWin, cfg.BiasedDrawMode); err != nil {
+	if _, err := r.db.ExecContext(ctx, query, cfg.Enabled, cfg.MinRealPlayers, cfg.TargetBots, cfg.MinimumRoomPlayers, cfg.Tiers, cfg.WinRate, cfg.BotAlwaysWin, cfg.BiasedDrawMode); err != nil {
 		return fmt.Errorf("failed to update bot config: %w", err)
 	}
 	return nil

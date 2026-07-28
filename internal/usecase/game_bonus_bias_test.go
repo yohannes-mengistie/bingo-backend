@@ -211,6 +211,72 @@ func TestBotSafeDrawCandidatesIgnoresInactiveCards(t *testing.T) {
 	}
 }
 
+func TestEffectiveGameDrawPolicyIsDynamicPerRoom(t *testing.T) {
+	cfg := domain.BotConfig{
+		MinimumRoomPlayers: 20,
+		BiasedDrawMode:     domain.BiasedDrawModeProtected,
+	}
+	human := &domain.GamePlayer{UserID: uuid.New(), CardID: 1, Paid: true}
+	bot := &domain.GamePlayer{UserID: uuid.New(), CardID: 2, Paid: true, IsBot: true}
+
+	if policy := effectiveGameDrawPolicy(cfg, []*domain.GamePlayer{human}); policy.mode != domain.BiasedDrawModeDisabled || policy.bonusGuard {
+		t.Fatalf("bot-free room policy = %+v, want fair", policy)
+	}
+	if policy := effectiveGameDrawPolicy(cfg, []*domain.GamePlayer{human, bot}); policy.mode != domain.BiasedDrawModeProtected || policy.bonusGuard {
+		t.Fatalf("low-population policy = %+v, want saved protected mode", policy)
+	}
+
+	highPopulation := make([]*domain.GamePlayer, 0, 21)
+	for i := 0; i < 20; i++ {
+		highPopulation = append(highPopulation, &domain.GamePlayer{
+			UserID:        uuid.New(),
+			CardID:        i + 1,
+			Paid:          true,
+			PaidFromBonus: i == 0,
+		})
+	}
+	highPopulation = append(highPopulation, bot)
+	if policy := effectiveGameDrawPolicy(cfg, highPopulation); policy.mode != domain.BiasedDrawModeDisabled || !policy.bonusGuard {
+		t.Fatalf("high-population bonus policy = %+v, want bonus-only guard", policy)
+	}
+
+	highPopulation[0].PaidFromBonus = false
+	if policy := effectiveGameDrawPolicy(cfg, highPopulation); policy.mode != domain.BiasedDrawModeDisabled || policy.bonusGuard {
+		t.Fatalf("high-population wallet policy = %+v, want fully fair", policy)
+	}
+
+	cfg.BiasedDrawMode = domain.BiasedDrawModeDisabled
+	highPopulation[0].PaidFromBonus = true
+	if policy := effectiveGameDrawPolicy(cfg, highPopulation); policy.mode != domain.BiasedDrawModeDisabled || policy.bonusGuard {
+		t.Fatalf("disabled saved policy = %+v, want no bonus guard", policy)
+	}
+}
+
+func TestWinnerEligibleBonusGuardIsPerCardAndFairToWallets(t *testing.T) {
+	policy := gameDrawPolicy{mode: domain.BiasedDrawModeDisabled, bonusGuard: true}
+	userID := uuid.New()
+	bonusCard := &domain.GamePlayer{UserID: userID, CardID: 10, Paid: true, PaidFromBonus: true}
+	walletCard := &domain.GamePlayer{UserID: userID, CardID: 11, Paid: true}
+	botCard := &domain.GamePlayer{UserID: uuid.New(), CardID: 12, Paid: true, IsBot: true}
+
+	if winnerEligible(policy, bonusCard) {
+		t.Fatal("bonus-funded card remained eligible under the high-population guard")
+	}
+	if !winnerEligible(policy, walletCard) {
+		t.Fatal("wallet-funded card was excluded under the high-population guard")
+	}
+	if !winnerEligible(policy, botCard) {
+		t.Fatal("bot card was excluded under the high-population guard")
+	}
+
+	all := []winnerCard{{UserID: walletCard.UserID, CardID: walletCard.CardID}, {UserID: botCard.UserID, CardID: botCard.CardID}}
+	bots := all[1:]
+	selected := selectMixedWinners(all, bots, policy.mode != domain.BiasedDrawModeDisabled)
+	if len(selected) != len(all) {
+		t.Fatalf("high-population wallet/bot tie returned %d winners, want %d", len(selected), len(all))
+	}
+}
+
 func findBotCardContainingSafeNumber(t *testing.T, target int, drawnSet map[int]bool, excludedCardID int) *bingo.BingoCard {
 	t.Helper()
 	for cardID := domain.MinCardID; cardID <= domain.MaxCardID; cardID++ {
