@@ -174,8 +174,21 @@ func (uc *BotUseCase) UpdateConfig(ctx context.Context, req domain.UpdateBotConf
 		}
 		cfg.WinRate = *req.WinRate
 	}
-	if req.BotAlwaysWin != nil {
+	if req.BiasedDrawMode != nil {
+		if !req.BiasedDrawMode.IsValid() {
+			return nil, fmt.Errorf("biased_draw_mode must be disabled, legacy, or protected")
+		}
+		cfg.BiasedDrawMode = *req.BiasedDrawMode
+		cfg.BotAlwaysWin = cfg.BiasedDrawMode != domain.BiasedDrawModeDisabled
+	} else if req.BotAlwaysWin != nil {
+		// Backward compatibility for older admin clients that only know the
+		// boolean toggle. Enabling maps to the current protected policy.
 		cfg.BotAlwaysWin = *req.BotAlwaysWin
+		if cfg.BotAlwaysWin {
+			cfg.BiasedDrawMode = domain.BiasedDrawModeProtected
+		} else {
+			cfg.BiasedDrawMode = domain.BiasedDrawModeDisabled
+		}
 	}
 	if err := uc.botRepo.UpdateConfig(ctx, cfg); err != nil {
 		return nil, err

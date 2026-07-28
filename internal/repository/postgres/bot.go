@@ -137,7 +137,7 @@ func (r *botRepository) countPlayersInGame(ctx context.Context, gameID uuid.UUID
 // GetConfig returns the single policy row (id = 1).
 func (r *botRepository) GetConfig(ctx context.Context) (*domain.BotConfig, error) {
 	query := `
-		SELECT enabled, min_real_players, target_bots, tiers, win_rate, bot_always_win, updated_at
+		SELECT enabled, min_real_players, target_bots, tiers, win_rate, bot_always_win, biased_draw_mode, updated_at
 		FROM bot_config
 		WHERE id = 1
 	`
@@ -149,22 +149,25 @@ func (r *botRepository) GetConfig(ctx context.Context) (*domain.BotConfig, error
 		&cfg.Tiers,
 		&cfg.WinRate,
 		&cfg.BotAlwaysWin,
+		&cfg.BiasedDrawMode,
 		&cfg.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
-		return &domain.BotConfig{Enabled: false, MinRealPlayers: 1, TargetBots: 30, Tiers: "REGULAR,VIP", WinRate: 0.8, BotAlwaysWin: false}, nil
+		return &domain.BotConfig{Enabled: false, MinRealPlayers: 1, TargetBots: 30, Tiers: "REGULAR,VIP", WinRate: 0.8, BotAlwaysWin: false, BiasedDrawMode: domain.BiasedDrawModeDisabled}, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to read bot config: %w", err)
 	}
+	cfg.NormalizeBiasedDrawMode()
 	return cfg, nil
 }
 
 // UpdateConfig persists the single policy row, creating it if absent.
 func (r *botRepository) UpdateConfig(ctx context.Context, cfg *domain.BotConfig) error {
+	cfg.NormalizeBiasedDrawMode()
 	query := `
-		INSERT INTO bot_config (id, enabled, min_real_players, target_bots, tiers, win_rate, bot_always_win, updated_at)
-		VALUES (1, $1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
+		INSERT INTO bot_config (id, enabled, min_real_players, target_bots, tiers, win_rate, bot_always_win, biased_draw_mode, updated_at)
+		VALUES (1, $1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)
 		ON CONFLICT (id) DO UPDATE SET
 			enabled = EXCLUDED.enabled,
 			min_real_players = EXCLUDED.min_real_players,
@@ -172,9 +175,10 @@ func (r *botRepository) UpdateConfig(ctx context.Context, cfg *domain.BotConfig)
 			tiers = EXCLUDED.tiers,
 			win_rate = EXCLUDED.win_rate,
 			bot_always_win = EXCLUDED.bot_always_win,
+			biased_draw_mode = EXCLUDED.biased_draw_mode,
 			updated_at = CURRENT_TIMESTAMP
 	`
-	if _, err := r.db.ExecContext(ctx, query, cfg.Enabled, cfg.MinRealPlayers, cfg.TargetBots, cfg.Tiers, cfg.WinRate, cfg.BotAlwaysWin); err != nil {
+	if _, err := r.db.ExecContext(ctx, query, cfg.Enabled, cfg.MinRealPlayers, cfg.TargetBots, cfg.Tiers, cfg.WinRate, cfg.BotAlwaysWin, cfg.BiasedDrawMode); err != nil {
 		return fmt.Errorf("failed to update bot config: %w", err)
 	}
 	return nil

@@ -9,6 +9,42 @@ import (
 	"github.com/google/uuid"
 )
 
+func TestLegacySafeDrawCandidatesReproducesBonusOnlyFullHopper(t *testing.T) {
+	card := bingo.GenerateCard(1)
+	if card == nil {
+		t.Fatal("expected generated card")
+	}
+
+	drawnSet := make(map[int]bool)
+	for col := 0; col < domain.CardGridSize-1; col++ {
+		drawnSet[card.Numbers[0][col]] = true
+	}
+	completing := card.Numbers[0][domain.CardGridSize-1]
+
+	bonusPlayer := &domain.GamePlayer{UserID: uuid.New(), CardID: card.ID, Paid: true, PaidFromBonus: true}
+	if candidates := legacySafeDrawCandidates([]*domain.GamePlayer{bonusPlayer}, drawnSet); containsNumber(candidates, completing) {
+		t.Fatalf("legacy mode included bonus-card completing number %d", completing)
+	}
+
+	walletPlayer := &domain.GamePlayer{UserID: uuid.New(), CardID: card.ID, Paid: true}
+	walletCandidates := legacySafeDrawCandidates([]*domain.GamePlayer{walletPlayer}, drawnSet)
+	if !containsNumber(walletCandidates, completing) {
+		t.Fatalf("legacy mode should leave wallet-card completing number %d in the hopper", completing)
+	}
+
+	cardNumbers := cardNumberSet(card)
+	outsideFound := false
+	for n := domain.BingoNumberMinB; n <= domain.BingoNumberMaxO; n++ {
+		if !drawnSet[n] && !cardNumbers[n] && containsNumber(walletCandidates, n) {
+			outsideFound = true
+			break
+		}
+	}
+	if !outsideFound {
+		t.Fatal("legacy mode must draw from the full hopper, not only card numbers")
+	}
+}
+
 func TestBotSafeDrawCandidatesProtectsEveryRealPlayerAndUsesOnlyBotCards(t *testing.T) {
 	humanCard := bingo.GenerateCard(1)
 	if humanCard == nil {

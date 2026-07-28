@@ -997,7 +997,7 @@ func (uc *GameUseCase) drawNumbers(ctx context.Context, gameID uuid.UUID) {
 		var number int
 		if berr == nil && biasedNumber != 0 {
 			letter, number = biasedLetter, biasedNumber
-		} else if cfg, cerr := uc.botRepo.GetConfig(ctx); cerr == nil && cfg.BotAlwaysWin {
+		} else if cfg, cerr := uc.botRepo.GetConfig(ctx); cerr == nil && cfg.EffectiveBiasedDrawMode() != domain.BiasedDrawModeDisabled {
 			fallback := uc.anySafeDrawNumber(ctx, gameID, numbers)
 			if fallback != 0 {
 				letter, number = bingo.GetLetterForNumber(fallback), fallback
@@ -1107,7 +1107,7 @@ func (uc *GameUseCase) drawnNumberSet(ctx context.Context, gameID uuid.UUID) (ma
 }
 
 // collectWinners returns every active card that currently forms a valid bingo
-// over the drawn set. When bot_always_win is enabled, bots keep mixed
+// over the drawn set. When a biased draw mode is enabled, bots keep mixed
 // bot/human co-winner situations. Otherwise every winning card is returned and
 // the prize is split evenly by the existing payout finalizer. If only one group
 // has winners, that group wins normally.
@@ -1151,7 +1151,7 @@ func (uc *GameUseCase) collectWinners(ctx context.Context, gameID uuid.UUID, dra
 	if len(botWinners) > 0 && len(humanWinners) > 0 {
 		cfg, err := uc.botRepo.GetConfig(ctx)
 		if err == nil {
-			return selectMixedWinners(allWinners, botWinners, cfg.BotAlwaysWin), nil
+			return selectMixedWinners(allWinners, botWinners, cfg.EffectiveBiasedDrawMode() != domain.BiasedDrawModeDisabled), nil
 		}
 	}
 
@@ -1162,7 +1162,7 @@ func (uc *GameUseCase) collectWinners(ctx context.Context, gameID uuid.UUID, dra
 	return allWinners, nil
 }
 
-// selectMixedWinners preserves the bot-only result when bot_always_win is on.
+// selectMixedWinners preserves the bot-only result while a biased mode is on.
 // When it is off, all simultaneously winning cards share the prize.
 func selectMixedWinners(allWinners, botWinners []winnerCard, botAlwaysWin bool) []winnerCard {
 	if botAlwaysWin {
@@ -1249,6 +1249,45 @@ func appendDangerNumbers(card *bingo.BingoCard, drawnSet map[int]bool, dangerMap
 	cols()
 	diags()
 	corners()
+}
+
+// isLegacyBiasTarget reproduces the pre-protected policy: only active, paid,
+// bonus-funded human cards contribute to humanDanger.
+func isLegacyBiasTarget(p *domain.GamePlayer) bool {
+	return p != nil && !p.IsBot && !p.IsEliminated && p.LeftAt == nil && p.Paid && p.PaidFromBonus
+}
+
+// legacySafeDrawCandidates reproduces the implementation that preceded the
+// protected mode: draw from the full 1-75 hopper while temporarily excluding
+// numbers that complete a paid bonus-funded human card.
+func legacySafeDrawCandidates(players []*domain.GamePlayer, drawnSet map[int]bool) []int {
+	humanDanger := make(map[int]bool)
+	for _, p := range players {
+		if !isLegacyBiasTarget(p) {
+			continue
+		}
+		card := bingo.GenerateCard(p.CardID)
+		if card != nil {
+			appendDangerNumbers(card, drawnSet, humanDanger)
+		}
+	}
+
+	allUndrawn := make([]int, 0, domain.BingoNumberMaxO-domain.BingoNumberMinB+1)
+	safe := make([]int, 0, cap(allUndrawn))
+	for n := domain.BingoNumberMinB; n <= domain.BingoNumberMaxO; n++ {
+		if drawnSet[n] {
+			continue
+		}
+		allUndrawn = append(allUndrawn, n)
+		if !humanDanger[n] {
+			safe = append(safe, n)
+		}
+	}
+
+	if len(safe) > 0 {
+		return safe
+	}
+	return allUndrawn
 }
 
 // botSafeDrawCandidates builds humanDanger from every active real player's card
@@ -1353,12 +1392,16 @@ func fullHopperSafeDrawCandidates(players []*domain.GamePlayer, drawnSet map[int
 	return humanSafe
 }
 
-// biasedDraw replaces the normal draw while bot_always_win is enabled. It uses
-// only bot-card numbers, protects every active human card, and prevents a bot
-// from completing a bingo before the configured target draw count.
+// biasedDraw selects the configured policy: disabled uses the ordinary draw,
+// legacy reproduces the former full-hopper/bonus-only behavior, and protected
+// uses bot-card candidates while protecting every active human card.
 func (uc *GameUseCase) biasedDraw(ctx context.Context, gameID uuid.UUID, drawnNumbers []int, _ int, forceComplete bool) (string, int, error) {
 	cfg, err := uc.botRepo.GetConfig(ctx)
-	if err != nil || !cfg.BotAlwaysWin {
+	if err != nil {
+		return "", 0, nil
+	}
+	mode := cfg.EffectiveBiasedDrawMode()
+	if mode == domain.BiasedDrawModeDisabled {
 		return "", 0, nil
 	}
 
@@ -1372,7 +1415,12 @@ func (uc *GameUseCase) biasedDraw(ctx context.Context, gameID uuid.UUID, drawnNu
 		drawnSet[n] = true
 	}
 
-	candidates := botSafeDrawCandidates(players, drawnSet, forceComplete)
+	var candidates []int
+	if mode == domain.BiasedDrawModeLegacy {
+		candidates = legacySafeDrawCandidates(players, drawnSet)
+	} else {
+		candidates = botSafeDrawCandidates(players, drawnSet, forceComplete)
+	}
 	if len(candidates) == 0 {
 		return "", 0, nil
 	}
